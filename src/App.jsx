@@ -5,7 +5,7 @@ import {
   Home, UserCircle, Shield, Layers, Camera, Calendar, Phone, Mail,
   Eye, EyeOff, Network, Save, ChevronDown, ChevronUp, User,
   KeyRound, AlertCircle, CheckCircle2, Crown, Award, MapPinned, Clock,
-  Globe, CreditCard, BookOpen
+  Globe, CreditCard, BookOpen, FileText, ExternalLink, Paperclip
 } from 'lucide-react';
 import { supabase, fromDB, toDB } from './supabase.js';
 
@@ -23,6 +23,36 @@ const NATIONALITIES = [
 ];
 const natLabel = (v) => NATIONALITIES.find((n) => n.value === v)?.label || (v ? 'อื่นๆ' : '—');
 const isForeign = (v) => v && v !== 'thai';
+
+// ============ FILE UPLOAD HELPERS ============
+// Upload เอกสารแรงงาน (รูป/PDF) ไปยัง Supabase Storage
+// Path เก็บแบบ: businessId/docType-timestamp-random.ext
+async function uploadDocument(file, businessId, docType) {
+  if (!file) return null;
+  const ext = (file.name.split('.').pop() || 'bin').toLowerCase();
+  const rand = Math.random().toString(36).slice(2, 8);
+  const path = `${businessId || 'misc'}/${docType}-${Date.now()}-${rand}.${ext}`;
+  const { error } = await supabase.storage.from('employee-docs').upload(path, file, {
+    cacheControl: '3600',
+    upsert: false,
+  });
+  if (error) { alert('อัปโหลดไฟล์ไม่สำเร็จ: ' + error.message); return null; }
+  return path;
+}
+
+// ลบเอกสารเก่าออกจาก storage
+async function deleteDocument(path) {
+  if (!path) return;
+  await supabase.storage.from('employee-docs').remove([path]);
+}
+
+// สร้าง signed URL (expire 1 ชั่วโมง) เพื่อดู/download เอกสาร
+async function getDocumentUrl(path) {
+  if (!path) return null;
+  const { data, error } = await supabase.storage.from('employee-docs').createSignedUrl(path, 3600);
+  if (error) { console.error('signed url error:', error); return null; }
+  return data.signedUrl;
+}
 
 // ============ IMAGE HELPER ============
 const resizeImage = (file, maxSize = 400) => new Promise((resolve) => {
@@ -853,7 +883,13 @@ function EmployeesPage({ businesses, zones, positions, employees, profile, activ
     else await ops.employee.add(payload);
     setShowModal(false); setEditing(null);
   };
-  const del = async (id) => { if (!confirm('ลบพนักงานคนนี้?')) return; await ops.employee.delete(id); };
+  const del = async (id) => {
+    if (!confirm('ลบพนักงานคนนี้?')) return;
+    const emp = employees.find((e) => e.id === id);
+    if (emp?.workPermitDoc) await deleteDocument(emp.workPermitDoc);
+    if (emp?.passportDoc) await deleteDocument(emp.passportDoc);
+    await ops.employee.delete(id);
+  };
 
   if (isOwner && !activeBusinessId) return (
     <div className="h-screen overflow-auto"><PageHeader title="พนักงาน" /><div className="p-8"><EmptyState icon={Users} title="ยังไม่ได้เลือกธุรกิจ" description="กรุณาเลือกธุรกิจก่อน" /></div></div>
@@ -930,7 +966,7 @@ function EmployeesPage({ businesses, zones, positions, employees, profile, activ
       </div>
       {showModal && (
         <Modal title={editing?.id ? 'แก้ไขข้อมูลพนักงาน' : 'เพิ่มพนักงานใหม่'} onClose={() => { setShowModal(false); setEditing(null); }} wide>
-          <EmployeeForm initial={editing} zones={visibleZones} positions={positions.filter((p) => p.businessId === (isOwner ? activeBusinessId : profile.businessId))} employees={employees.filter((e) => e.businessId === (isOwner ? activeBusinessId : profile.businessId) && e.id !== editing?.id)} onSave={save} onCancel={() => { setShowModal(false); setEditing(null); }} lockedZoneId={!isOwner ? profile.zoneId : null} />
+          <EmployeeForm initial={editing} zones={visibleZones} positions={positions.filter((p) => p.businessId === (isOwner ? activeBusinessId : profile.businessId))} employees={employees.filter((e) => e.businessId === (isOwner ? activeBusinessId : profile.businessId) && e.id !== editing?.id)} onSave={save} onCancel={() => { setShowModal(false); setEditing(null); }} lockedZoneId={!isOwner ? profile.zoneId : null} businessId={isOwner ? activeBusinessId : profile.businessId} />
         </Modal>
       )}
       {viewing && (
@@ -1005,7 +1041,7 @@ function EmployeeDetailModal({ employee, zones, positions, employees, onClose, o
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3">
                   <div className="flex items-start gap-2.5">
                     <CreditCard className="w-4 h-4 text-stone-400 mt-0.5 flex-shrink-0" />
-                    <div className="min-w-0">
+                    <div className="min-w-0 flex-1">
                       <div className="text-xs text-stone-500">บัตรแรงงาน</div>
                       <div className="text-sm text-stone-800">
                         {employee.hasWorkPermit === true ? (
@@ -1017,17 +1053,19 @@ function EmployeeDetailModal({ employee, zones, positions, employees, onClose, o
                         : <span className="text-stone-400">—</span>}
                       </div>
                       {employee.workPermitExpiry && <div className="text-xs text-stone-500 mt-0.5">หมดอายุ {fmt(employee.workPermitExpiry)}</div>}
+                      {employee.workPermitDoc && <DocViewButton path={employee.workPermitDoc} label="ดูบัตรแรงงาน" />}
                     </div>
                   </div>
                   <div className="flex items-start gap-2.5">
                     <BookOpen className="w-4 h-4 text-stone-400 mt-0.5 flex-shrink-0" />
-                    <div className="min-w-0">
+                    <div className="min-w-0 flex-1">
                       <div className="text-xs text-stone-500">พาสปอร์ต</div>
                       <div className="text-sm text-stone-800">
                         {employee.hasPassport === true ? <span className="font-medium">มี</span>
                         : employee.hasPassport === false ? <span className="text-amber-700">ไม่มี</span>
                         : <span className="text-stone-400">—</span>}
                       </div>
+                      {employee.passportDoc && <DocViewButton path={employee.passportDoc} label="ดูพาสปอร์ต" />}
                     </div>
                   </div>
                 </div>
@@ -1081,7 +1119,7 @@ function DetailBlock({ icon: Icon, label, value, mono }) {
   );
 }
 
-function EmployeeForm({ initial, zones, positions, employees, onSave, onCancel, lockedZoneId }) {
+function EmployeeForm({ initial, zones, positions, employees, onSave, onCancel, lockedZoneId, businessId }) {
   const [name, setName] = useState(initial?.name || '');
   const [nickname, setNickname] = useState(initial?.nickname || '');
   const [photo, setPhoto] = useState(initial?.photo || '');
@@ -1100,6 +1138,8 @@ function EmployeeForm({ initial, zones, positions, employees, onSave, onCancel, 
   const [hasWorkPermit, setHasWorkPermit] = useState(initial?.hasWorkPermit ?? null);
   const [workPermitExpiry, setWorkPermitExpiry] = useState(initial?.workPermitExpiry || '');
   const [hasPassport, setHasPassport] = useState(initial?.hasPassport ?? null);
+  const [workPermitDoc, setWorkPermitDoc] = useState(initial?.workPermitDoc || null);
+  const [passportDoc, setPassportDoc] = useState(initial?.passportDoc || null);
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef(null);
 
@@ -1126,6 +1166,8 @@ function EmployeeForm({ initial, zones, positions, employees, onSave, onCancel, 
       hasWorkPermit: foreign ? hasWorkPermit : null,
       workPermitExpiry: foreign && hasWorkPermit === true ? (workPermitExpiry || null) : null,
       hasPassport: foreign ? hasPassport : null,
+      workPermitDoc: foreign ? workPermitDoc : null,
+      passportDoc: foreign ? passportDoc : null,
     });
   };
 
@@ -1187,9 +1229,12 @@ function EmployeeForm({ initial, zones, positions, employees, onSave, onCancel, 
             </div>
           </FormField>
           {hasWorkPermit === true && (
-            <FormField label="บัตรหมดอายุ">
-              <input type="date" value={workPermitExpiry} onChange={(e) => setWorkPermitExpiry(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600 bg-white" />
-            </FormField>
+            <>
+              <FormField label="บัตรหมดอายุ">
+                <input type="date" value={workPermitExpiry} onChange={(e) => setWorkPermitExpiry(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600 bg-white" />
+              </FormField>
+              <DocUpload label="ไฟล์/รูปบัตรแรงงาน" currentPath={workPermitDoc} businessId={businessId} docType="work_permit" onChange={setWorkPermitDoc} />
+            </>
           )}
           <FormField label="พาสปอร์ต">
             <div className="grid grid-cols-2 gap-2">
@@ -1197,6 +1242,9 @@ function EmployeeForm({ initial, zones, positions, employees, onSave, onCancel, 
               <PillRadio selected={hasPassport === false} onClick={() => setHasPassport(false)} icon={X}>ไม่มี</PillRadio>
             </div>
           </FormField>
+          {hasPassport === true && (
+            <DocUpload label="ไฟล์/รูปพาสปอร์ต" currentPath={passportDoc} businessId={businessId} docType="passport" onChange={setPassportDoc} />
+          )}
         </div>
       )}
 
@@ -1213,6 +1261,91 @@ function PillRadio({ selected, onClick, icon: Icon, children }) {
       {Icon && <Icon className={`w-4 h-4 ${selected ? 'text-emerald-700' : 'text-stone-400'}`} />}
       {children}
     </button>
+  );
+}
+
+function DocViewButton({ path, label }) {
+  const [opening, setOpening] = useState(false);
+  const open = async () => {
+    setOpening(true);
+    const url = await getDocumentUrl(path);
+    setOpening(false);
+    if (url) window.open(url, '_blank');
+  };
+  return (
+    <button type="button" onClick={open} disabled={opening} className="mt-1.5 inline-flex items-center gap-1.5 px-2.5 py-1 text-xs text-emerald-700 hover:text-emerald-800 hover:bg-emerald-50 rounded-md font-medium border border-emerald-200">
+      <ExternalLink className="w-3 h-3" />{opening ? 'กำลังเปิด...' : label}
+    </button>
+  );
+}
+
+function DocUpload({ label, currentPath, businessId, docType, onChange }) {
+  const [uploading, setUploading] = useState(false);
+  const [opening, setOpening] = useState(false);
+  const fileRef = useRef(null);
+
+  const handlePick = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    if (file.size > 10 * 1024 * 1024) return alert('ไฟล์ใหญ่เกิน 10MB');
+    setUploading(true);
+    try {
+      if (currentPath) await deleteDocument(currentPath);
+      const newPath = await uploadDocument(file, businessId, docType);
+      if (newPath) onChange(newPath);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleView = async () => {
+    if (!currentPath) return;
+    setOpening(true);
+    const url = await getDocumentUrl(currentPath);
+    setOpening(false);
+    if (url) window.open(url, '_blank');
+  };
+
+  const handleRemove = async () => {
+    if (!confirm('ลบไฟล์นี้?')) return;
+    await deleteDocument(currentPath);
+    onChange(null);
+  };
+
+  // ดึงชื่อไฟล์จาก path เพื่อแสดง
+  const filename = currentPath ? currentPath.split('/').pop() : null;
+  const isPdf = filename?.toLowerCase().endsWith('.pdf');
+
+  return (
+    <div>
+      <label className="block text-sm font-medium text-stone-700 mb-1.5">{label}</label>
+      {currentPath ? (
+        <div className="flex items-center gap-2 p-2.5 bg-white border border-stone-200 rounded-lg">
+          <div className="w-9 h-9 rounded bg-emerald-50 flex items-center justify-center flex-shrink-0">
+            {isPdf ? <FileText className="w-4 h-4 text-emerald-700" /> : <Paperclip className="w-4 h-4 text-emerald-700" />}
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="text-sm font-medium text-stone-800 truncate">อัปโหลดแล้ว</div>
+            <div className="text-xs text-stone-500 truncate">{filename}</div>
+          </div>
+          <button type="button" onClick={handleView} disabled={opening} className="flex items-center gap-1 px-2.5 py-1.5 text-xs text-emerald-700 hover:bg-emerald-50 rounded-md font-medium disabled:opacity-50">
+            <ExternalLink className="w-3.5 h-3.5" />{opening ? '...' : 'ดู'}
+          </button>
+          <button type="button" onClick={() => fileRef.current?.click()} disabled={uploading} className="px-2.5 py-1.5 text-xs text-stone-600 hover:bg-stone-100 rounded-md font-medium">
+            เปลี่ยน
+          </button>
+          <button type="button" onClick={handleRemove} className="p-1.5 text-red-600 hover:bg-red-50 rounded-md">
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      ) : (
+        <button type="button" onClick={() => fileRef.current?.click()} disabled={uploading} className="w-full flex items-center justify-center gap-2 px-3 py-3 border-2 border-dashed border-stone-300 hover:border-emerald-400 hover:bg-emerald-50/30 rounded-lg text-sm text-stone-600 hover:text-emerald-700 disabled:opacity-50">
+          {uploading ? <><Clock className="w-4 h-4 animate-pulse" /> กำลังอัปโหลด...</> : <><Upload className="w-4 h-4" /> เลือกไฟล์ (รูปหรือ PDF, ไม่เกิน 10MB)</>}
+        </button>
+      )}
+      <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp,application/pdf" onChange={handlePick} className="hidden" />
+    </div>
   );
 }
 
