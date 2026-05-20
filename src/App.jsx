@@ -112,7 +112,17 @@ export default function App() {
         .eq('id', session.user.id)
         .maybeSingle();
       if (error) console.error('Profile load error:', error);
-      setProfile(fromDB(data));
+      const p = fromDB(data);
+      if (p) {
+        p.businessIds = p.businessIds || [];
+        p.zoneIds = p.zoneIds || [];
+        p.isOwner = p.role === 'owner';
+        p.isBM = p.role === 'business_manager';
+        p.isZM = p.role === 'zone_manager';
+        p.isViewer = p.role === 'viewer';
+        p.canWrite = ['owner', 'business_manager', 'zone_manager'].includes(p.role);
+      }
+      setProfile(p);
     })();
   }, [session]);
 
@@ -128,7 +138,7 @@ export default function App() {
         supabase.from('zones').select('*').order('created_at'),
         supabase.from('positions').select('*').order('created_at'),
         supabase.from('employees').select('*').order('created_at'),
-        profile.role === 'owner'
+        profile.isOwner
           ? supabase.from('user_profiles').select('*, email:id').order('created_at')
           : Promise.resolve({ data: [profile] }),
       ]);
@@ -138,18 +148,45 @@ export default function App() {
       setPositions(fromDB(p.data || []));
       setEmployees(fromDB(e.data || []));
       setProfiles(fromDB(up.data || []));
-      const firstBiz = (b.data || [])[0];
-      if (firstBiz && !activeBusinessId) setActiveBusinessId(firstBiz.id);
+      // เลือกธุรกิจเริ่มต้น
+      const allBiz = b.data || [];
+      const allZones = z.data || [];
+      if (!activeBusinessId) {
+        if (profile.isOwner) {
+          if (allBiz[0]) setActiveBusinessId(allBiz[0].id);
+        } else if (profile.isBM && profile.businessIds.length > 0) {
+          setActiveBusinessId(profile.businessIds[0]);
+        } else if (profile.isZM && profile.zoneIds.length > 0) {
+          const zone = allZones.find((zn) => zn.id === profile.zoneIds[0]);
+          if (zone) setActiveBusinessId(zone.business_id);
+        } else if (allBiz[0]) {
+          setActiveBusinessId(allBiz[0].id);
+        }
+      }
       setDataLoading(false);
     })();
 
     // Realtime
+    const enrichProfile = (p) => {
+      if (!p) return p;
+      const out = fromDB(p);
+      out.businessIds = out.businessIds || [];
+      out.zoneIds = out.zoneIds || [];
+      out.isOwner = out.role === 'owner';
+      out.isBM = out.role === 'business_manager';
+      out.isZM = out.role === 'zone_manager';
+      out.isViewer = out.role === 'viewer';
+      out.canWrite = ['owner', 'business_manager', 'zone_manager'].includes(out.role);
+      return out;
+    };
     const handle = (setter) => (payload) => {
       const { eventType, new: nv, old: ov } = payload;
       if (eventType === 'INSERT') {
         setter((prev) => (prev.some((r) => r.id === nv.id) ? prev : [...prev, fromDB(nv)]));
       } else if (eventType === 'UPDATE') {
         setter((prev) => prev.map((r) => (r.id === nv.id ? fromDB(nv) : r)));
+        // If current user's profile changed, re-enrich
+        if (nv.id === session?.user?.id) setProfile(enrichProfile(nv));
       } else if (eventType === 'DELETE') {
         setter((prev) => prev.filter((r) => r.id !== ov.id));
       }
@@ -229,6 +266,7 @@ export default function App() {
         setView={setView}
         profile={profile}
         businesses={businesses}
+        zones={zones}
         activeBusinessId={activeBusinessId}
         setActiveBusinessId={changeBusiness}
       />
@@ -244,12 +282,13 @@ export default function App() {
             setView={setView}
           />
         )}
-        {view === 'businesses' && profile.role === 'owner' && (
+        {view === 'businesses' && (profile.isOwner || profile.isBM) && (
           <BusinessesPage
             businesses={businesses}
             zones={zones}
             employees={employees}
             positions={positions}
+            profile={profile}
             ops={ops}
             activeBusinessId={activeBusinessId}
             setActiveBusinessId={changeBusiness}
@@ -289,7 +328,7 @@ export default function App() {
             activeBusinessId={activeBusinessId}
           />
         )}
-        {view === 'users' && profile.role === 'owner' && (
+        {view === 'users' && profile.isOwner && (
           <UsersPage
             profiles={profiles}
             businesses={businesses}
@@ -420,16 +459,42 @@ function PendingScreen({ profile }) {
 }
 
 // ============ SIDEBAR ============
-function Sidebar({ view, setView, profile, businesses, activeBusinessId, setActiveBusinessId }) {
-  const isOwner = profile.role === 'owner';
+function Sidebar({ view, setView, profile, businesses, zones, activeBusinessId, setActiveBusinessId }) {
+  const isOwner = profile.isOwner;
+  const isBM = profile.isBM;
+  const isZM = profile.isZM;
+  const isViewer = profile.isViewer;
+  const canManageBiz = isOwner || isBM;
+  const roleLabel = isOwner ? 'เจ้าของระบบ' : isBM ? 'หัวหน้าธุรกิจ' : isZM ? 'หัวหน้าโซน' : isViewer ? 'ผู้ดู' : 'รออนุมัติ';
+  const RoleIcon = isOwner ? Crown : isViewer ? Eye : User;
   const NAV_ITEMS = [
     { id: 'dashboard', label: 'ภาพรวม', icon: Home },
-    { id: 'businesses', label: 'ธุรกิจและโซน', icon: Building2, ownerOnly: true },
+    { id: 'businesses', label: 'ธุรกิจและโซน', icon: Building2, show: canManageBiz },
     { id: 'positions', label: 'ตำแหน่ง', icon: Award },
     { id: 'employees', label: 'พนักงาน', icon: Users },
     { id: 'orgchart', label: 'แผนผังองค์กร', icon: Network },
-    { id: 'users', label: 'ผู้ใช้ระบบ', icon: Shield, ownerOnly: true },
+    { id: 'users', label: 'ผู้ใช้ระบบ', icon: Shield, show: isOwner },
   ];
+
+  // ธุรกิจที่ user เลือกได้
+  const accessibleBiz = (() => {
+    if (isOwner) return businesses;
+    if (isBM) return businesses.filter((b) => (profile.businessIds || []).includes(b.id));
+    if (isZM) {
+      const bizIds = new Set((zones || []).filter((z) => (profile.zoneIds || []).includes(z.id)).map((z) => z.businessId));
+      return businesses.filter((b) => bizIds.has(b.id));
+    }
+    if (isViewer) {
+      const hasScope = profile.businessIds.length > 0 || profile.zoneIds.length > 0;
+      if (!hasScope) return businesses;
+      const bizIds = new Set([
+        ...profile.businessIds,
+        ...(zones || []).filter((z) => profile.zoneIds.includes(z.id)).map((z) => z.businessId),
+      ]);
+      return businesses.filter((b) => bizIds.has(b.id));
+    }
+    return businesses;
+  })();
 
   return (
     <aside className="w-64 bg-emerald-950 text-emerald-50 flex flex-col h-screen sticky top-0">
@@ -444,18 +509,18 @@ function Sidebar({ view, setView, profile, businesses, activeBusinessId, setActi
           </div>
         </div>
       </div>
-      {isOwner && businesses.length > 0 && (
+      {accessibleBiz.length > 1 && (
         <div className="p-3 border-b border-emerald-900">
           <label className="block text-xs text-emerald-300/70 mb-1.5 px-1">ธุรกิจที่กำลังดู</label>
           <select value={activeBusinessId || ''} onChange={(e) => setActiveBusinessId(e.target.value)} className="w-full px-3 py-2 bg-emerald-900 border border-emerald-800 rounded-lg text-sm text-white focus:outline-none focus:border-amber-500">
-            <option value="">🌐 ทุกธุรกิจ (ภาพรวม)</option>
-            {businesses.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+            {isOwner && <option value="">🌐 ทุกธุรกิจ (ภาพรวม)</option>}
+            {accessibleBiz.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
           </select>
         </div>
       )}
       <nav className="flex-1 p-3 space-y-0.5">
         {NAV_ITEMS.map((item) => {
-          if (item.ownerOnly && !isOwner) return null;
+          if (item.show === false) return null;
           const Icon = item.icon;
           const active = view === item.id;
           return (
@@ -469,11 +534,11 @@ function Sidebar({ view, setView, profile, businesses, activeBusinessId, setActi
       <div className="p-3 border-t border-emerald-900">
         <div className="flex items-center gap-3 px-3 py-2 mb-2">
           <div className="w-9 h-9 rounded-full bg-emerald-800 flex items-center justify-center">
-            {isOwner ? <Crown className="w-4 h-4 text-amber-400" /> : <User className="w-4 h-4 text-emerald-200" />}
+            <RoleIcon className={`w-4 h-4 ${isOwner ? 'text-amber-400' : 'text-emerald-200'}`} />
           </div>
           <div className="flex-1 min-w-0">
             <div className="text-sm text-white truncate">{profile.name || 'ผู้ใช้'}</div>
-            <div className="text-xs text-emerald-300/70">{isOwner ? 'เจ้าของระบบ' : 'หัวหน้าโซน'}</div>
+            <div className="text-xs text-emerald-300/70">{roleLabel}</div>
           </div>
         </div>
         <button onClick={() => supabase.auth.signOut()} className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-emerald-100/80 hover:bg-emerald-900 hover:text-white transition-colors">
@@ -500,17 +565,42 @@ function PageHeader({ title, subtitle, children }) {
 
 // ============ DASHBOARD ============
 function Dashboard({ profile, businesses, zones, employees, positions, activeBusinessId, setView }) {
-  const isOwner = profile.role === 'owner';
+  const isOwner = profile.isOwner;
+  const isBM = profile.isBM;
+  const isZM = profile.isZM;
+  const isViewer = profile.isViewer;
   const visibleEmployees = useMemo(() => {
     if (isOwner) return activeBusinessId
       ? employees.filter((e) => e.businessId === activeBusinessId || (e.additionalBusinessIds || []).includes(activeBusinessId))
       : employees;
-    return employees.filter((e) => e.zoneId === profile.zoneId);
-  }, [employees, profile, activeBusinessId, isOwner]);
+    if (isBM) {
+      const ids = profile.businessIds || [];
+      let list = employees.filter((e) => ids.includes(e.businessId) || (e.additionalBusinessIds || []).some((id) => ids.includes(id)));
+      if (activeBusinessId) list = list.filter((e) => e.businessId === activeBusinessId || (e.additionalBusinessIds || []).includes(activeBusinessId));
+      return list;
+    }
+    if (isZM) {
+      const zoneIds = profile.zoneIds || [];
+      return employees.filter((e) => zoneIds.includes(e.zoneId));
+    }
+    if (isViewer) {
+      const noScope = profile.businessIds.length === 0 && profile.zoneIds.length === 0;
+      if (noScope) return activeBusinessId ? employees.filter((e) => e.businessId === activeBusinessId) : employees;
+      return employees.filter((e) => profile.businessIds.includes(e.businessId) || profile.zoneIds.includes(e.zoneId));
+    }
+    return [];
+  }, [employees, profile, activeBusinessId, isOwner, isBM, isZM, isViewer]);
   const visibleZones = useMemo(() => {
     if (isOwner) return activeBusinessId ? zones.filter((z) => z.businessId === activeBusinessId) : zones;
-    return zones.filter((z) => z.id === profile.zoneId);
-  }, [zones, profile, activeBusinessId, isOwner]);
+    if (isBM) return zones.filter((z) => (profile.businessIds || []).includes(z.businessId));
+    if (isZM) return zones.filter((z) => (profile.zoneIds || []).includes(z.id));
+    if (isViewer) {
+      const noScope = profile.businessIds.length === 0 && profile.zoneIds.length === 0;
+      if (noScope) return zones;
+      return zones.filter((z) => profile.businessIds.includes(z.businessId) || profile.zoneIds.includes(z.id));
+    }
+    return [];
+  }, [zones, profile, activeBusinessId, isOwner, isBM, isZM, isViewer]);
 
   const stats = [
     isOwner && { label: 'ธุรกิจ', value: businesses.length, icon: Building2, color: 'emerald' },
@@ -757,7 +847,8 @@ function ZoneForm({ initial, onSave, onCancel }) {
 function PositionsPage({ businesses, positions, employees, profile, activeBusinessId, ops }) {
   const [editing, setEditing] = useState(null);
   const [showModal, setShowModal] = useState(false);
-  const isOwner = profile.role === 'owner';
+  const isOwner = profile.isOwner;
+  const canManageBiz = isOwner || profile.isBM;
   const bizPositions = positions.filter((p) => p.businessId === activeBusinessId);
 
   const save = async (d) => {
@@ -780,14 +871,14 @@ function PositionsPage({ businesses, positions, employees, profile, activeBusine
   return (
     <div className="h-screen overflow-auto">
       <PageHeader title="ตำแหน่ง" subtitle={`ธุรกิจ: ${businesses.find((b) => b.id === activeBusinessId)?.name}`}>
-        {isOwner && <button onClick={() => { setEditing({}); setShowModal(true); }} className="flex items-center gap-2 px-4 py-2 bg-emerald-900 hover:bg-emerald-800 text-white rounded-lg text-sm font-medium"><Plus className="w-4 h-4" /> เพิ่มตำแหน่ง</button>}
+        {canManageBiz && <button onClick={() => { setEditing({}); setShowModal(true); }} className="flex items-center gap-2 px-4 py-2 bg-emerald-900 hover:bg-emerald-800 text-white rounded-lg text-sm font-medium"><Plus className="w-4 h-4" /> เพิ่มตำแหน่ง</button>}
       </PageHeader>
       <div className="p-8">
         {bizPositions.length === 0 ? (
           <EmptyState icon={Award} title="ยังไม่มีตำแหน่ง" description="เพิ่มตำแหน่งและกำหนดสายบังคับบัญชา (เช่น ผู้จัดการ → หัวหน้าโซน → พนักงาน)" />
         ) : (
           <div className="bg-white rounded-xl border border-stone-200 p-6">
-            <PositionTree positions={roots} allPositions={bizPositions} employees={employees} onEdit={(p) => { setEditing(p); setShowModal(true); }} onDelete={del} isOwner={isOwner} level={0} />
+            <PositionTree positions={roots} allPositions={bizPositions} employees={employees} onEdit={(p) => { setEditing(p); setShowModal(true); }} onDelete={del} isOwner={canManageBiz} level={0} />
           </div>
         )}
       </div>
@@ -867,28 +958,68 @@ function EmployeesPage({ businesses, zones, positions, employees, profile, activ
   const [showModal, setShowModal] = useState(false);
   const [viewing, setViewing] = useState(null);
   const [search, setSearch] = useState('');
-  const isOwner = profile.role === 'owner';
+  const isOwner = profile.isOwner;
+  const isBM = profile.isBM;
+  const isZM = profile.isZM;
+  const isViewer = profile.isViewer;
+  const canWrite = profile.canWrite;
 
   const visibleEmployees = useMemo(() => {
-    let list = isOwner
-      ? (activeBusinessId
+    let list;
+    if (isOwner) {
+      list = activeBusinessId
         ? employees.filter((e) => e.businessId === activeBusinessId || (e.additionalBusinessIds || []).includes(activeBusinessId))
-        : employees)
-      : employees.filter((e) => e.zoneId === profile.zoneId);
-    if (isOwner && activeZoneId === '__nozone__') list = list.filter((e) => !e.zoneId);
-    else if (isOwner && activeZoneId) list = list.filter((e) => e.zoneId === activeZoneId);
+        : employees;
+    } else if (isBM) {
+      const ids = profile.businessIds || [];
+      list = employees.filter((e) => ids.includes(e.businessId) || (e.additionalBusinessIds || []).some((id) => ids.includes(id)));
+      if (activeBusinessId) list = list.filter((e) => e.businessId === activeBusinessId || (e.additionalBusinessIds || []).includes(activeBusinessId));
+    } else if (isZM) {
+      const zoneIds = profile.zoneIds || [];
+      list = employees.filter((e) => zoneIds.includes(e.zoneId));
+    } else if (isViewer) {
+      const noScope = profile.businessIds.length === 0 && profile.zoneIds.length === 0;
+      if (noScope) {
+        list = activeBusinessId ? employees.filter((e) => e.businessId === activeBusinessId) : employees;
+      } else {
+        list = employees.filter((e) => profile.businessIds.includes(e.businessId) || profile.zoneIds.includes(e.zoneId));
+        if (activeBusinessId) list = list.filter((e) => e.businessId === activeBusinessId);
+      }
+    } else {
+      list = [];
+    }
+    if (activeZoneId === '__nozone__') list = list.filter((e) => !e.zoneId);
+    else if (activeZoneId) list = list.filter((e) => e.zoneId === activeZoneId);
     if (search.trim()) {
       const s = search.toLowerCase();
       list = list.filter((e) => e.name?.toLowerCase().includes(s) || e.nickname?.toLowerCase().includes(s) || e.employeeNumber?.toLowerCase().includes(s) || e.phone?.includes(s) || e.email?.toLowerCase().includes(s));
     }
     return list;
-  }, [employees, isOwner, activeBusinessId, profile, activeZoneId, search]);
+  }, [employees, profile, activeBusinessId, activeZoneId, search, isOwner, isBM, isZM, isViewer]);
 
-  const visibleZones = isOwner ? zones.filter((z) => z.businessId === activeBusinessId) : zones.filter((z) => z.id === profile.zoneId);
+  // โซนที่ user เลือกได้
+  const visibleZones = useMemo(() => {
+    if (isOwner) return activeBusinessId ? zones.filter((z) => z.businessId === activeBusinessId) : zones;
+    if (isBM) return zones.filter((z) => (profile.businessIds || []).includes(z.businessId) && (!activeBusinessId || z.businessId === activeBusinessId));
+    if (isZM) return zones.filter((z) => (profile.zoneIds || []).includes(z.id));
+    if (isViewer) {
+      const noScope = profile.businessIds.length === 0 && profile.zoneIds.length === 0;
+      if (noScope) return activeBusinessId ? zones.filter((z) => z.businessId === activeBusinessId) : zones;
+      return zones.filter((z) => profile.businessIds.includes(z.businessId) || profile.zoneIds.includes(z.id));
+    }
+    return [];
+  }, [zones, profile, activeBusinessId, isOwner, isBM, isZM, isViewer]);
+
   const filteredZoneName = activeZoneId === '__nozone__' ? 'ไม่จำกัดโซน' : (activeZoneId ? zones.find((z) => z.id === activeZoneId)?.name : null);
 
+  // ธุรกิจปัจจุบันสำหรับการเพิ่มพนักงาน (ใช้ activeBusinessId; ถ้าไม่มีให้ default ตาม role)
+  const targetBusinessId = activeBusinessId
+    || (isBM && profile.businessIds[0])
+    || (isZM && zones.find((z) => (profile.zoneIds || []).includes(z.id))?.businessId)
+    || null;
+
   const save = async (d) => {
-    const payload = { ...d, businessId: isOwner ? activeBusinessId : profile.businessId };
+    const payload = { ...d, businessId: targetBusinessId };
     if (editing?.id) await ops.employee.update(editing.id, payload);
     else await ops.employee.add(payload);
     setShowModal(false); setEditing(null);
@@ -901,7 +1032,7 @@ function EmployeesPage({ businesses, zones, positions, employees, profile, activ
     await ops.employee.delete(id);
   };
 
-  const allMode = isOwner && !activeBusinessId;
+  const allMode = (isOwner || isBM) && !activeBusinessId && (isOwner || (profile.businessIds || []).length > 1);
 
   if (isOwner && businesses.length === 0) return (
     <div className="h-screen overflow-auto"><PageHeader title="พนักงาน" /><div className="p-8"><EmptyState icon={Users} title="ยังไม่มีธุรกิจ" description="สร้างธุรกิจก่อนที่หน้า 'ธุรกิจและโซน'" /></div></div>
@@ -910,7 +1041,9 @@ function EmployeesPage({ businesses, zones, positions, employees, profile, activ
   return (
     <div className="h-screen overflow-auto">
       <PageHeader title={filteredZoneName ? `พนักงาน — ${filteredZoneName}` : (allMode ? 'พนักงานทุกคน — ภาพรวมทุกธุรกิจ' : 'พนักงาน')} subtitle={`${visibleEmployees.length} คน${filteredZoneName ? ' ในโซนนี้' : (allMode ? ' รวมทุกธุรกิจ' : '')}`}>
-        <button onClick={() => { setEditing({}); setShowModal(true); }} disabled={allMode} title={allMode ? 'เลือกธุรกิจที่ sidebar ก่อน' : ''} className="flex items-center gap-2 px-4 py-2 bg-emerald-900 hover:bg-emerald-800 disabled:bg-stone-300 disabled:cursor-not-allowed text-white rounded-lg text-sm font-medium"><Plus className="w-4 h-4" /> เพิ่มพนักงาน</button>
+        {canWrite && !allMode && targetBusinessId && (
+          <button onClick={() => { setEditing({}); setShowModal(true); }} className="flex items-center gap-2 px-4 py-2 bg-emerald-900 hover:bg-emerald-800 text-white rounded-lg text-sm font-medium"><Plus className="w-4 h-4" /> เพิ่มพนักงาน</button>
+        )}
       </PageHeader>
       <div className="p-8">
         {allMode && (
@@ -956,10 +1089,12 @@ function EmployeesPage({ businesses, zones, positions, employees, profile, activ
                     {emp.photo ? <img src={emp.photo} alt={display} className="w-full h-full object-contain" /> : (
                       <div className="w-full h-full flex items-center justify-center"><div className="w-24 h-24 rounded-full bg-gradient-to-br from-emerald-700 to-emerald-900 text-white text-3xl font-semibold flex items-center justify-center">{initials}</div></div>
                     )}
-                    <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button onClick={(e) => { e.stopPropagation(); setEditing(emp); setShowModal(true); }} className="p-2 bg-white/95 hover:bg-white rounded-lg text-stone-700 shadow-sm"><Edit2 className="w-4 h-4" /></button>
-                      <button onClick={(e) => { e.stopPropagation(); del(emp.id); }} className="p-2 bg-white/95 hover:bg-white rounded-lg text-red-600 shadow-sm"><Trash2 className="w-4 h-4" /></button>
-                    </div>
+                    {canWrite && (
+                      <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button onClick={(e) => { e.stopPropagation(); setEditing(emp); setShowModal(true); }} className="p-2 bg-white/95 hover:bg-white rounded-lg text-stone-700 shadow-sm"><Edit2 className="w-4 h-4" /></button>
+                        <button onClick={(e) => { e.stopPropagation(); del(emp.id); }} className="p-2 bg-white/95 hover:bg-white rounded-lg text-red-600 shadow-sm"><Trash2 className="w-4 h-4" /></button>
+                      </div>
+                    )}
                     {(zone || pos?.crossZone) && (
                       <div className="absolute bottom-2 left-2">
                         {zone ? <span className="inline-flex items-center gap-1 px-2 py-1 bg-white/95 backdrop-blur text-stone-700 text-xs font-medium rounded-md shadow-sm"><MapPin className="w-3 h-3" />{zone.name}</span>
@@ -997,17 +1132,17 @@ function EmployeesPage({ businesses, zones, positions, employees, profile, activ
       </div>
       {showModal && (
         <Modal title={editing?.id ? 'แก้ไขข้อมูลพนักงาน' : 'เพิ่มพนักงานใหม่'} onClose={() => { setShowModal(false); setEditing(null); }} wide>
-          <EmployeeForm initial={editing} zones={visibleZones} positions={positions.filter((p) => p.businessId === (isOwner ? activeBusinessId : profile.businessId))} employees={employees.filter((e) => e.businessId === (isOwner ? activeBusinessId : profile.businessId) && e.id !== editing?.id)} businesses={businesses} onSave={save} onCancel={() => { setShowModal(false); setEditing(null); }} lockedZoneId={!isOwner ? profile.zoneId : null} businessId={isOwner ? activeBusinessId : profile.businessId} isOwner={isOwner} />
+          <EmployeeForm initial={editing} zones={visibleZones} positions={positions.filter((p) => p.businessId === targetBusinessId)} employees={employees.filter((e) => e.businessId === targetBusinessId && e.id !== editing?.id)} businesses={businesses} onSave={save} onCancel={() => { setShowModal(false); setEditing(null); }} lockedZoneId={isZM && (profile.zoneIds || []).length === 1 ? profile.zoneIds[0] : null} allowedZoneIds={isZM ? (profile.zoneIds || []) : null} businessId={targetBusinessId} isOwner={isOwner || isBM} />
         </Modal>
       )}
       {viewing && (
-        <EmployeeDetailModal employee={viewing} zones={zones} positions={positions} employees={employees} businesses={businesses} onClose={() => setViewing(null)} onEdit={() => { setEditing(viewing); setShowModal(true); setViewing(null); }} onDelete={() => { del(viewing.id); setViewing(null); }} />
+        <EmployeeDetailModal employee={viewing} zones={zones} positions={positions} employees={employees} businesses={businesses} canWrite={canWrite} onClose={() => setViewing(null)} onEdit={() => { setEditing(viewing); setShowModal(true); setViewing(null); }} onDelete={() => { del(viewing.id); setViewing(null); }} />
       )}
     </div>
   );
 }
 
-function EmployeeDetailModal({ employee, zones, positions, employees, businesses, onClose, onEdit, onDelete }) {
+function EmployeeDetailModal({ employee, zones, positions, employees, businesses, canWrite, onClose, onEdit, onDelete }) {
   const zone = zones.find((z) => z.id === employee.zoneId);
   const pos = positions.find((p) => p.id === employee.positionId);
   const mgr = employees.find((e) => e.id === employee.managerId);
@@ -1137,10 +1272,12 @@ function EmployeeDetailModal({ employee, zones, positions, employees, businesses
             </div>
           )}
         </div>
-        <div className="px-6 py-3 border-t border-stone-200 bg-stone-50 flex justify-end gap-2">
-          <button onClick={onDelete} className="flex items-center gap-2 px-4 py-2 text-red-600 hover:bg-red-50 rounded-lg text-sm font-medium"><Trash2 className="w-4 h-4" /> ลบ</button>
-          <button onClick={onEdit} className="flex items-center gap-2 px-4 py-2 bg-emerald-900 hover:bg-emerald-800 text-white rounded-lg text-sm font-medium"><Edit2 className="w-4 h-4" /> แก้ไข</button>
-        </div>
+        {canWrite && (
+          <div className="px-6 py-3 border-t border-stone-200 bg-stone-50 flex justify-end gap-2">
+            <button onClick={onDelete} className="flex items-center gap-2 px-4 py-2 text-red-600 hover:bg-red-50 rounded-lg text-sm font-medium"><Trash2 className="w-4 h-4" /> ลบ</button>
+            <button onClick={onEdit} className="flex items-center gap-2 px-4 py-2 bg-emerald-900 hover:bg-emerald-800 text-white rounded-lg text-sm font-medium"><Edit2 className="w-4 h-4" /> แก้ไข</button>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1164,7 +1301,7 @@ function DetailBlock({ icon: Icon, label, value, mono }) {
   );
 }
 
-function EmployeeForm({ initial, zones, positions, employees, businesses, onSave, onCancel, lockedZoneId, businessId, isOwner }) {
+function EmployeeForm({ initial, zones, positions, employees, businesses, onSave, onCancel, lockedZoneId, allowedZoneIds, businessId, isOwner }) {
   const [name, setName] = useState(initial?.name || '');
   const [nickname, setNickname] = useState(initial?.nickname || '');
   const [employeeNumber, setEmployeeNumber] = useState(initial?.employeeNumber || '');
@@ -1247,7 +1384,7 @@ function EmployeeForm({ initial, zones, positions, employees, businesses, onSave
         <FormField label={isCrossZone ? 'โซน (ไม่จำเป็น)' : 'โซน'} required={!isCrossZone}>
           <select value={zoneId} onChange={(e) => setZoneId(e.target.value)} disabled={!!lockedZoneId} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600 bg-white disabled:bg-stone-100">
             <option value="">{isCrossZone ? '— ไม่จำกัดโซน —' : '— เลือกโซน —'}</option>
-            {zones.map((z) => <option key={z.id} value={z.id}>{z.name}</option>)}
+            {(allowedZoneIds && allowedZoneIds.length ? zones.filter((z) => allowedZoneIds.includes(z.id)) : zones).map((z) => <option key={z.id} value={z.id}>{z.name}</option>)}
           </select>
           {isCrossZone && <p className="text-xs text-amber-700 mt-1 flex items-center gap-1"><AlertCircle className="w-3 h-3" />ตำแหน่งนี้ไม่จำกัดโซน เลือกหรือเว้นว่างก็ได้</p>}
         </FormField>
@@ -1446,14 +1583,27 @@ function DocItem({ path, onRemove }) {
 
 // ============ ORG CHART ============
 function OrgChartPage({ businesses, zones, positions, employees, profile, activeBusinessId }) {
-  const isOwner = profile.role === 'owner';
+  const isOwner = profile.isOwner;
+  const isBM = profile.isBM;
+  const isZM = profile.isZM;
+  const isViewer = profile.isViewer;
   const visible = useMemo(() => {
     if (isOwner) return employees.filter((e) => e.businessId === activeBusinessId);
-    return employees.filter((e) => e.zoneId === profile.zoneId);
-  }, [employees, isOwner, activeBusinessId, profile]);
+    if (isBM) {
+      const ids = profile.businessIds || [];
+      return employees.filter((e) => ids.includes(e.businessId) && (!activeBusinessId || e.businessId === activeBusinessId));
+    }
+    if (isZM) return employees.filter((e) => (profile.zoneIds || []).includes(e.zoneId));
+    if (isViewer) {
+      const noScope = profile.businessIds.length === 0 && profile.zoneIds.length === 0;
+      if (noScope) return employees.filter((e) => e.businessId === activeBusinessId);
+      return employees.filter((e) => (profile.businessIds.includes(e.businessId) || profile.zoneIds.includes(e.zoneId)) && (!activeBusinessId || e.businessId === activeBusinessId));
+    }
+    return [];
+  }, [employees, profile, activeBusinessId, isOwner, isBM, isZM, isViewer]);
   const roots = visible.filter((e) => !e.managerId || !visible.find((x) => x.id === e.managerId));
 
-  if (isOwner && !activeBusinessId) return <div className="h-screen overflow-auto"><PageHeader title="แผนผังองค์กร" /><div className="p-8"><EmptyState icon={Network} title="เลือกธุรกิจที่ sidebar" description="แผนผังองค์กรเป็นข้อมูลเฉพาะของแต่ละธุรกิจ — ต้องเลือกธุรกิจที่ sidebar ก่อน" /></div></div>;
+  if ((isOwner || isBM || isViewer) && !activeBusinessId) return <div className="h-screen overflow-auto"><PageHeader title="แผนผังองค์กร" /><div className="p-8"><EmptyState icon={Network} title="เลือกธุรกิจที่ sidebar" description="แผนผังองค์กรเป็นข้อมูลเฉพาะของแต่ละธุรกิจ — ต้องเลือกธุรกิจที่ sidebar ก่อน" /></div></div>;
 
   return (
     <div className="h-screen overflow-auto">
@@ -1511,6 +1661,33 @@ function UsersPage({ profiles, businesses, zones, ops, currentUserId }) {
     await ops.profile.delete(id);
   };
 
+  const roleConfig = {
+    owner: { label: 'เจ้าของระบบ', cls: 'bg-amber-100 text-amber-800', icon: Crown },
+    business_manager: { label: 'หัวหน้าธุรกิจ', cls: 'bg-rose-100 text-rose-800', icon: Building2 },
+    zone_manager: { label: 'หัวหน้าโซน', cls: 'bg-emerald-100 text-emerald-800', icon: User },
+    viewer: { label: 'ผู้ดู', cls: 'bg-sky-100 text-sky-800', icon: Eye },
+    pending: { label: 'รออนุมัติ', cls: 'bg-stone-100 text-stone-600', icon: Clock },
+  };
+
+  const describeScope = (u) => {
+    const bizIds = u.businessIds || [];
+    const zoneIds = u.zoneIds || [];
+    if (u.role === 'owner') return 'ทุกธุรกิจ';
+    if (u.role === 'pending') return '—';
+    if (u.role === 'viewer' && bizIds.length === 0 && zoneIds.length === 0) return 'ทั้งระบบ (ดูได้หมด)';
+    const bizNames = bizIds.map((id) => businesses.find((b) => b.id === id)?.name).filter(Boolean);
+    const zoneNames = zoneIds.map((id) => {
+      const z = zones.find((zn) => zn.id === id);
+      if (!z) return null;
+      const biz = businesses.find((b) => b.id === z.businessId);
+      return biz ? `${biz.name} → ${z.name}` : z.name;
+    }).filter(Boolean);
+    const parts = [];
+    if (bizNames.length) parts.push(`ธุรกิจ: ${bizNames.join(', ')}`);
+    if (zoneNames.length) parts.push(`โซน: ${zoneNames.join(', ')}`);
+    return parts.length ? parts.join(' • ') : '—';
+  };
+
   return (
     <div className="h-screen overflow-auto">
       <PageHeader title="ผู้ใช้ระบบ" subtitle="จัดการสิทธิ์การเข้าถึง — ผู้ใช้ใหม่สมัครเองที่หน้า login แล้วเจ้าของอนุมัติที่นี่" />
@@ -1527,21 +1704,19 @@ function UsersPage({ profiles, businesses, zones, ops, currentUserId }) {
             </thead>
             <tbody className="divide-y divide-stone-100">
               {profiles.map((u) => {
-                const biz = businesses.find((b) => b.id === u.businessId);
-                const zone = zones.find((z) => z.id === u.zoneId);
-                const roleLabel = u.role === 'owner' ? 'เจ้าของระบบ' : u.role === 'zone_manager' ? 'หัวหน้าโซน' : 'รออนุมัติ';
-                const roleClass = u.role === 'owner' ? 'bg-amber-100 text-amber-800' : u.role === 'zone_manager' ? 'bg-emerald-100 text-emerald-800' : 'bg-stone-100 text-stone-600';
+                const cfg = roleConfig[u.role] || roleConfig.pending;
+                const Icon = cfg.icon;
                 return (
                   <tr key={u.id} className="hover:bg-stone-50">
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-3">
-                        {u.role === 'owner' ? <Crown className="w-4 h-4 text-amber-500" /> : u.role === 'pending' ? <Clock className="w-4 h-4 text-stone-400" /> : <User className="w-4 h-4 text-stone-400" />}
+                        <Icon className={`w-4 h-4 ${u.role === 'owner' ? 'text-amber-500' : 'text-stone-400'}`} />
                         <span className="font-medium text-stone-800">{u.name || '—'}</span>
                         {u.id === currentUserId && <span className="text-xs text-stone-400">(คุณ)</span>}
                       </div>
                     </td>
-                    <td className="px-6 py-4"><span className={`inline-flex px-2 py-0.5 rounded text-xs font-medium ${roleClass}`}>{roleLabel}</span></td>
-                    <td className="px-6 py-4 text-sm text-stone-600">{u.role === 'owner' ? 'ทุกธุรกิจ' : zone ? `${biz?.name} → ${zone.name}` : '—'}</td>
+                    <td className="px-6 py-4"><span className={`inline-flex px-2 py-0.5 rounded text-xs font-medium ${cfg.cls}`}>{cfg.label}</span></td>
+                    <td className="px-6 py-4 text-sm text-stone-600 max-w-md">{describeScope(u)}</td>
                     <td className="px-6 py-4 text-right">
                       <div className="flex justify-end gap-1">
                         <button onClick={() => { setEditing(u); setShowModal(true); }} className="p-1.5 hover:bg-stone-100 rounded text-stone-600"><Edit2 className="w-4 h-4" /></button>
@@ -1556,7 +1731,7 @@ function UsersPage({ profiles, businesses, zones, ops, currentUserId }) {
         </div>
       </div>
       {showModal && (
-        <Modal title="แก้ไขผู้ใช้" onClose={() => { setShowModal(false); setEditing(null); }}>
+        <Modal title="แก้ไขผู้ใช้" onClose={() => { setShowModal(false); setEditing(null); }} wide>
           <ProfileEditForm initial={editing} businesses={businesses} zones={zones} onSave={save} onCancel={() => { setShowModal(false); setEditing(null); }} isSelf={editing?.id === currentUserId} />
         </Modal>
       )}
@@ -1567,36 +1742,178 @@ function UsersPage({ profiles, businesses, zones, ops, currentUserId }) {
 function ProfileEditForm({ initial, businesses, zones, onSave, onCancel, isSelf }) {
   const [name, setName] = useState(initial?.name || '');
   const [role, setRole] = useState(initial?.role || 'pending');
-  const [businessId, setBusinessId] = useState(initial?.businessId || '');
-  const [zoneId, setZoneId] = useState(initial?.zoneId || '');
-  const availableZones = zones.filter((z) => z.businessId === businessId);
+  const [businessIds, setBusinessIds] = useState(initial?.businessIds || []);
+  const [zoneIds, setZoneIds] = useState(initial?.zoneIds || []);
+  // สำหรับ viewer: เลือก scope แบบใด
+  const [viewerScope, setViewerScope] = useState(() => {
+    if (initial?.role !== 'viewer') return 'system';
+    if ((initial?.businessIds || []).length > 0) return 'business';
+    if ((initial?.zoneIds || []).length > 0) return 'zone';
+    return 'system';
+  });
+
+  const toggleBiz = (id) => setBusinessIds(businessIds.includes(id) ? businessIds.filter((x) => x !== id) : [...businessIds, id]);
+  const toggleZone = (id) => setZoneIds(zoneIds.includes(id) ? zoneIds.filter((x) => x !== id) : [...zoneIds, id]);
+
   const submit = () => {
-    if (role === 'zone_manager' && (!businessId || !zoneId)) return alert('กรุณาเลือกธุรกิจและโซน');
-    onSave({ name: name.trim(), role, businessId: role === 'owner' ? null : businessId || null, zoneId: role === 'owner' ? null : zoneId || null });
+    if (role === 'business_manager' && businessIds.length === 0) return alert('กรุณาเลือกธุรกิจอย่างน้อย 1 ที่');
+    if (role === 'zone_manager' && zoneIds.length === 0) return alert('กรุณาเลือกโซนอย่างน้อย 1 ที่');
+    if (role === 'viewer' && viewerScope === 'business' && businessIds.length === 0) return alert('กรุณาเลือกธุรกิจ');
+    if (role === 'viewer' && viewerScope === 'zone' && zoneIds.length === 0) return alert('กรุณาเลือกโซน');
+    let bizIds = [], zIds = [];
+    if (role === 'business_manager') bizIds = businessIds;
+    else if (role === 'zone_manager') zIds = zoneIds;
+    else if (role === 'viewer') {
+      if (viewerScope === 'business') bizIds = businessIds;
+      else if (viewerScope === 'zone') zIds = zoneIds;
+    }
+    onSave({ name: name.trim(), role, businessIds: bizIds, zoneIds: zIds });
   };
+
+  const ROLES = [
+    { id: 'owner', label: 'เจ้าของระบบ', desc: 'ทุกอย่าง', icon: Crown, color: 'amber' },
+    { id: 'business_manager', label: 'หัวหน้าธุรกิจ', desc: 'จัดการ 1+ ธุรกิจ', icon: Building2, color: 'rose' },
+    { id: 'zone_manager', label: 'หัวหน้าโซน', desc: 'จัดการ 1+ โซน', icon: User, color: 'emerald' },
+    { id: 'viewer', label: 'ผู้ดู', desc: 'ดูอย่างเดียว', icon: Eye, color: 'sky' },
+    { id: 'pending', label: 'รออนุมัติ', desc: 'ยังไม่มีสิทธิ์', icon: Clock, color: 'stone' },
+  ];
 
   return (
     <div className="space-y-4">
       <FormField label="ชื่อ-นามสกุล"><input autoFocus value={name} onChange={(e) => setName(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600" /></FormField>
+
       <FormField label="บทบาท">
-        <div className="grid grid-cols-3 gap-2">
-          <button type="button" onClick={() => setRole('owner')} disabled={isSelf && role === 'owner'} className={`p-2 rounded-lg border-2 text-center text-xs transition-all ${role === 'owner' ? 'border-emerald-600 bg-emerald-50' : 'border-stone-200'}`}>
-            <Crown className={`w-4 h-4 mx-auto mb-1 ${role === 'owner' ? 'text-amber-500' : 'text-stone-400'}`} /><div className="font-medium text-stone-800">เจ้าของ</div>
-          </button>
-          <button type="button" onClick={() => setRole('zone_manager')} className={`p-2 rounded-lg border-2 text-center text-xs ${role === 'zone_manager' ? 'border-emerald-600 bg-emerald-50' : 'border-stone-200'}`}>
-            <User className={`w-4 h-4 mx-auto mb-1 ${role === 'zone_manager' ? 'text-emerald-700' : 'text-stone-400'}`} /><div className="font-medium text-stone-800">หัวหน้าโซน</div>
-          </button>
-          <button type="button" onClick={() => setRole('pending')} className={`p-2 rounded-lg border-2 text-center text-xs ${role === 'pending' ? 'border-emerald-600 bg-emerald-50' : 'border-stone-200'}`}>
-            <Clock className={`w-4 h-4 mx-auto mb-1 ${role === 'pending' ? 'text-stone-700' : 'text-stone-400'}`} /><div className="font-medium text-stone-800">รออนุมัติ</div>
-          </button>
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+          {ROLES.map((r) => {
+            const Icon = r.icon;
+            const sel = role === r.id;
+            const disabled = isSelf && r.id !== 'owner';
+            return (
+              <button key={r.id} type="button" onClick={() => !disabled && setRole(r.id)} disabled={disabled} className={`p-3 rounded-lg border-2 text-center text-xs transition-all ${sel ? 'border-emerald-600 bg-emerald-50' : 'border-stone-200 hover:border-stone-300'} ${disabled ? 'opacity-40 cursor-not-allowed' : ''}`}>
+                <Icon className={`w-5 h-5 mx-auto mb-1 ${sel ? `text-${r.color}-600` : 'text-stone-400'}`} />
+                <div className="font-medium text-stone-800">{r.label}</div>
+                <div className="text-[10px] text-stone-500 mt-0.5">{r.desc}</div>
+              </button>
+            );
+          })}
         </div>
+        {isSelf && <p className="text-xs text-amber-700 mt-2">⚠️ เปลี่ยน role ของตัวเองไม่ได้ (กันการล็อกตัวเองออก)</p>}
       </FormField>
-      {role === 'zone_manager' && (
-        <div className="grid grid-cols-2 gap-3">
-          <FormField label="ธุรกิจ" required><select value={businessId} onChange={(e) => { setBusinessId(e.target.value); setZoneId(''); }} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600 bg-white"><option value="">— เลือก —</option>{businesses.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></FormField>
-          <FormField label="โซน" required><select value={zoneId} onChange={(e) => setZoneId(e.target.value)} disabled={!businessId} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600 bg-white disabled:bg-stone-100"><option value="">— เลือก —</option>{availableZones.map((z) => <option key={z.id} value={z.id}>{z.name}</option>)}</select></FormField>
-        </div>
+
+      {/* Business Manager: multi-select businesses */}
+      {role === 'business_manager' && (
+        <FormField label="ธุรกิจที่ดูแล" required>
+          <p className="text-xs text-stone-500 -mt-1 mb-2">ติ๊กธุรกิจที่ผู้ใช้คนนี้จะจัดการได้ (โซน, ตำแหน่ง, พนักงานในธุรกิจนี้)</p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-72 overflow-auto p-1">
+            {businesses.map((b) => {
+              const checked = businessIds.includes(b.id);
+              return (
+                <label key={b.id} className={`flex items-center gap-2 p-2.5 rounded-lg border-2 cursor-pointer ${checked ? 'border-emerald-600 bg-emerald-50' : 'border-stone-200 hover:border-stone-300'}`}>
+                  <input type="checkbox" checked={checked} onChange={() => toggleBiz(b.id)} className="w-4 h-4 rounded text-emerald-700" />
+                  <Building2 className={`w-4 h-4 ${checked ? 'text-emerald-700' : 'text-stone-400'}`} />
+                  <span className={`text-sm ${checked ? 'font-medium text-emerald-900' : 'text-stone-700'}`}>{b.name}</span>
+                </label>
+              );
+            })}
+          </div>
+        </FormField>
       )}
+
+      {/* Zone Manager: multi-select zones */}
+      {role === 'zone_manager' && (
+        <FormField label="โซนที่ดูแล" required>
+          <p className="text-xs text-stone-500 -mt-1 mb-2">ติ๊กโซนที่ผู้ใช้คนนี้จะจัดการพนักงานได้ (เลือกได้หลายโซน, ข้ามธุรกิจได้)</p>
+          <div className="space-y-3 max-h-72 overflow-auto p-1">
+            {businesses.map((b) => {
+              const bizZones = zones.filter((z) => z.businessId === b.id);
+              if (bizZones.length === 0) return null;
+              return (
+                <div key={b.id}>
+                  <div className="text-xs font-medium text-stone-600 mb-1.5 flex items-center gap-1.5"><Building2 className="w-3 h-3" />{b.name}</div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                    {bizZones.map((z) => {
+                      const checked = zoneIds.includes(z.id);
+                      return (
+                        <label key={z.id} className={`flex items-center gap-2 p-2 rounded-lg border-2 cursor-pointer ${checked ? 'border-emerald-600 bg-emerald-50' : 'border-stone-200 hover:border-stone-300'}`}>
+                          <input type="checkbox" checked={checked} onChange={() => toggleZone(z.id)} className="w-4 h-4 rounded text-emerald-700" />
+                          <MapPin className={`w-3.5 h-3.5 ${checked ? 'text-emerald-700' : 'text-stone-400'}`} />
+                          <span className={`text-sm ${checked ? 'font-medium text-emerald-900' : 'text-stone-700'}`}>{z.name}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </FormField>
+      )}
+
+      {/* Viewer: choose scope */}
+      {role === 'viewer' && (
+        <>
+          <FormField label="ขอบเขตการดู">
+            <div className="grid grid-cols-3 gap-2">
+              <button type="button" onClick={() => setViewerScope('system')} className={`p-3 rounded-lg border-2 text-center text-xs ${viewerScope === 'system' ? 'border-emerald-600 bg-emerald-50' : 'border-stone-200'}`}>
+                <div className="font-medium text-stone-800">ทั้งระบบ</div>
+                <div className="text-[10px] text-stone-500 mt-0.5">เห็นทุกธุรกิจ</div>
+              </button>
+              <button type="button" onClick={() => setViewerScope('business')} className={`p-3 rounded-lg border-2 text-center text-xs ${viewerScope === 'business' ? 'border-emerald-600 bg-emerald-50' : 'border-stone-200'}`}>
+                <div className="font-medium text-stone-800">เฉพาะธุรกิจ</div>
+                <div className="text-[10px] text-stone-500 mt-0.5">เลือก 1+ ธุรกิจ</div>
+              </button>
+              <button type="button" onClick={() => setViewerScope('zone')} className={`p-3 rounded-lg border-2 text-center text-xs ${viewerScope === 'zone' ? 'border-emerald-600 bg-emerald-50' : 'border-stone-200'}`}>
+                <div className="font-medium text-stone-800">เฉพาะโซน</div>
+                <div className="text-[10px] text-stone-500 mt-0.5">เลือก 1+ โซน</div>
+              </button>
+            </div>
+          </FormField>
+          {viewerScope === 'business' && (
+            <FormField label="ธุรกิจที่ดูได้" required>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-64 overflow-auto p-1">
+                {businesses.map((b) => {
+                  const checked = businessIds.includes(b.id);
+                  return (
+                    <label key={b.id} className={`flex items-center gap-2 p-2.5 rounded-lg border-2 cursor-pointer ${checked ? 'border-emerald-600 bg-emerald-50' : 'border-stone-200 hover:border-stone-300'}`}>
+                      <input type="checkbox" checked={checked} onChange={() => toggleBiz(b.id)} className="w-4 h-4 rounded text-emerald-700" />
+                      <Building2 className={`w-4 h-4 ${checked ? 'text-emerald-700' : 'text-stone-400'}`} />
+                      <span className={`text-sm ${checked ? 'font-medium text-emerald-900' : 'text-stone-700'}`}>{b.name}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </FormField>
+          )}
+          {viewerScope === 'zone' && (
+            <FormField label="โซนที่ดูได้" required>
+              <div className="space-y-3 max-h-64 overflow-auto p-1">
+                {businesses.map((b) => {
+                  const bizZones = zones.filter((z) => z.businessId === b.id);
+                  if (bizZones.length === 0) return null;
+                  return (
+                    <div key={b.id}>
+                      <div className="text-xs font-medium text-stone-600 mb-1.5 flex items-center gap-1.5"><Building2 className="w-3 h-3" />{b.name}</div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                        {bizZones.map((z) => {
+                          const checked = zoneIds.includes(z.id);
+                          return (
+                            <label key={z.id} className={`flex items-center gap-2 p-2 rounded-lg border-2 cursor-pointer ${checked ? 'border-emerald-600 bg-emerald-50' : 'border-stone-200 hover:border-stone-300'}`}>
+                              <input type="checkbox" checked={checked} onChange={() => toggleZone(z.id)} className="w-4 h-4 rounded text-emerald-700" />
+                              <MapPin className={`w-3.5 h-3.5 ${checked ? 'text-emerald-700' : 'text-stone-400'}`} />
+                              <span className={`text-sm ${checked ? 'font-medium text-emerald-900' : 'text-stone-700'}`}>{z.name}</span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </FormField>
+          )}
+        </>
+      )}
+
       <FormActions onCancel={onCancel} onSubmit={submit} />
     </div>
   );
