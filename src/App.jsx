@@ -167,7 +167,7 @@ export default function App() {
   }, [profile?.id, profile?.role]);
 
   // ---- HANDLERS ----
-  const changeBusiness = (id) => { setActiveBusinessId(id); setActiveZoneId(null); };
+  const changeBusiness = (id) => { setActiveBusinessId(id || null); setActiveZoneId(null); };
   const openZoneEmployees = (bid, zid) => {
     setActiveBusinessId(bid); setActiveZoneId(zid); setView('employees');
   };
@@ -448,6 +448,7 @@ function Sidebar({ view, setView, profile, businesses, activeBusinessId, setActi
         <div className="p-3 border-b border-emerald-900">
           <label className="block text-xs text-emerald-300/70 mb-1.5 px-1">ธุรกิจที่กำลังดู</label>
           <select value={activeBusinessId || ''} onChange={(e) => setActiveBusinessId(e.target.value)} className="w-full px-3 py-2 bg-emerald-900 border border-emerald-800 rounded-lg text-sm text-white focus:outline-none focus:border-amber-500">
+            <option value="">🌐 ทุกธุรกิจ (ภาพรวม)</option>
             {businesses.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
           </select>
         </div>
@@ -772,7 +773,7 @@ function PositionsPage({ businesses, positions, employees, profile, activeBusine
   };
 
   if (!activeBusinessId) return (
-    <div className="h-screen overflow-auto"><PageHeader title="ตำแหน่ง" /><div className="p-8"><EmptyState icon={Award} title="ยังไม่ได้เลือกธุรกิจ" description="กรุณาเลือกธุรกิจก่อน" /></div></div>
+    <div className="h-screen overflow-auto"><PageHeader title="ตำแหน่ง" /><div className="p-8"><EmptyState icon={Award} title="เลือกธุรกิจที่ sidebar" description="ตำแหน่งเป็นข้อมูลเฉพาะของแต่ละธุรกิจ — ต้องเลือกธุรกิจที่ sidebar ก่อน" /></div></div>
   );
   const roots = bizPositions.filter((p) => !p.parentId);
 
@@ -870,7 +871,9 @@ function EmployeesPage({ businesses, zones, positions, employees, profile, activ
 
   const visibleEmployees = useMemo(() => {
     let list = isOwner
-      ? employees.filter((e) => e.businessId === activeBusinessId || (e.additionalBusinessIds || []).includes(activeBusinessId))
+      ? (activeBusinessId
+        ? employees.filter((e) => e.businessId === activeBusinessId || (e.additionalBusinessIds || []).includes(activeBusinessId))
+        : employees)
       : employees.filter((e) => e.zoneId === profile.zoneId);
     if (isOwner && activeZoneId === '__nozone__') list = list.filter((e) => !e.zoneId);
     else if (isOwner && activeZoneId) list = list.filter((e) => e.zoneId === activeZoneId);
@@ -898,16 +901,24 @@ function EmployeesPage({ businesses, zones, positions, employees, profile, activ
     await ops.employee.delete(id);
   };
 
-  if (isOwner && !activeBusinessId) return (
-    <div className="h-screen overflow-auto"><PageHeader title="พนักงาน" /><div className="p-8"><EmptyState icon={Users} title="ยังไม่ได้เลือกธุรกิจ" description="กรุณาเลือกธุรกิจก่อน" /></div></div>
+  const allMode = isOwner && !activeBusinessId;
+
+  if (isOwner && businesses.length === 0) return (
+    <div className="h-screen overflow-auto"><PageHeader title="พนักงาน" /><div className="p-8"><EmptyState icon={Users} title="ยังไม่มีธุรกิจ" description="สร้างธุรกิจก่อนที่หน้า 'ธุรกิจและโซน'" /></div></div>
   );
 
   return (
     <div className="h-screen overflow-auto">
-      <PageHeader title={filteredZoneName ? `พนักงาน — ${filteredZoneName}` : 'พนักงาน'} subtitle={`${visibleEmployees.length} คน${filteredZoneName ? ' ในโซนนี้' : ''}`}>
-        <button onClick={() => { setEditing({}); setShowModal(true); }} className="flex items-center gap-2 px-4 py-2 bg-emerald-900 hover:bg-emerald-800 text-white rounded-lg text-sm font-medium"><Plus className="w-4 h-4" /> เพิ่มพนักงาน</button>
+      <PageHeader title={filteredZoneName ? `พนักงาน — ${filteredZoneName}` : (allMode ? 'พนักงานทุกคน — ภาพรวมทุกธุรกิจ' : 'พนักงาน')} subtitle={`${visibleEmployees.length} คน${filteredZoneName ? ' ในโซนนี้' : (allMode ? ' รวมทุกธุรกิจ' : '')}`}>
+        <button onClick={() => { setEditing({}); setShowModal(true); }} disabled={allMode} title={allMode ? 'เลือกธุรกิจที่ sidebar ก่อน' : ''} className="flex items-center gap-2 px-4 py-2 bg-emerald-900 hover:bg-emerald-800 disabled:bg-stone-300 disabled:cursor-not-allowed text-white rounded-lg text-sm font-medium"><Plus className="w-4 h-4" /> เพิ่มพนักงาน</button>
       </PageHeader>
       <div className="p-8">
+        {allMode && (
+          <div className="mb-4 flex items-start gap-2 px-4 py-3 bg-sky-50 border border-sky-200 rounded-lg text-sm text-sky-900">
+            <Building2 className="w-4 h-4 mt-0.5 flex-shrink-0" />
+            <div>กำลังดูพนักงานจาก<strong> ทุกธุรกิจ ({businesses.length} ที่)</strong> รวมกัน — เลือกธุรกิจที่ sidebar เพื่อกรองเฉพาะธุรกิจเดียว หรือเพิ่มพนักงานใหม่</div>
+          </div>
+        )}
         {isOwner && activeZoneId && (
           <div className="mb-4 inline-flex items-center gap-2 px-3 py-1.5 bg-amber-100 border border-amber-200 rounded-full text-sm text-amber-800">
             <MapPin className="w-3.5 h-3.5" /><span>กรองตามโซน: <strong>{filteredZoneName}</strong></span>
@@ -919,7 +930,7 @@ function EmployeesPage({ businesses, zones, positions, employees, profile, activ
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-stone-400" />
             <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="ค้นหาชื่อ, เลขพนักงาน, เบอร์โทร, อีเมล..." className="w-full pl-10 pr-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600 bg-white" />
           </div>
-          {isOwner && (
+          {isOwner && activeBusinessId && (
             <select value={activeZoneId || 'all'} onChange={(e) => setActiveZoneId(e.target.value === 'all' ? null : e.target.value)} className="px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600 bg-white">
               <option value="all">ทุกโซน</option>
               {visibleZones.map((z) => <option key={z.id} value={z.id}>{z.name}</option>)}
@@ -934,6 +945,7 @@ function EmployeesPage({ businesses, zones, positions, employees, profile, activ
             {visibleEmployees.map((emp) => {
               const zone = zones.find((z) => z.id === emp.zoneId);
               const pos = positions.find((p) => p.id === emp.positionId);
+              const empBiz = businesses.find((b) => b.id === emp.businessId);
               const display = dispName(emp);
               const initials = display.split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase() || '?';
               const hasNick = emp.nickname?.trim() && emp.nickname.trim() !== emp.name?.trim();
@@ -965,6 +977,11 @@ function EmployeesPage({ businesses, zones, positions, employees, profile, activ
                     <h3 className="font-semibold text-stone-800 truncate">{display}</h3>
                     {hasNick && <div className="text-xs text-stone-400 truncate">{emp.name}</div>}
                     <div className="text-sm text-stone-500 truncate">{pos?.name || 'ยังไม่กำหนดตำแหน่ง'}</div>
+                    {allMode && empBiz && (
+                      <div className="mt-1.5 inline-flex items-center gap-1 px-1.5 py-0.5 bg-emerald-50 text-emerald-700 text-[10px] font-medium rounded">
+                        <Building2 className="w-2.5 h-2.5" />{empBiz.name}
+                      </div>
+                    )}
                     {extraBizCount > 0 && (
                       <div className="mt-1.5 inline-flex items-center gap-1 px-1.5 py-0.5 bg-sky-50 text-sky-700 text-[10px] font-medium rounded">
                         <Building2 className="w-2.5 h-2.5" />ดูแลอีก {extraBizCount} ธุรกิจ
@@ -1436,7 +1453,7 @@ function OrgChartPage({ businesses, zones, positions, employees, profile, active
   }, [employees, isOwner, activeBusinessId, profile]);
   const roots = visible.filter((e) => !e.managerId || !visible.find((x) => x.id === e.managerId));
 
-  if (isOwner && !activeBusinessId) return <div className="h-screen overflow-auto"><PageHeader title="แผนผังองค์กร" /><div className="p-8"><EmptyState icon={Network} title="ยังไม่ได้เลือกธุรกิจ" /></div></div>;
+  if (isOwner && !activeBusinessId) return <div className="h-screen overflow-auto"><PageHeader title="แผนผังองค์กร" /><div className="p-8"><EmptyState icon={Network} title="เลือกธุรกิจที่ sidebar" description="แผนผังองค์กรเป็นข้อมูลเฉพาะของแต่ละธุรกิจ — ต้องเลือกธุรกิจที่ sidebar ก่อน" /></div></div>;
 
   return (
     <div className="h-screen overflow-auto">
