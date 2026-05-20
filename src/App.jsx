@@ -1691,43 +1691,48 @@ function UsersPage({ profiles, businesses, zones, ops, currentUserId }) {
   return (
     <div className="h-screen overflow-auto">
       <PageHeader title="ผู้ใช้ระบบ" subtitle="จัดการสิทธิ์การเข้าถึง — ผู้ใช้ใหม่สมัครเองที่หน้า login แล้วเจ้าของอนุมัติที่นี่" />
-      <div className="p-8">
-        <div className="bg-white rounded-xl border border-stone-200 overflow-hidden">
-          <table className="w-full">
-            <thead className="bg-stone-50 border-b border-stone-200">
-              <tr>
-                <th className="text-left px-6 py-3 text-xs font-medium text-stone-600 uppercase tracking-wider">ชื่อ</th>
-                <th className="text-left px-6 py-3 text-xs font-medium text-stone-600 uppercase tracking-wider">บทบาท</th>
-                <th className="text-left px-6 py-3 text-xs font-medium text-stone-600 uppercase tracking-wider">ขอบเขต</th>
-                <th className="px-6 py-3"></th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-stone-100">
-              {profiles.map((u) => {
-                const cfg = roleConfig[u.role] || roleConfig.pending;
-                const Icon = cfg.icon;
-                return (
-                  <tr key={u.id} className="hover:bg-stone-50">
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-3">
-                        <Icon className={`w-4 h-4 ${u.role === 'owner' ? 'text-amber-500' : 'text-stone-400'}`} />
-                        <span className="font-medium text-stone-800">{u.name || '—'}</span>
-                        {u.id === currentUserId && <span className="text-xs text-stone-400">(คุณ)</span>}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4"><span className={`inline-flex px-2 py-0.5 rounded text-xs font-medium ${cfg.cls}`}>{cfg.label}</span></td>
-                    <td className="px-6 py-4 text-sm text-stone-600 max-w-md">{describeScope(u)}</td>
-                    <td className="px-6 py-4 text-right">
-                      <div className="flex justify-end gap-1">
-                        <button onClick={() => { setEditing(u); setShowModal(true); }} className="p-1.5 hover:bg-stone-100 rounded text-stone-600"><Edit2 className="w-4 h-4" /></button>
-                        {u.id !== currentUserId && <button onClick={() => del(u.id)} className="p-1.5 hover:bg-red-50 rounded text-red-600"><Trash2 className="w-4 h-4" /></button>}
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+      <div className="p-4 md:p-8">
+        <div className="space-y-3">
+          {profiles.map((u) => {
+            const cfg = roleConfig[u.role] || roleConfig.pending;
+            const Icon = cfg.icon;
+            const isPending = u.role === 'pending';
+            const isSelf = u.id === currentUserId;
+            return (
+              <div key={u.id} className={`bg-white rounded-xl border-2 ${isPending ? 'border-amber-300 bg-amber-50/30' : 'border-stone-200'} p-4 hover:shadow-sm transition-all`}>
+                <div className="flex items-start gap-3">
+                  <div className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 ${u.role === 'owner' ? 'bg-amber-100' : isPending ? 'bg-amber-100' : 'bg-stone-100'}`}>
+                    <Icon className={`w-5 h-5 ${u.role === 'owner' ? 'text-amber-600' : isPending ? 'text-amber-600' : 'text-stone-500'}`} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex flex-wrap items-center gap-2 mb-1">
+                      <span className="font-medium text-stone-800">{u.name || '—'}</span>
+                      {isSelf && <span className="text-xs text-stone-400">(คุณ)</span>}
+                      <span className={`inline-flex px-2 py-0.5 rounded text-xs font-medium ${cfg.cls}`}>{cfg.label}</span>
+                    </div>
+                    <div className="text-sm text-stone-600">{describeScope(u)}</div>
+                  </div>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2 justify-end">
+                  {isPending && (
+                    <button onClick={() => { setEditing(u); setShowModal(true); }} className="flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium shadow-sm">
+                      <CheckCircle2 className="w-4 h-4" /> อนุมัติ / กำหนดสิทธิ์
+                    </button>
+                  )}
+                  {!isPending && (
+                    <button onClick={() => { setEditing(u); setShowModal(true); }} className="flex items-center gap-1.5 px-3 py-1.5 hover:bg-stone-100 rounded-lg text-sm text-stone-700 border border-stone-200">
+                      <Edit2 className="w-3.5 h-3.5" /> แก้ไข
+                    </button>
+                  )}
+                  {!isSelf && (
+                    <button onClick={() => del(u.id)} className="flex items-center gap-1.5 px-3 py-1.5 hover:bg-red-50 rounded-lg text-sm text-red-600 border border-red-200">
+                      <Trash2 className="w-3.5 h-3.5" /> ลบ
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
         </div>
       </div>
       {showModal && (
