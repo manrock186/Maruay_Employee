@@ -501,7 +501,9 @@ function PageHeader({ title, subtitle, children }) {
 function Dashboard({ profile, businesses, zones, employees, positions, activeBusinessId, setView }) {
   const isOwner = profile.role === 'owner';
   const visibleEmployees = useMemo(() => {
-    if (isOwner) return activeBusinessId ? employees.filter((e) => e.businessId === activeBusinessId) : employees;
+    if (isOwner) return activeBusinessId
+      ? employees.filter((e) => e.businessId === activeBusinessId || (e.additionalBusinessIds || []).includes(activeBusinessId))
+      : employees;
     return employees.filter((e) => e.zoneId === profile.zoneId);
   }, [employees, profile, activeBusinessId, isOwner]);
   const visibleZones = useMemo(() => {
@@ -637,7 +639,7 @@ function BusinessesPage({ businesses, zones, employees, positions, ops, activeBu
           <div className="space-y-4">
             {businesses.map((biz) => {
               const bizZones = zones.filter((z) => z.businessId === biz.id);
-              const bizEmps = employees.filter((e) => e.businessId === biz.id);
+              const bizEmps = employees.filter((e) => e.businessId === biz.id || (e.additionalBusinessIds || []).includes(biz.id));
               const isCollapsed = collapsed[biz.id];
               return (
                 <div key={biz.id} className="bg-white rounded-xl border border-stone-200 overflow-hidden">
@@ -867,7 +869,9 @@ function EmployeesPage({ businesses, zones, positions, employees, profile, activ
   const isOwner = profile.role === 'owner';
 
   const visibleEmployees = useMemo(() => {
-    let list = isOwner ? employees.filter((e) => e.businessId === activeBusinessId) : employees.filter((e) => e.zoneId === profile.zoneId);
+    let list = isOwner
+      ? employees.filter((e) => e.businessId === activeBusinessId || (e.additionalBusinessIds || []).includes(activeBusinessId))
+      : employees.filter((e) => e.zoneId === profile.zoneId);
     if (isOwner && activeZoneId === '__nozone__') list = list.filter((e) => !e.zoneId);
     else if (isOwner && activeZoneId) list = list.filter((e) => e.zoneId === activeZoneId);
     if (search.trim()) {
@@ -933,6 +937,7 @@ function EmployeesPage({ businesses, zones, positions, employees, profile, activ
               const display = dispName(emp);
               const initials = display.split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase() || '?';
               const hasNick = emp.nickname?.trim() && emp.nickname.trim() !== emp.name?.trim();
+              const extraBizCount = (emp.additionalBusinessIds || []).length;
               return (
                 <div key={emp.id} onClick={() => setViewing(emp)} className="bg-white rounded-xl border border-stone-200 hover:shadow-lg hover:-translate-y-0.5 hover:border-emerald-300 transition-all group overflow-hidden cursor-pointer">
                   <div className="relative aspect-square bg-gradient-to-br from-stone-100 to-stone-200 overflow-hidden">
@@ -960,6 +965,11 @@ function EmployeesPage({ businesses, zones, positions, employees, profile, activ
                     <h3 className="font-semibold text-stone-800 truncate">{display}</h3>
                     {hasNick && <div className="text-xs text-stone-400 truncate">{emp.name}</div>}
                     <div className="text-sm text-stone-500 truncate">{pos?.name || 'ยังไม่กำหนดตำแหน่ง'}</div>
+                    {extraBizCount > 0 && (
+                      <div className="mt-1.5 inline-flex items-center gap-1 px-1.5 py-0.5 bg-sky-50 text-sky-700 text-[10px] font-medium rounded">
+                        <Building2 className="w-2.5 h-2.5" />ดูแลอีก {extraBizCount} ธุรกิจ
+                      </div>
+                    )}
                     {emp.phone && <div className="mt-2 text-xs text-stone-500 flex items-center gap-1.5"><Phone className="w-3 h-3" /><span className="truncate">{emp.phone}</span></div>}
                   </div>
                 </div>
@@ -970,21 +980,23 @@ function EmployeesPage({ businesses, zones, positions, employees, profile, activ
       </div>
       {showModal && (
         <Modal title={editing?.id ? 'แก้ไขข้อมูลพนักงาน' : 'เพิ่มพนักงานใหม่'} onClose={() => { setShowModal(false); setEditing(null); }} wide>
-          <EmployeeForm initial={editing} zones={visibleZones} positions={positions.filter((p) => p.businessId === (isOwner ? activeBusinessId : profile.businessId))} employees={employees.filter((e) => e.businessId === (isOwner ? activeBusinessId : profile.businessId) && e.id !== editing?.id)} onSave={save} onCancel={() => { setShowModal(false); setEditing(null); }} lockedZoneId={!isOwner ? profile.zoneId : null} businessId={isOwner ? activeBusinessId : profile.businessId} />
+          <EmployeeForm initial={editing} zones={visibleZones} positions={positions.filter((p) => p.businessId === (isOwner ? activeBusinessId : profile.businessId))} employees={employees.filter((e) => e.businessId === (isOwner ? activeBusinessId : profile.businessId) && e.id !== editing?.id)} businesses={businesses} onSave={save} onCancel={() => { setShowModal(false); setEditing(null); }} lockedZoneId={!isOwner ? profile.zoneId : null} businessId={isOwner ? activeBusinessId : profile.businessId} isOwner={isOwner} />
         </Modal>
       )}
       {viewing && (
-        <EmployeeDetailModal employee={viewing} zones={zones} positions={positions} employees={employees} onClose={() => setViewing(null)} onEdit={() => { setEditing(viewing); setShowModal(true); setViewing(null); }} onDelete={() => { del(viewing.id); setViewing(null); }} />
+        <EmployeeDetailModal employee={viewing} zones={zones} positions={positions} employees={employees} businesses={businesses} onClose={() => setViewing(null)} onEdit={() => { setEditing(viewing); setShowModal(true); setViewing(null); }} onDelete={() => { del(viewing.id); setViewing(null); }} />
       )}
     </div>
   );
 }
 
-function EmployeeDetailModal({ employee, zones, positions, employees, onClose, onEdit, onDelete }) {
+function EmployeeDetailModal({ employee, zones, positions, employees, businesses, onClose, onEdit, onDelete }) {
   const zone = zones.find((z) => z.id === employee.zoneId);
   const pos = positions.find((p) => p.id === employee.positionId);
   const mgr = employees.find((e) => e.id === employee.managerId);
   const reports = employees.filter((e) => e.managerId === employee.id);
+  const primaryBiz = businesses?.find((b) => b.id === employee.businessId);
+  const additionalBizs = (employee.additionalBusinessIds || []).map((id) => businesses?.find((b) => b.id === id)).filter(Boolean);
   const fmt = (d) => (d ? new Date(d).toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' }) : null);
   const yos = employee.startDate ? Math.floor((Date.now() - new Date(employee.startDate)) / (365.25 * 24 * 60 * 60 * 1000)) : null;
   const display = dispName(employee);
@@ -1025,6 +1037,17 @@ function EmployeeDetailModal({ employee, zones, positions, employees, onClose, o
                   : pos?.crossZone && <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-amber-100 text-amber-800 text-sm font-medium rounded-md"><MapPin className="w-3.5 h-3.5" />ไม่จำกัดโซน</span>}
                 {employee.nationality && <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-sky-50 text-sky-800 text-sm rounded-md"><Globe className="w-3.5 h-3.5" />{natLabel(employee.nationality)}</span>}
               </div>
+              {additionalBizs.length > 0 && (
+                <div className="mt-3 p-3 bg-sky-50/60 border border-sky-200 rounded-lg">
+                  <div className="flex items-center gap-1.5 text-xs font-medium text-sky-900 mb-1.5">
+                    <Building2 className="w-3.5 h-3.5" />ดูแลธุรกิจ ({1 + additionalBizs.length} ที่)
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {primaryBiz && <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-white border border-emerald-300 text-emerald-800 text-xs font-medium rounded">{primaryBiz.name}<span className="text-[9px] text-emerald-600">หลัก</span></span>}
+                    {additionalBizs.map((b) => <span key={b.id} className="inline-flex items-center px-2 py-0.5 bg-white border border-stone-300 text-stone-700 text-xs rounded">{b.name}</span>)}
+                  </div>
+                </div>
+              )}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 mt-5">
                 <InfoItem icon={Phone} label="เบอร์โทร" value={employee.phone} />
                 <InfoItem icon={Mail} label="อีเมล" value={employee.email} />
@@ -1124,7 +1147,7 @@ function DetailBlock({ icon: Icon, label, value, mono }) {
   );
 }
 
-function EmployeeForm({ initial, zones, positions, employees, onSave, onCancel, lockedZoneId, businessId }) {
+function EmployeeForm({ initial, zones, positions, employees, businesses, onSave, onCancel, lockedZoneId, businessId, isOwner }) {
   const [name, setName] = useState(initial?.name || '');
   const [nickname, setNickname] = useState(initial?.nickname || '');
   const [employeeNumber, setEmployeeNumber] = useState(initial?.employeeNumber || '');
@@ -1132,6 +1155,7 @@ function EmployeeForm({ initial, zones, positions, employees, onSave, onCancel, 
   const [zoneId, setZoneId] = useState(initial?.zoneId || lockedZoneId || '');
   const [positionId, setPositionId] = useState(initial?.positionId || '');
   const [managerId, setManagerId] = useState(initial?.managerId || '');
+  const [additionalBusinessIds, setAdditionalBusinessIds] = useState(initial?.additionalBusinessIds || []);
   const [phone, setPhone] = useState(initial?.phone || '');
   const [email, setEmail] = useState(initial?.email || '');
   const [address, setAddress] = useState(initial?.address || '');
@@ -1166,6 +1190,7 @@ function EmployeeForm({ initial, zones, positions, employees, onSave, onCancel, 
       name: name.trim(), nickname: nickname.trim() || null, photo,
       employeeNumber: employeeNumber.trim() || null,
       zoneId: zoneId || null, positionId: positionId || null, managerId: managerId || null,
+      additionalBusinessIds: additionalBusinessIds.filter((id) => id !== businessId),
       phone: phone.trim(), email: email.trim(), address: address.trim(),
       startDate: startDate || null, birthDate: birthDate || null, nationalId: nationalId.trim(),
       emergencyContact: emergencyContact.trim(), notes: notes.trim(),
@@ -1227,6 +1252,29 @@ function EmployeeForm({ initial, zones, positions, employees, onSave, onCancel, 
         <FormField label={nationality === 'thai' ? 'เลขบัตรประชาชน' : 'เลขบัตรประจำตัว'}><input value={nationalId} onChange={(e) => setNationalId(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600" /></FormField>
         <FormField label="ผู้ติดต่อฉุกเฉิน"><input value={emergencyContact} onChange={(e) => setEmergencyContact(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600" /></FormField>
       </div>
+
+      {isOwner && businesses && businesses.length > 1 && (
+        <FormField label="ดูแลธุรกิจเพิ่มเติม">
+          <div className="space-y-2">
+            <p className="text-xs text-stone-500 -mt-1">ปกติพนักงานสังกัดธุรกิจเดียว ติ๊กที่นี่ถ้าต้องดูแลธุรกิจอื่นด้วย (เช่น ผู้จัดการเขต)</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {businesses.filter((b) => b.id !== businessId).map((b) => {
+                const checked = additionalBusinessIds.includes(b.id);
+                return (
+                  <label key={b.id} className={`flex items-center gap-2 p-2.5 rounded-lg border-2 cursor-pointer transition-all ${checked ? 'border-emerald-600 bg-emerald-50' : 'border-stone-200 hover:border-stone-300'}`}>
+                    <input type="checkbox" checked={checked} onChange={(e) => {
+                      if (e.target.checked) setAdditionalBusinessIds([...additionalBusinessIds, b.id]);
+                      else setAdditionalBusinessIds(additionalBusinessIds.filter((id) => id !== b.id));
+                    }} className="w-4 h-4 rounded text-emerald-700" />
+                    <Building2 className={`w-4 h-4 ${checked ? 'text-emerald-700' : 'text-stone-400'}`} />
+                    <span className={`text-sm ${checked ? 'font-medium text-emerald-900' : 'text-stone-700'}`}>{b.name}</span>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+        </FormField>
+      )}
 
       {foreign && (
         <div className="bg-sky-50/50 border border-sky-200 rounded-xl p-4 space-y-4">
