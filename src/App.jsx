@@ -886,8 +886,8 @@ function EmployeesPage({ businesses, zones, positions, employees, profile, activ
   const del = async (id) => {
     if (!confirm('ลบพนักงานคนนี้?')) return;
     const emp = employees.find((e) => e.id === id);
-    if (emp?.workPermitDoc) await deleteDocument(emp.workPermitDoc);
-    if (emp?.passportDoc) await deleteDocument(emp.passportDoc);
+    const toDelete = [...(emp?.workPermitDocs || []), ...(emp?.passportDocs || [])];
+    for (const path of toDelete) await deleteDocument(path);
     await ops.employee.delete(id);
   };
 
@@ -1053,7 +1053,7 @@ function EmployeeDetailModal({ employee, zones, positions, employees, onClose, o
                         : <span className="text-stone-400">—</span>}
                       </div>
                       {employee.workPermitExpiry && <div className="text-xs text-stone-500 mt-0.5">หมดอายุ {fmt(employee.workPermitExpiry)}</div>}
-                      {employee.workPermitDoc && <DocViewButton path={employee.workPermitDoc} label="ดูบัตรแรงงาน" />}
+                      <DocList paths={employee.workPermitDocs} />
                     </div>
                   </div>
                   <div className="flex items-start gap-2.5">
@@ -1065,7 +1065,7 @@ function EmployeeDetailModal({ employee, zones, positions, employees, onClose, o
                         : employee.hasPassport === false ? <span className="text-amber-700">ไม่มี</span>
                         : <span className="text-stone-400">—</span>}
                       </div>
-                      {employee.passportDoc && <DocViewButton path={employee.passportDoc} label="ดูพาสปอร์ต" />}
+                      <DocList paths={employee.passportDocs} />
                     </div>
                   </div>
                 </div>
@@ -1138,8 +1138,8 @@ function EmployeeForm({ initial, zones, positions, employees, onSave, onCancel, 
   const [hasWorkPermit, setHasWorkPermit] = useState(initial?.hasWorkPermit ?? null);
   const [workPermitExpiry, setWorkPermitExpiry] = useState(initial?.workPermitExpiry || '');
   const [hasPassport, setHasPassport] = useState(initial?.hasPassport ?? null);
-  const [workPermitDoc, setWorkPermitDoc] = useState(initial?.workPermitDoc || null);
-  const [passportDoc, setPassportDoc] = useState(initial?.passportDoc || null);
+  const [workPermitDocs, setWorkPermitDocs] = useState(initial?.workPermitDocs || []);
+  const [passportDocs, setPassportDocs] = useState(initial?.passportDocs || []);
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef(null);
 
@@ -1166,8 +1166,8 @@ function EmployeeForm({ initial, zones, positions, employees, onSave, onCancel, 
       hasWorkPermit: foreign ? hasWorkPermit : null,
       workPermitExpiry: foreign && hasWorkPermit === true ? (workPermitExpiry || null) : null,
       hasPassport: foreign ? hasPassport : null,
-      workPermitDoc: foreign ? workPermitDoc : null,
-      passportDoc: foreign ? passportDoc : null,
+      workPermitDocs: foreign ? workPermitDocs : [],
+      passportDocs: foreign ? passportDocs : [],
     });
   };
 
@@ -1233,7 +1233,7 @@ function EmployeeForm({ initial, zones, positions, employees, onSave, onCancel, 
               <FormField label="บัตรหมดอายุ">
                 <input type="date" value={workPermitExpiry} onChange={(e) => setWorkPermitExpiry(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600 bg-white" />
               </FormField>
-              <DocUpload label="ไฟล์/รูปบัตรแรงงาน" currentPath={workPermitDoc} businessId={businessId} docType="work_permit" onChange={setWorkPermitDoc} />
+              <MultiDocUpload label="ไฟล์/รูปบัตรแรงงาน" paths={workPermitDocs} businessId={businessId} docType="work_permit" onChange={setWorkPermitDocs} />
             </>
           )}
           <FormField label="พาสปอร์ต">
@@ -1243,7 +1243,7 @@ function EmployeeForm({ initial, zones, positions, employees, onSave, onCancel, 
             </div>
           </FormField>
           {hasPassport === true && (
-            <DocUpload label="ไฟล์/รูปพาสปอร์ต" currentPath={passportDoc} businessId={businessId} docType="passport" onChange={setPassportDoc} />
+            <MultiDocUpload label="ไฟล์/รูปพาสปอร์ต" paths={passportDocs} businessId={businessId} docType="passport" onChange={setPassportDocs} />
           )}
         </div>
       )}
@@ -1264,8 +1264,85 @@ function PillRadio({ selected, onClick, icon: Icon, children }) {
   );
 }
 
-function DocViewButton({ path, label }) {
+function DocList({ paths }) {
+  const list = Array.isArray(paths) ? paths : [];
+  if (list.length === 0) return null;
+  return (
+    <div className="mt-2 flex flex-wrap gap-1.5">
+      {list.map((p, i) => <DocViewChip key={p} path={p} index={i} total={list.length} />)}
+    </div>
+  );
+}
+
+function DocViewChip({ path, index, total }) {
   const [opening, setOpening] = useState(false);
+  const filename = path.split('/').pop() || '';
+  const isPdf = filename.toLowerCase().endsWith('.pdf');
+  const open = async () => {
+    setOpening(true);
+    const url = await getDocumentUrl(path);
+    setOpening(false);
+    if (url) window.open(url, '_blank');
+  };
+  const label = total > 1 ? `ไฟล์ ${index + 1}` : 'ดูไฟล์';
+  return (
+    <button type="button" onClick={open} disabled={opening} className="inline-flex items-center gap-1.5 px-2 py-1 text-xs text-emerald-700 hover:text-emerald-800 hover:bg-emerald-50 rounded-md font-medium border border-emerald-200 disabled:opacity-50" title={filename}>
+      {isPdf ? <FileText className="w-3 h-3" /> : <Paperclip className="w-3 h-3" />}
+      {opening ? '...' : label}
+    </button>
+  );
+}
+
+function MultiDocUpload({ label, paths, businessId, docType, onChange }) {
+  const [uploading, setUploading] = useState(false);
+  const fileRef = useRef(null);
+  const list = Array.isArray(paths) ? paths : [];
+
+  const handlePick = async (e) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = '';
+    if (files.length === 0) return;
+    const oversized = files.find((f) => f.size > 10 * 1024 * 1024);
+    if (oversized) return alert(`ไฟล์ ${oversized.name} ใหญ่เกิน 10MB`);
+    setUploading(true);
+    try {
+      const uploaded = [];
+      for (const f of files) {
+        const p = await uploadDocument(f, businessId, docType);
+        if (p) uploaded.push(p);
+      }
+      if (uploaded.length) onChange([...list, ...uploaded]);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const removeOne = async (path) => {
+    if (!confirm('ลบไฟล์นี้?')) return;
+    await deleteDocument(path);
+    onChange(list.filter((p) => p !== path));
+  };
+
+  return (
+    <div>
+      <label className="block text-sm font-medium text-stone-700 mb-1.5">{label}{list.length > 0 && <span className="ml-2 text-xs text-stone-500">({list.length} ไฟล์)</span>}</label>
+      <div className="space-y-2">
+        {list.map((path) => (
+          <DocItem key={path} path={path} onRemove={() => removeOne(path)} />
+        ))}
+        <button type="button" onClick={() => fileRef.current?.click()} disabled={uploading} className="w-full flex items-center justify-center gap-2 px-3 py-2.5 border-2 border-dashed border-stone-300 hover:border-emerald-400 hover:bg-emerald-50/30 rounded-lg text-sm text-stone-600 hover:text-emerald-700 disabled:opacity-50">
+          {uploading ? <><Clock className="w-4 h-4 animate-pulse" /> กำลังอัปโหลด...</> : <><Upload className="w-4 h-4" /> เพิ่มไฟล์{list.length > 0 ? ' (เลือกหลายไฟล์ได้)' : ' (รูปหรือ PDF, ไม่เกิน 10MB ต่อไฟล์)'}</>}
+        </button>
+      </div>
+      <input ref={fileRef} type="file" multiple accept="image/jpeg,image/png,image/webp,application/pdf" onChange={handlePick} className="hidden" />
+    </div>
+  );
+}
+
+function DocItem({ path, onRemove }) {
+  const [opening, setOpening] = useState(false);
+  const filename = path.split('/').pop() || 'ไฟล์';
+  const isPdf = filename.toLowerCase().endsWith('.pdf');
   const open = async () => {
     setOpening(true);
     const url = await getDocumentUrl(path);
@@ -1273,78 +1350,19 @@ function DocViewButton({ path, label }) {
     if (url) window.open(url, '_blank');
   };
   return (
-    <button type="button" onClick={open} disabled={opening} className="mt-1.5 inline-flex items-center gap-1.5 px-2.5 py-1 text-xs text-emerald-700 hover:text-emerald-800 hover:bg-emerald-50 rounded-md font-medium border border-emerald-200">
-      <ExternalLink className="w-3 h-3" />{opening ? 'กำลังเปิด...' : label}
-    </button>
-  );
-}
-
-function DocUpload({ label, currentPath, businessId, docType, onChange }) {
-  const [uploading, setUploading] = useState(false);
-  const [opening, setOpening] = useState(false);
-  const fileRef = useRef(null);
-
-  const handlePick = async (e) => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
-    if (file.size > 10 * 1024 * 1024) return alert('ไฟล์ใหญ่เกิน 10MB');
-    setUploading(true);
-    try {
-      if (currentPath) await deleteDocument(currentPath);
-      const newPath = await uploadDocument(file, businessId, docType);
-      if (newPath) onChange(newPath);
-    } finally {
-      setUploading(false);
-    }
-  };
-
-  const handleView = async () => {
-    if (!currentPath) return;
-    setOpening(true);
-    const url = await getDocumentUrl(currentPath);
-    setOpening(false);
-    if (url) window.open(url, '_blank');
-  };
-
-  const handleRemove = async () => {
-    if (!confirm('ลบไฟล์นี้?')) return;
-    await deleteDocument(currentPath);
-    onChange(null);
-  };
-
-  // ดึงชื่อไฟล์จาก path เพื่อแสดง
-  const filename = currentPath ? currentPath.split('/').pop() : null;
-  const isPdf = filename?.toLowerCase().endsWith('.pdf');
-
-  return (
-    <div>
-      <label className="block text-sm font-medium text-stone-700 mb-1.5">{label}</label>
-      {currentPath ? (
-        <div className="flex items-center gap-2 p-2.5 bg-white border border-stone-200 rounded-lg">
-          <div className="w-9 h-9 rounded bg-emerald-50 flex items-center justify-center flex-shrink-0">
-            {isPdf ? <FileText className="w-4 h-4 text-emerald-700" /> : <Paperclip className="w-4 h-4 text-emerald-700" />}
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="text-sm font-medium text-stone-800 truncate">อัปโหลดแล้ว</div>
-            <div className="text-xs text-stone-500 truncate">{filename}</div>
-          </div>
-          <button type="button" onClick={handleView} disabled={opening} className="flex items-center gap-1 px-2.5 py-1.5 text-xs text-emerald-700 hover:bg-emerald-50 rounded-md font-medium disabled:opacity-50">
-            <ExternalLink className="w-3.5 h-3.5" />{opening ? '...' : 'ดู'}
-          </button>
-          <button type="button" onClick={() => fileRef.current?.click()} disabled={uploading} className="px-2.5 py-1.5 text-xs text-stone-600 hover:bg-stone-100 rounded-md font-medium">
-            เปลี่ยน
-          </button>
-          <button type="button" onClick={handleRemove} className="p-1.5 text-red-600 hover:bg-red-50 rounded-md">
-            <Trash2 className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      ) : (
-        <button type="button" onClick={() => fileRef.current?.click()} disabled={uploading} className="w-full flex items-center justify-center gap-2 px-3 py-3 border-2 border-dashed border-stone-300 hover:border-emerald-400 hover:bg-emerald-50/30 rounded-lg text-sm text-stone-600 hover:text-emerald-700 disabled:opacity-50">
-          {uploading ? <><Clock className="w-4 h-4 animate-pulse" /> กำลังอัปโหลด...</> : <><Upload className="w-4 h-4" /> เลือกไฟล์ (รูปหรือ PDF, ไม่เกิน 10MB)</>}
-        </button>
-      )}
-      <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp,application/pdf" onChange={handlePick} className="hidden" />
+    <div className="flex items-center gap-2 p-2.5 bg-white border border-stone-200 rounded-lg">
+      <div className="w-9 h-9 rounded bg-emerald-50 flex items-center justify-center flex-shrink-0">
+        {isPdf ? <FileText className="w-4 h-4 text-emerald-700" /> : <Paperclip className="w-4 h-4 text-emerald-700" />}
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="text-xs text-stone-500 truncate" title={filename}>{filename}</div>
+      </div>
+      <button type="button" onClick={open} disabled={opening} className="flex items-center gap-1 px-2.5 py-1.5 text-xs text-emerald-700 hover:bg-emerald-50 rounded-md font-medium disabled:opacity-50">
+        <ExternalLink className="w-3.5 h-3.5" />{opening ? '...' : 'ดู'}
+      </button>
+      <button type="button" onClick={onRemove} className="p-1.5 text-red-600 hover:bg-red-50 rounded-md">
+        <Trash2 className="w-3.5 h-3.5" />
+      </button>
     </div>
   );
 }
