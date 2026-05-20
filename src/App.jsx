@@ -4,9 +4,25 @@ import {
   Plus, Edit2, Trash2, Search, X, Upload, ChevronRight,
   Home, UserCircle, Shield, Layers, Camera, Calendar, Phone, Mail,
   Eye, EyeOff, Network, Save, ChevronDown, ChevronUp, User,
-  KeyRound, AlertCircle, CheckCircle2, Crown, Award, MapPinned, Clock
+  KeyRound, AlertCircle, CheckCircle2, Crown, Award, MapPinned, Clock,
+  Globe, CreditCard, BookOpen
 } from 'lucide-react';
 import { supabase, fromDB, toDB } from './supabase.js';
+
+// ============ DISPLAY NAME HELPER ============
+// ทุกหน้าให้แสดงชื่อเล่นเป็นหลัก ถ้าไม่มีชื่อเล่นค่อย fallback ใช้ชื่อจริง
+const dispName = (e) => (e?.nickname?.trim() || e?.name?.trim() || '');
+
+// ============ NATIONALITY ============
+const NATIONALITIES = [
+  { value: 'thai',     label: 'ไทย' },
+  { value: 'myanmar',  label: 'พม่า' },
+  { value: 'cambodia', label: 'กัมพูชา' },
+  { value: 'laos',     label: 'ลาว' },
+  { value: 'other',    label: 'อื่นๆ' },
+];
+const natLabel = (v) => NATIONALITIES.find((n) => n.value === v)?.label || (v ? 'อื่นๆ' : '—');
+const isForeign = (v) => v && v !== 'thai';
 
 // ============ IMAGE HELPER ============
 const resizeImage = (file, maxSize = 400) => new Promise((resolve) => {
@@ -518,9 +534,9 @@ function Dashboard({ profile, businesses, zones, employees, positions, activeBus
                 const pos = positions.find((p) => p.id === emp.positionId);
                 return (
                   <div key={emp.id} className="px-6 py-4 flex items-center gap-4 hover:bg-stone-50">
-                    <Avatar photo={emp.photo} name={emp.name} size={40} />
+                    <Avatar photo={emp.photo} name={dispName(emp)} size={40} />
                     <div className="flex-1 min-w-0">
-                      <div className="font-medium text-stone-800 truncate">{emp.name}</div>
+                      <div className="font-medium text-stone-800 truncate">{dispName(emp)}</div>
                       <div className="text-sm text-stone-500 truncate">{pos?.name || 'ยังไม่กำหนดตำแหน่ง'} • {zone?.name || '—'}</div>
                     </div>
                   </div>
@@ -823,7 +839,7 @@ function EmployeesPage({ businesses, zones, positions, employees, profile, activ
     else if (isOwner && activeZoneId) list = list.filter((e) => e.zoneId === activeZoneId);
     if (search.trim()) {
       const s = search.toLowerCase();
-      list = list.filter((e) => e.name?.toLowerCase().includes(s) || e.phone?.includes(s) || e.email?.toLowerCase().includes(s));
+      list = list.filter((e) => e.name?.toLowerCase().includes(s) || e.nickname?.toLowerCase().includes(s) || e.phone?.includes(s) || e.email?.toLowerCase().includes(s));
     }
     return list;
   }, [employees, isOwner, activeBusinessId, profile, activeZoneId, search]);
@@ -875,11 +891,13 @@ function EmployeesPage({ businesses, zones, positions, employees, profile, activ
             {visibleEmployees.map((emp) => {
               const zone = zones.find((z) => z.id === emp.zoneId);
               const pos = positions.find((p) => p.id === emp.positionId);
-              const initials = (emp.name || '?').split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase();
+              const display = dispName(emp);
+              const initials = display.split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase() || '?';
+              const hasNick = emp.nickname?.trim() && emp.nickname.trim() !== emp.name?.trim();
               return (
                 <div key={emp.id} onClick={() => setViewing(emp)} className="bg-white rounded-xl border border-stone-200 hover:shadow-lg hover:-translate-y-0.5 hover:border-emerald-300 transition-all group overflow-hidden cursor-pointer">
                   <div className="relative aspect-square bg-gradient-to-br from-stone-100 to-stone-200 overflow-hidden">
-                    {emp.photo ? <img src={emp.photo} alt={emp.name} className="w-full h-full object-contain" /> : (
+                    {emp.photo ? <img src={emp.photo} alt={display} className="w-full h-full object-contain" /> : (
                       <div className="w-full h-full flex items-center justify-center"><div className="w-24 h-24 rounded-full bg-gradient-to-br from-emerald-700 to-emerald-900 text-white text-3xl font-semibold flex items-center justify-center">{initials}</div></div>
                     )}
                     <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -892,9 +910,15 @@ function EmployeesPage({ businesses, zones, positions, employees, profile, activ
                           : <span className="inline-flex items-center gap-1 px-2 py-1 bg-amber-100/95 backdrop-blur text-amber-800 text-xs font-medium rounded-md shadow-sm"><MapPin className="w-3 h-3" />ไม่จำกัดโซน</span>}
                       </div>
                     )}
+                    {isForeign(emp.nationality) && (
+                      <div className="absolute top-2 left-2">
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-emerald-900/90 text-white text-[10px] font-medium rounded-md backdrop-blur"><Globe className="w-2.5 h-2.5" />{natLabel(emp.nationality)}</span>
+                      </div>
+                    )}
                   </div>
                   <div className="p-4">
-                    <h3 className="font-semibold text-stone-800 truncate">{emp.name}</h3>
+                    <h3 className="font-semibold text-stone-800 truncate">{display}</h3>
+                    {hasNick && <div className="text-xs text-stone-400 truncate">{emp.name}</div>}
                     <div className="text-sm text-stone-500 truncate">{pos?.name || 'ยังไม่กำหนดตำแหน่ง'}</div>
                     {emp.phone && <div className="mt-2 text-xs text-stone-500 flex items-center gap-1.5"><Phone className="w-3 h-3" /><span className="truncate">{emp.phone}</span></div>}
                   </div>
@@ -923,6 +947,19 @@ function EmployeeDetailModal({ employee, zones, positions, employees, onClose, o
   const reports = employees.filter((e) => e.managerId === employee.id);
   const fmt = (d) => (d ? new Date(d).toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' }) : null);
   const yos = employee.startDate ? Math.floor((Date.now() - new Date(employee.startDate)) / (365.25 * 24 * 60 * 60 * 1000)) : null;
+  const display = dispName(employee);
+  const hasNick = employee.nickname?.trim() && employee.nickname.trim() !== employee.name?.trim();
+  const initials = display.split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase() || '?';
+  const foreign = isForeign(employee.nationality);
+
+  // คำนวณว่าบัตรแรงงานหมดอายุหรือใกล้หมดอายุไหม
+  let permitStatus = null;
+  if (employee.workPermitExpiry) {
+    const days = Math.ceil((new Date(employee.workPermitExpiry) - Date.now()) / (24 * 60 * 60 * 1000));
+    if (days < 0) permitStatus = { label: 'หมดอายุแล้ว', cls: 'text-red-700 bg-red-100' };
+    else if (days < 30) permitStatus = { label: `เหลือ ${days} วัน`, cls: 'text-amber-800 bg-amber-100' };
+    else permitStatus = { label: `เหลือ ${days} วัน`, cls: 'text-emerald-700 bg-emerald-50' };
+  }
 
   return (
     <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
@@ -934,29 +971,72 @@ function EmployeeDetailModal({ employee, zones, positions, employees, onClose, o
         <div className="overflow-auto">
           <div className="grid grid-cols-1 md:grid-cols-[280px_1fr] gap-6 p-6">
             <div className="aspect-square bg-gradient-to-br from-stone-100 to-stone-200 rounded-2xl overflow-hidden">
-              {employee.photo ? <img src={employee.photo} alt={employee.name} className="w-full h-full object-contain" /> : (
-                <div className="w-full h-full flex items-center justify-center"><div className="w-32 h-32 rounded-full bg-gradient-to-br from-emerald-700 to-emerald-900 text-white text-5xl font-semibold flex items-center justify-center">{(employee.name || '?').split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase()}</div></div>
+              {employee.photo ? <img src={employee.photo} alt={display} className="w-full h-full object-contain" /> : (
+                <div className="w-full h-full flex items-center justify-center"><div className="w-32 h-32 rounded-full bg-gradient-to-br from-emerald-700 to-emerald-900 text-white text-5xl font-semibold flex items-center justify-center">{initials}</div></div>
               )}
             </div>
             <div>
-              <h1 className="text-2xl font-semibold text-stone-800">{employee.name}</h1>
+              <h1 className="text-2xl font-semibold text-stone-800">{display}</h1>
+              {hasNick && <div className="text-sm text-stone-500 mt-0.5">ชื่อจริง: {employee.name}</div>}
               <div className="flex flex-wrap items-center gap-2 mt-2">
                 {pos && <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-100 text-emerald-800 text-sm font-medium rounded-md"><Award className="w-3.5 h-3.5" />{pos.name}</span>}
                 {zone ? <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-stone-100 text-stone-700 text-sm rounded-md"><MapPin className="w-3.5 h-3.5" />{zone.name}</span>
                   : pos?.crossZone && <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-amber-100 text-amber-800 text-sm font-medium rounded-md"><MapPin className="w-3.5 h-3.5" />ไม่จำกัดโซน</span>}
+                {employee.nationality && <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-sky-50 text-sky-800 text-sm rounded-md"><Globe className="w-3.5 h-3.5" />{natLabel(employee.nationality)}</span>}
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 mt-5">
                 <InfoItem icon={Phone} label="เบอร์โทร" value={employee.phone} />
                 <InfoItem icon={Mail} label="อีเมล" value={employee.email} />
                 <InfoItem icon={Calendar} label="วันเริ่มงาน" value={fmt(employee.startDate)} hint={yos != null ? `${yos} ปี` : null} />
                 <InfoItem icon={Calendar} label="วันเกิด" value={fmt(employee.birthDate)} />
-                <InfoItem icon={UserCircle} label="หัวหน้าโดยตรง" value={mgr?.name} />
+                <InfoItem icon={UserCircle} label="หัวหน้าโดยตรง" value={dispName(mgr) || null} />
                 <InfoItem icon={Shield} label="ผู้ติดต่อฉุกเฉิน" value={employee.emergencyContact} />
               </div>
             </div>
           </div>
+
+          {foreign && (
+            <div className="px-6 pb-2">
+              <div className="bg-sky-50/50 border border-sky-200 rounded-xl p-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <Globe className="w-4 h-4 text-sky-700" />
+                  <h3 className="text-sm font-medium text-sky-900">เอกสารแรงงานต่างด้าว</h3>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3">
+                  <div className="flex items-start gap-2.5">
+                    <CreditCard className="w-4 h-4 text-stone-400 mt-0.5 flex-shrink-0" />
+                    <div className="min-w-0">
+                      <div className="text-xs text-stone-500">บัตรแรงงาน</div>
+                      <div className="text-sm text-stone-800">
+                        {employee.hasWorkPermit === true ? (
+                          <span className="inline-flex items-center gap-2">
+                            <span className="font-medium">ทำแล้ว</span>
+                            {permitStatus && <span className={`inline-flex px-1.5 py-0.5 text-[10px] font-medium rounded ${permitStatus.cls}`}>{permitStatus.label}</span>}
+                          </span>
+                        ) : employee.hasWorkPermit === false ? <span className="text-amber-700 font-medium">ยังไม่ทำบัตร</span>
+                        : <span className="text-stone-400">—</span>}
+                      </div>
+                      {employee.workPermitExpiry && <div className="text-xs text-stone-500 mt-0.5">หมดอายุ {fmt(employee.workPermitExpiry)}</div>}
+                    </div>
+                  </div>
+                  <div className="flex items-start gap-2.5">
+                    <BookOpen className="w-4 h-4 text-stone-400 mt-0.5 flex-shrink-0" />
+                    <div className="min-w-0">
+                      <div className="text-xs text-stone-500">พาสปอร์ต</div>
+                      <div className="text-sm text-stone-800">
+                        {employee.hasPassport === true ? <span className="font-medium">มี</span>
+                        : employee.hasPassport === false ? <span className="text-amber-700">ไม่มี</span>
+                        : <span className="text-stone-400">—</span>}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {(employee.address || employee.nationalId || employee.notes) && (
-            <div className="px-6 pb-6 space-y-4">
+            <div className="px-6 pb-6 space-y-4 pt-4">
               {employee.address && <DetailBlock icon={MapPin} label="ที่อยู่" value={employee.address} />}
               {employee.nationalId && <DetailBlock icon={Shield} label="เลขบัตรประชาชน" value={employee.nationalId} mono />}
               {employee.notes && <DetailBlock icon={Edit2} label="บันทึกเพิ่มเติม" value={employee.notes} />}
@@ -968,7 +1048,7 @@ function EmployeeDetailModal({ employee, zones, positions, employees, onClose, o
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
                 {reports.map((r) => {
                   const rp = positions.find((p) => p.id === r.positionId);
-                  return (<div key={r.id} className="flex items-center gap-3 p-2.5 bg-stone-50 rounded-lg"><Avatar photo={r.photo} name={r.name} size={36} /><div className="min-w-0"><div className="text-sm font-medium text-stone-800 truncate">{r.name}</div><div className="text-xs text-stone-500 truncate">{rp?.name || '—'}</div></div></div>);
+                  return (<div key={r.id} className="flex items-center gap-3 p-2.5 bg-stone-50 rounded-lg"><Avatar photo={r.photo} name={dispName(r)} size={36} /><div className="min-w-0"><div className="text-sm font-medium text-stone-800 truncate">{dispName(r)}</div><div className="text-xs text-stone-500 truncate">{rp?.name || '—'}</div></div></div>);
                 })}
               </div>
             </div>
@@ -1003,6 +1083,7 @@ function DetailBlock({ icon: Icon, label, value, mono }) {
 
 function EmployeeForm({ initial, zones, positions, employees, onSave, onCancel, lockedZoneId }) {
   const [name, setName] = useState(initial?.name || '');
+  const [nickname, setNickname] = useState(initial?.nickname || '');
   const [photo, setPhoto] = useState(initial?.photo || '');
   const [zoneId, setZoneId] = useState(initial?.zoneId || lockedZoneId || '');
   const [positionId, setPositionId] = useState(initial?.positionId || '');
@@ -1015,6 +1096,10 @@ function EmployeeForm({ initial, zones, positions, employees, onSave, onCancel, 
   const [nationalId, setNationalId] = useState(initial?.nationalId || '');
   const [emergencyContact, setEmergencyContact] = useState(initial?.emergencyContact || '');
   const [notes, setNotes] = useState(initial?.notes || '');
+  const [nationality, setNationality] = useState(initial?.nationality || 'thai');
+  const [hasWorkPermit, setHasWorkPermit] = useState(initial?.hasWorkPermit ?? null);
+  const [workPermitExpiry, setWorkPermitExpiry] = useState(initial?.workPermitExpiry || '');
+  const [hasPassport, setHasPassport] = useState(initial?.hasPassport ?? null);
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef(null);
 
@@ -1026,15 +1111,21 @@ function EmployeeForm({ initial, zones, positions, employees, onSave, onCancel, 
 
   const sel = positions.find((p) => p.id === positionId);
   const isCrossZone = sel?.crossZone;
+  const foreign = isForeign(nationality);
 
   const submit = () => {
     if (!name.trim()) return alert('กรุณากรอกชื่อ');
     if (!zoneId && !isCrossZone) return alert('กรุณาเลือกโซน');
     onSave({
-      name: name.trim(), photo, zoneId: zoneId || null, positionId: positionId || null, managerId: managerId || null,
+      name: name.trim(), nickname: nickname.trim() || null, photo,
+      zoneId: zoneId || null, positionId: positionId || null, managerId: managerId || null,
       phone: phone.trim(), email: email.trim(), address: address.trim(),
       startDate: startDate || null, birthDate: birthDate || null, nationalId: nationalId.trim(),
       emergencyContact: emergencyContact.trim(), notes: notes.trim(),
+      nationality: nationality || null,
+      hasWorkPermit: foreign ? hasWorkPermit : null,
+      workPermitExpiry: foreign && hasWorkPermit === true ? (workPermitExpiry || null) : null,
+      hasPassport: foreign ? hasPassport : null,
     });
   };
 
@@ -1042,14 +1133,15 @@ function EmployeeForm({ initial, zones, positions, employees, onSave, onCancel, 
     <div className="space-y-5 max-h-[70vh] overflow-y-auto pr-2">
       <div className="flex items-center gap-4">
         <div className="relative">
-          <Avatar photo={photo} name={name} size={80} />
+          <Avatar photo={photo} name={dispName({ nickname, name })} size={80} />
           <button onClick={() => fileRef.current?.click()} disabled={uploading} className="absolute -bottom-1 -right-1 w-7 h-7 bg-amber-500 hover:bg-amber-400 text-emerald-950 rounded-full flex items-center justify-center shadow-md disabled:opacity-50"><Camera className="w-3.5 h-3.5" /></button>
           <input ref={fileRef} type="file" accept="image/*" onChange={handlePhoto} className="hidden" />
         </div>
         <div><div className="text-sm font-medium text-stone-700">รูปโปรไฟล์</div><div className="text-xs text-stone-500 mt-0.5">{uploading ? 'กำลังประมวลผล...' : 'คลิกที่ไอคอนกล้องเพื่ออัปโหลด'}</div></div>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <FormField label="ชื่อ-นามสกุล" required><input value={name} onChange={(e) => setName(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600" /></FormField>
+        <FormField label="ชื่อ-นามสกุล" required><input value={name} onChange={(e) => setName(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600" placeholder="เช่น สมชาย ใจดี" /></FormField>
+        <FormField label="ชื่อเล่น"><input value={nickname} onChange={(e) => setNickname(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600" placeholder="ชื่อที่ใช้แสดงในระบบ" /></FormField>
         <FormField label="ตำแหน่ง">
           <select value={positionId} onChange={(e) => setPositionId(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600 bg-white">
             <option value="">— ยังไม่กำหนด —</option>
@@ -1066,20 +1158,61 @@ function EmployeeForm({ initial, zones, positions, employees, onSave, onCancel, 
         <FormField label="หัวหน้าโดยตรง">
           <select value={managerId} onChange={(e) => setManagerId(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600 bg-white">
             <option value="">— ไม่มี —</option>
-            {employees.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
+            {employees.map((e) => <option key={e.id} value={e.id}>{dispName(e)}{e.nickname && e.nickname !== e.name ? ` (${e.name})` : ''}</option>)}
+          </select>
+        </FormField>
+        <FormField label="สัญชาติ">
+          <select value={nationality} onChange={(e) => setNationality(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600 bg-white">
+            {NATIONALITIES.map((n) => <option key={n.value} value={n.value}>{n.label}</option>)}
           </select>
         </FormField>
         <FormField label="เบอร์โทร"><input value={phone} onChange={(e) => setPhone(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600" placeholder="0XX-XXX-XXXX" /></FormField>
         <FormField label="อีเมล"><input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600" /></FormField>
         <FormField label="วันเริ่มงาน"><input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600" /></FormField>
         <FormField label="วันเกิด"><input type="date" value={birthDate} onChange={(e) => setBirthDate(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600" /></FormField>
-        <FormField label="เลขบัตรประชาชน"><input value={nationalId} onChange={(e) => setNationalId(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600" /></FormField>
+        <FormField label={nationality === 'thai' ? 'เลขบัตรประชาชน' : 'เลขบัตรประจำตัว'}><input value={nationalId} onChange={(e) => setNationalId(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600" /></FormField>
         <FormField label="ผู้ติดต่อฉุกเฉิน"><input value={emergencyContact} onChange={(e) => setEmergencyContact(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600" /></FormField>
       </div>
+
+      {foreign && (
+        <div className="bg-sky-50/50 border border-sky-200 rounded-xl p-4 space-y-4">
+          <div className="flex items-center gap-2">
+            <Globe className="w-4 h-4 text-sky-700" />
+            <h3 className="text-sm font-medium text-sky-900">เอกสารแรงงานต่างด้าว</h3>
+          </div>
+          <FormField label="บัตรแรงงาน">
+            <div className="grid grid-cols-2 gap-2">
+              <PillRadio selected={hasWorkPermit === true} onClick={() => setHasWorkPermit(true)} icon={CheckCircle2}>ทำบัตรแล้ว</PillRadio>
+              <PillRadio selected={hasWorkPermit === false} onClick={() => setHasWorkPermit(false)} icon={Clock}>ยังไม่ทำบัตร</PillRadio>
+            </div>
+          </FormField>
+          {hasWorkPermit === true && (
+            <FormField label="บัตรหมดอายุ">
+              <input type="date" value={workPermitExpiry} onChange={(e) => setWorkPermitExpiry(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600 bg-white" />
+            </FormField>
+          )}
+          <FormField label="พาสปอร์ต">
+            <div className="grid grid-cols-2 gap-2">
+              <PillRadio selected={hasPassport === true} onClick={() => setHasPassport(true)} icon={BookOpen}>มีพาสปอร์ต</PillRadio>
+              <PillRadio selected={hasPassport === false} onClick={() => setHasPassport(false)} icon={X}>ไม่มี</PillRadio>
+            </div>
+          </FormField>
+        </div>
+      )}
+
       <FormField label="ที่อยู่"><textarea value={address} onChange={(e) => setAddress(e.target.value)} rows={2} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600 resize-none" /></FormField>
       <FormField label="บันทึกเพิ่มเติม"><textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600 resize-none" /></FormField>
       <FormActions onCancel={onCancel} onSubmit={submit} />
     </div>
+  );
+}
+
+function PillRadio({ selected, onClick, icon: Icon, children }) {
+  return (
+    <button type="button" onClick={onClick} className={`flex items-center justify-center gap-2 px-3 py-2.5 text-sm rounded-lg border-2 transition-all ${selected ? 'border-emerald-600 bg-emerald-50 text-emerald-900 font-medium' : 'border-stone-200 bg-white text-stone-600 hover:border-stone-300'}`}>
+      {Icon && <Icon className={`w-4 h-4 ${selected ? 'text-emerald-700' : 'text-stone-400'}`} />}
+      {children}
+    </button>
   );
 }
 
@@ -1118,9 +1251,9 @@ function EmployeeTree({ employees, allEmployees, zones, positions, level }) {
         return (
           <div key={emp.id}>
             <div className="flex items-center gap-3 p-3 bg-stone-50 hover:bg-stone-100 rounded-lg">
-              <Avatar photo={emp.photo} name={emp.name} size={40} />
+              <Avatar photo={emp.photo} name={dispName(emp)} size={40} />
               <div className="flex-1 min-w-0">
-                <div className="font-medium text-stone-800 truncate">{emp.name}</div>
+                <div className="font-medium text-stone-800 truncate">{dispName(emp)}</div>
                 <div className="text-xs text-stone-500 truncate">{pos?.name || '—'} {zone && `• ${zone.name}`}{reports.length > 0 && ` • ดูแล ${reports.length} คน`}</div>
               </div>
             </div>
