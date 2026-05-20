@@ -566,7 +566,10 @@ function Dashboard({ profile, businesses, zones, employees, positions, activeBus
                   <div key={emp.id} className="px-6 py-4 flex items-center gap-4 hover:bg-stone-50">
                     <Avatar photo={emp.photo} name={dispName(emp)} size={40} />
                     <div className="flex-1 min-w-0">
-                      <div className="font-medium text-stone-800 truncate">{dispName(emp)}</div>
+                      <div className="font-medium text-stone-800 truncate flex items-center gap-2">
+                        <span className="font-mono text-xs text-stone-400">#{emp.employeeNumber}</span>
+                        <span className="truncate">{dispName(emp)}</span>
+                      </div>
                       <div className="text-sm text-stone-500 truncate">{pos?.name || 'ยังไม่กำหนดตำแหน่ง'} • {zone?.name || '—'}</div>
                     </div>
                   </div>
@@ -869,7 +872,7 @@ function EmployeesPage({ businesses, zones, positions, employees, profile, activ
     else if (isOwner && activeZoneId) list = list.filter((e) => e.zoneId === activeZoneId);
     if (search.trim()) {
       const s = search.toLowerCase();
-      list = list.filter((e) => e.name?.toLowerCase().includes(s) || e.nickname?.toLowerCase().includes(s) || e.phone?.includes(s) || e.email?.toLowerCase().includes(s));
+      list = list.filter((e) => e.name?.toLowerCase().includes(s) || e.nickname?.toLowerCase().includes(s) || e.employeeNumber?.toLowerCase().includes(s) || e.phone?.includes(s) || e.email?.toLowerCase().includes(s));
     }
     return list;
   }, [employees, isOwner, activeBusinessId, profile, activeZoneId, search]);
@@ -910,7 +913,7 @@ function EmployeesPage({ businesses, zones, positions, employees, profile, activ
         <div className="flex flex-wrap gap-3 mb-6">
           <div className="relative flex-1 min-w-[240px]">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-stone-400" />
-            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="ค้นหาชื่อ, เบอร์โทร, อีเมล..." className="w-full pl-10 pr-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600 bg-white" />
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="ค้นหาชื่อ, เลขพนักงาน, เบอร์โทร, อีเมล..." className="w-full pl-10 pr-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600 bg-white" />
           </div>
           {isOwner && (
             <select value={activeZoneId || 'all'} onChange={(e) => setActiveZoneId(e.target.value === 'all' ? null : e.target.value)} className="px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600 bg-white">
@@ -953,6 +956,7 @@ function EmployeesPage({ businesses, zones, positions, employees, profile, activ
                     )}
                   </div>
                   <div className="p-4">
+                    <div className="text-xs font-mono text-stone-400 mb-0.5">#{emp.employeeNumber || '—'}</div>
                     <h3 className="font-semibold text-stone-800 truncate">{display}</h3>
                     {hasNick && <div className="text-xs text-stone-400 truncate">{emp.name}</div>}
                     <div className="text-sm text-stone-500 truncate">{pos?.name || 'ยังไม่กำหนดตำแหน่ง'}</div>
@@ -1012,6 +1016,7 @@ function EmployeeDetailModal({ employee, zones, positions, employees, onClose, o
               )}
             </div>
             <div>
+              <div className="text-sm font-mono text-stone-500">#{employee.employeeNumber || '—'}</div>
               <h1 className="text-2xl font-semibold text-stone-800">{display}</h1>
               {hasNick && <div className="text-sm text-stone-500 mt-0.5">ชื่อจริง: {employee.name}</div>}
               <div className="flex flex-wrap items-center gap-2 mt-2">
@@ -1086,7 +1091,7 @@ function EmployeeDetailModal({ employee, zones, positions, employees, onClose, o
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
                 {reports.map((r) => {
                   const rp = positions.find((p) => p.id === r.positionId);
-                  return (<div key={r.id} className="flex items-center gap-3 p-2.5 bg-stone-50 rounded-lg"><Avatar photo={r.photo} name={dispName(r)} size={36} /><div className="min-w-0"><div className="text-sm font-medium text-stone-800 truncate">{dispName(r)}</div><div className="text-xs text-stone-500 truncate">{rp?.name || '—'}</div></div></div>);
+                  return (<div key={r.id} className="flex items-center gap-3 p-2.5 bg-stone-50 rounded-lg"><Avatar photo={r.photo} name={dispName(r)} size={36} /><div className="min-w-0"><div className="text-sm font-medium text-stone-800 truncate"><span className="font-mono text-xs text-stone-400 mr-1.5">#{r.employeeNumber}</span>{dispName(r)}</div><div className="text-xs text-stone-500 truncate">{rp?.name || '—'}</div></div></div>);
                 })}
               </div>
             </div>
@@ -1122,6 +1127,7 @@ function DetailBlock({ icon: Icon, label, value, mono }) {
 function EmployeeForm({ initial, zones, positions, employees, onSave, onCancel, lockedZoneId, businessId }) {
   const [name, setName] = useState(initial?.name || '');
   const [nickname, setNickname] = useState(initial?.nickname || '');
+  const [employeeNumber, setEmployeeNumber] = useState(initial?.employeeNumber || '');
   const [photo, setPhoto] = useState(initial?.photo || '');
   const [zoneId, setZoneId] = useState(initial?.zoneId || lockedZoneId || '');
   const [positionId, setPositionId] = useState(initial?.positionId || '');
@@ -1158,6 +1164,7 @@ function EmployeeForm({ initial, zones, positions, employees, onSave, onCancel, 
     if (!zoneId && !isCrossZone) return alert('กรุณาเลือกโซน');
     onSave({
       name: name.trim(), nickname: nickname.trim() || null, photo,
+      employeeNumber: employeeNumber.trim() || null,
       zoneId: zoneId || null, positionId: positionId || null, managerId: managerId || null,
       phone: phone.trim(), email: email.trim(), address: address.trim(),
       startDate: startDate || null, birthDate: birthDate || null, nationalId: nationalId.trim(),
@@ -1182,6 +1189,11 @@ function EmployeeForm({ initial, zones, positions, employees, onSave, onCancel, 
         <div><div className="text-sm font-medium text-stone-700">รูปโปรไฟล์</div><div className="text-xs text-stone-500 mt-0.5">{uploading ? 'กำลังประมวลผล...' : 'คลิกที่ไอคอนกล้องเพื่ออัปโหลด'}</div></div>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <FormField label="หมายเลขพนักงาน">
+          <input value={employeeNumber} onChange={(e) => setEmployeeNumber(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600 font-mono" placeholder={initial?.id ? '' : 'เว้นว่างเพื่อสร้างอัตโนมัติ'} />
+          {!initial?.id && <p className="text-xs text-stone-500 mt-1">ถ้าเว้นว่าง ระบบจะใส่เลขถัดไปให้อัตโนมัติ (เช่น 001, 002, ...)</p>}
+        </FormField>
+        <div /> {/* spacer for grid alignment */}
         <FormField label="ชื่อ-นามสกุล" required><input value={name} onChange={(e) => setName(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600" placeholder="เช่น สมชาย ใจดี" /></FormField>
         <FormField label="ชื่อเล่น"><input value={nickname} onChange={(e) => setNickname(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600" placeholder="ชื่อที่ใช้แสดงในระบบ" /></FormField>
         <FormField label="ตำแหน่ง">
@@ -1200,7 +1212,7 @@ function EmployeeForm({ initial, zones, positions, employees, onSave, onCancel, 
         <FormField label="หัวหน้าโดยตรง">
           <select value={managerId} onChange={(e) => setManagerId(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600 bg-white">
             <option value="">— ไม่มี —</option>
-            {employees.map((e) => <option key={e.id} value={e.id}>{dispName(e)}{e.nickname && e.nickname !== e.name ? ` (${e.name})` : ''}</option>)}
+            {employees.map((e) => <option key={e.id} value={e.id}>#{e.employeeNumber} {dispName(e)}{e.nickname && e.nickname !== e.name ? ` (${e.name})` : ''}</option>)}
           </select>
         </FormField>
         <FormField label="สัญชาติ">
@@ -1404,7 +1416,10 @@ function EmployeeTree({ employees, allEmployees, zones, positions, level }) {
             <div className="flex items-center gap-3 p-3 bg-stone-50 hover:bg-stone-100 rounded-lg">
               <Avatar photo={emp.photo} name={dispName(emp)} size={40} />
               <div className="flex-1 min-w-0">
-                <div className="font-medium text-stone-800 truncate">{dispName(emp)}</div>
+                <div className="font-medium text-stone-800 truncate flex items-center gap-2">
+                  <span className="font-mono text-xs text-stone-400">#{emp.employeeNumber}</span>
+                  <span className="truncate">{dispName(emp)}</span>
+                </div>
                 <div className="text-xs text-stone-500 truncate">{pos?.name || '—'} {zone && `• ${zone.name}`}{reports.length > 0 && ` • ดูแล ${reports.length} คน`}</div>
               </div>
             </div>
