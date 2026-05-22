@@ -35,6 +35,17 @@ const RESIGN_REASONS = [
 const resignLabel = (v) => RESIGN_REASONS.find((r) => r.value === v)?.label || 'อื่นๆ';
 const isActive = (e) => (e?.status || 'active') === 'active';
 
+// ============ การปรับเงินเดือน ============
+const SALARY_REASONS = [
+  { value: 'performance',    label: 'ผลงานดี' },
+  { value: 'annual',         label: 'ปรับขั้นประจำปี' },
+  { value: 'promotion',      label: 'เลื่อนตำแหน่ง' },
+  { value: 'cost_of_living', label: 'ปรับตามค่าครองชีพ' },
+  { value: 'other',          label: 'อื่นๆ' },
+];
+const salaryReasonLabel = (v) => SALARY_REASONS.find((r) => r.value === v)?.label || 'อื่นๆ';
+const todayStr = () => new Date().toISOString().slice(0, 10);
+
 // ============ PAYROLL HELPERS ============
 const MONTH_NAMES = ['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน', 'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
 const fmtMoney = (n) => (Number(n) || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -241,6 +252,24 @@ export default function App() {
         }
       }
       setDataLoading(false);
+
+      // ---- auto-apply การปรับเงินเดือนที่ถึงกำหนด (owner เท่านั้น) ----
+      if (profile.isOwner) {
+        const today = new Date().toISOString().slice(0, 10);
+        const { data: pending } = await supabase.from('salary_changes')
+          .select('*').eq('status', 'pending').lte('effective_date', today);
+        if (pending && pending.length > 0 && !cancelled) {
+          for (const sc of pending) {
+            // อัปเดต base_salary ของพนักงานเป็นค่าใหม่
+            await supabase.from('employees').update({ base_salary: sc.new_salary }).eq('id', sc.employee_id);
+            // mark applied
+            await supabase.from('salary_changes').update({ status: 'applied', applied_at: new Date().toISOString() }).eq('id', sc.id);
+          }
+          // refresh employees ในหน้าจอ
+          const { data: e2 } = await supabase.from('employees').select('*').order('created_at');
+          if (!cancelled && e2) setEmployees(fromDB(e2));
+        }
+      }
     })();
 
     // Realtime
@@ -356,6 +385,16 @@ export default function App() {
       },
       add: (d) => insertRow('payroll_items', d),
       delete: (id) => deleteRow('payroll_items', id),
+    },
+    salaryChange: {
+      listByEmployee: async (employeeId) => {
+        const { data, error } = await supabase.from('salary_changes').select('*')
+          .eq('employee_id', employeeId).order('effective_date', { ascending: false });
+        if (error) { console.error(error); return []; }
+        return fromDB(data || []);
+      },
+      add: (d) => insertRow('salary_changes', d),
+      delete: (id) => deleteRow('salary_changes', id),
     },
   };
 
@@ -1124,6 +1163,7 @@ function EmployeesPage({ businesses, zones, positions, employees, profile, activ
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('active'); // active | resigned | all
   const [resigningEmp, setResigningEmp] = useState(null);
+  const [raisingEmp, setRaisingEmp] = useState(null);
   const isOwner = profile.isOwner;
   const isBM = profile.isBM;
   const isZM = profile.isZM;
@@ -1326,10 +1366,13 @@ function EmployeesPage({ businesses, zones, positions, employees, profile, activ
         </Modal>
       )}
       {viewing && (
-        <EmployeeDetailModal employee={viewing} zones={zones} positions={positions} employees={employees} businesses={businesses} canWrite={canWrite} canResign={canResign} onClose={() => setViewing(null)} onEdit={() => { setEditing(viewing); setShowModal(true); setViewing(null); }} onDelete={() => { del(viewing.id); setViewing(null); }} onResign={() => setResigningEmp(viewing)} onRehire={() => doRehire(viewing)} />
+        <EmployeeDetailModal employee={viewing} zones={zones} positions={positions} employees={employees} businesses={businesses} canWrite={canWrite} canResign={canResign} canRaise={isOwner} ops={ops} onClose={() => setViewing(null)} onEdit={() => { setEditing(viewing); setShowModal(true); setViewing(null); }} onDelete={() => { del(viewing.id); setViewing(null); }} onResign={() => setResigningEmp(viewing)} onRehire={() => doRehire(viewing)} onRaise={() => setRaisingEmp(viewing)} />
       )}
       {resigningEmp && (
         <ResignModal employee={resigningEmp} onClose={() => setResigningEmp(null)} onConfirm={doResign} />
+      )}
+      {raisingEmp && (
+        <SalaryRaiseModal employee={raisingEmp} ops={ops} onClose={() => setRaisingEmp(null)} onSaved={() => setRaisingEmp(null)} />
       )}
     </div>
   );
@@ -1391,7 +1434,90 @@ function ResignModal({ employee, onClose, onConfirm }) {
   );
 }
 
-function EmployeeDetailModal({ employee, zones, positions, employees, businesses, canWrite, canResign, onClose, onEdit, onDelete, onResign, onRehire }) {
+// ============ MODAL: ปรับเงินเดือน ============
+function SalaryRaiseModal({ employee, ops, onClose, onSaved }) {
+  const current = Number(employee.baseSalary) || 0;
+  const [newSalary, setNewSalary] = useState('');
+  const [effectiveDate, setEffectiveDate] = useState(todayStr());
+  const [reason, setReason] = useState('annual');
+  const [note, setNote] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const newVal = Number(newSalary) || 0;
+  const diff = newVal - current;
+  const pct = current > 0 ? (diff / current) * 100 : 0;
+  const isFuture = effectiveDate > todayStr();
+
+  const submit = async () => {
+    if (!newVal || newVal <= 0) return alert('กรุณากรอกเงินเดือนใหม่');
+    if (newVal === current) return alert('เงินเดือนใหม่เท่ากับเดิม');
+    if (!effectiveDate) return alert('กรุณาระบุวันที่มีผล');
+    setSaving(true);
+    try {
+      const today = todayStr();
+      const applyNow = effectiveDate <= today;
+      // บันทึกประวัติ
+      await ops.salaryChange.add({
+        employeeId: employee.id, businessId: employee.businessId,
+        effectiveDate, oldSalary: current, newSalary: newVal,
+        reason, note: note.trim() || null,
+        status: applyNow ? 'applied' : 'pending',
+        appliedAt: applyNow ? new Date().toISOString() : null,
+      });
+      // ถ้าถึงกำหนดแล้ว อัปเดต base_salary ทันที
+      if (applyNow) await ops.employee.update(employee.id, { baseSalary: newVal });
+      onSaved();
+    } finally { setSaving(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-stone-900/50 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md flex flex-col max-h-[90vh]">
+        <div className="px-6 py-4 border-b border-stone-200 flex items-center justify-between">
+          <h2 className="font-semibold text-stone-800">ปรับเงินเดือน</h2>
+          <button onClick={onClose} className="p-1 hover:bg-stone-100 rounded text-stone-500"><X className="w-5 h-5" /></button>
+        </div>
+        <div className="p-6 overflow-auto space-y-4">
+          <div className="flex items-center gap-3 p-3 bg-stone-50 rounded-lg">
+            <Avatar photo={employee.photo} name={dispName(employee)} size={40} />
+            <div>
+              <div className="font-medium text-stone-800"><span className="font-mono text-xs text-stone-400 mr-1">#{employee.employeeNumber}</span>{dispName(employee)}</div>
+              <div className="text-xs text-stone-500">เงินเดือนปัจจุบัน {fmtMoney(current)} ฿</div>
+            </div>
+          </div>
+          <FormField label="เงินเดือนใหม่ (บาท)" required>
+            <input type="number" min="0" step="0.01" autoFocus value={newSalary} onChange={(e) => setNewSalary(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600" placeholder={`เดิม ${fmtMoney(current)}`} />
+            {newVal > 0 && diff !== 0 && (
+              <p className={`text-xs mt-1 font-medium ${diff > 0 ? 'text-emerald-700' : 'text-red-600'}`}>
+                {diff > 0 ? '▲ เพิ่มขึ้น' : '▼ ลดลง'} {fmtMoney(Math.abs(diff))} ฿ ({pct > 0 ? '+' : ''}{pct.toFixed(1)}%)
+              </p>
+            )}
+          </FormField>
+          <FormField label="วันที่มีผล" required>
+            <input type="date" value={effectiveDate} onChange={(e) => setEffectiveDate(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600" />
+            {isFuture && <p className="text-xs text-amber-700 mt-1 flex items-center gap-1"><Clock className="w-3 h-3" />ตั้งเวลาในอนาคต — เงินเดือนจะเปลี่ยนอัตโนมัติเมื่อถึงวันนี้</p>}
+          </FormField>
+          <FormField label="เหตุผล" required>
+            <div className="grid grid-cols-2 gap-2">
+              {SALARY_REASONS.map((r) => (
+                <button key={r.value} type="button" onClick={() => setReason(r.value)} className={`px-3 py-2 rounded-lg border-2 text-sm transition-all ${reason === r.value ? 'border-emerald-600 bg-emerald-50 font-medium text-emerald-900' : 'border-stone-200 text-stone-700 hover:border-stone-300'}`}>{r.label}</button>
+              ))}
+            </div>
+          </FormField>
+          <FormField label="หมายเหตุ">
+            <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600 resize-none" placeholder="รายละเอียดเพิ่มเติม (ถ้ามี)" />
+          </FormField>
+        </div>
+        <div className="px-6 py-3 border-t border-stone-200 bg-stone-50 flex justify-end gap-2">
+          <button onClick={onClose} className="px-4 py-2 text-stone-700 hover:bg-stone-100 rounded-lg text-sm font-medium">ยกเลิก</button>
+          <button onClick={submit} disabled={saving} className="flex items-center gap-2 px-4 py-2 bg-emerald-900 hover:bg-emerald-800 text-white rounded-lg text-sm font-medium disabled:opacity-50"><TrendingUp className="w-4 h-4" />{saving ? 'กำลังบันทึก...' : (isFuture ? 'ตั้งเวลาปรับ' : 'บันทึก + ปรับทันที')}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EmployeeDetailModal({ employee, zones, positions, employees, businesses, canWrite, canResign, canRaise, ops, onClose, onEdit, onDelete, onResign, onRehire, onRaise }) {
   const zone = zones.find((z) => z.id === employee.zoneId);
   const pos = positions.find((p) => p.id === employee.positionId);
   const mgr = employees.find((e) => e.id === employee.managerId);
@@ -1399,6 +1525,16 @@ function EmployeeDetailModal({ employee, zones, positions, employees, businesses
   const primaryBiz = businesses?.find((b) => b.id === employee.businessId);
   const additionalBizs = (employee.additionalBusinessIds || []).map((id) => businesses?.find((b) => b.id === id)).filter(Boolean);
   const resigned = !isActive(employee);
+  const [salaryHistory, setSalaryHistory] = useState(null);
+  useEffect(() => {
+    if (!canRaise || !ops) return;
+    let cancelled = false;
+    (async () => {
+      const h = await ops.salaryChange.listByEmployee(employee.id);
+      if (!cancelled) setSalaryHistory(h);
+    })();
+    return () => { cancelled = true; };
+  }, [employee.id, canRaise]);
   const fmt = (d) => (d ? new Date(d).toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' }) : null);
   const yos = employee.startDate ? Math.floor((Date.now() - new Date(employee.startDate)) / (365.25 * 24 * 60 * 60 * 1000)) : null;
   const display = dispName(employee);
@@ -1520,6 +1656,43 @@ function EmployeeDetailModal({ employee, zones, positions, employees, businesses
               {employee.address && <DetailBlock icon={MapPin} label="ที่อยู่" value={employee.address} />}
               {employee.nationalId && <DetailBlock icon={Shield} label="เลขบัตรประชาชน" value={employee.nationalId} mono />}
               {employee.notes && <DetailBlock icon={Edit2} label="บันทึกเพิ่มเติม" value={employee.notes} />}
+            </div>
+          )}
+          {canRaise && (
+            <div className="px-6 pb-6">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2"><Wallet className="w-4 h-4 text-stone-500" /><h3 className="font-medium text-stone-700">เงินเดือนปัจจุบัน {fmtMoney(employee.baseSalary)} ฿</h3></div>
+                {!resigned && <button onClick={onRaise} className="flex items-center gap-1.5 px-3 py-1.5 text-emerald-700 hover:bg-emerald-50 border border-emerald-300 rounded-lg text-sm font-medium"><TrendingUp className="w-3.5 h-3.5" /> ปรับเงินเดือน</button>}
+              </div>
+              {salaryHistory === null ? (
+                <div className="text-xs text-stone-400">กำลังโหลดประวัติ...</div>
+              ) : salaryHistory.length === 0 ? (
+                <div className="text-xs text-stone-400 italic">ยังไม่มีประวัติการปรับเงินเดือน</div>
+              ) : (
+                <div className="space-y-2">
+                  {salaryHistory.map((sc) => {
+                    const diff = Number(sc.newSalary) - Number(sc.oldSalary);
+                    const pct = Number(sc.oldSalary) > 0 ? (diff / Number(sc.oldSalary)) * 100 : 0;
+                    const pending = sc.status === 'pending';
+                    return (
+                      <div key={sc.id} className={`flex items-start gap-3 p-3 rounded-lg border ${pending ? 'bg-amber-50/50 border-amber-200' : 'bg-stone-50 border-stone-200'}`}>
+                        <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${diff >= 0 ? 'bg-emerald-100' : 'bg-red-100'}`}>
+                          {diff >= 0 ? <TrendingUp className="w-4 h-4 text-emerald-700" /> : <TrendingDown className="w-4 h-4 text-red-600" />}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-sm font-medium text-stone-800">{fmtMoney(sc.oldSalary)} → {fmtMoney(sc.newSalary)} ฿</span>
+                            <span className={`text-xs font-medium ${diff >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>({diff >= 0 ? '+' : ''}{pct.toFixed(1)}%)</span>
+                            {pending && <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-amber-100 text-amber-700 text-[10px] font-medium rounded"><Clock className="w-2.5 h-2.5" />รอมีผล</span>}
+                          </div>
+                          <div className="text-xs text-stone-500 mt-0.5">{salaryReasonLabel(sc.reason)} • มีผล {fmt(sc.effectiveDate)}</div>
+                          {sc.note && <div className="text-xs text-stone-400 mt-0.5">{sc.note}</div>}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
           {reports.length > 0 && (
