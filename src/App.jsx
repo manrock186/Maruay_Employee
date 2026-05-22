@@ -1258,7 +1258,8 @@ function Avatar({ photo, name, size = 40 }) {
 }
 
 // ============ BUSINESSES + ZONES PAGE ============
-function BusinessesPage({ businesses, zones, employees, positions, ops, activeBusinessId, setActiveBusinessId, onOpenZone }) {
+function BusinessesPage({ businesses, zones, employees, positions, profile, ops, activeBusinessId, setActiveBusinessId, onOpenZone }) {
+  const isOwner = profile?.isOwner;
   const [editingBiz, setEditingBiz] = useState(null);
   const [showBizModal, setShowBizModal] = useState(false);
   const [editingZone, setEditingZone] = useState(null);
@@ -1293,13 +1294,15 @@ function BusinessesPage({ businesses, zones, employees, positions, ops, activeBu
   return (
     <div className="h-screen overflow-auto">
       <PageHeader title="ธุรกิจและโซน" subtitle="จัดการธุรกิจและโซนภายในแต่ละธุรกิจ">
-        <button onClick={() => { setEditingBiz({}); setShowBizModal(true); }} className="flex items-center gap-2 px-4 py-2 bg-emerald-900 hover:bg-emerald-800 text-white rounded-lg text-sm font-medium">
-          <Plus className="w-4 h-4" /> เพิ่มธุรกิจ
-        </button>
+        {isOwner && (
+          <button onClick={() => { setEditingBiz({}); setShowBizModal(true); }} className="flex items-center gap-2 px-4 py-2 bg-emerald-900 hover:bg-emerald-800 text-white rounded-lg text-sm font-medium">
+            <Plus className="w-4 h-4" /> เพิ่มธุรกิจ
+          </button>
+        )}
       </PageHeader>
       <div className="p-8">
         {businesses.length === 0 ? (
-          <EmptyState icon={Building2} title="ยังไม่มีธุรกิจ" description="เริ่มต้นด้วยการเพิ่มธุรกิจแรก" action={<button onClick={() => { setEditingBiz({}); setShowBizModal(true); }} className="px-4 py-2 bg-emerald-900 text-white rounded-lg text-sm font-medium">เพิ่มธุรกิจ</button>} />
+          <EmptyState icon={Building2} title="ยังไม่มีธุรกิจ" description={isOwner ? 'เริ่มต้นด้วยการเพิ่มธุรกิจแรก' : 'ยังไม่มีธุรกิจที่คุณดูแล'} action={isOwner ? <button onClick={() => { setEditingBiz({}); setShowBizModal(true); }} className="px-4 py-2 bg-emerald-900 text-white rounded-lg text-sm font-medium">เพิ่มธุรกิจ</button> : null} />
         ) : (
           <div className="space-y-4">
             {businesses.map((biz) => {
@@ -1325,7 +1328,7 @@ function BusinessesPage({ businesses, zones, employees, positions, ops, activeBu
                     </div>
                     <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                       <button onClick={() => { setEditingBiz(biz); setShowBizModal(true); }} className="p-2 hover:bg-stone-200 rounded text-stone-600"><Edit2 className="w-4 h-4" /></button>
-                      <button onClick={() => delBiz(biz.id)} className="p-2 hover:bg-red-100 rounded text-red-600"><Trash2 className="w-4 h-4" /></button>
+                      {isOwner && <button onClick={() => delBiz(biz.id)} className="p-2 hover:bg-red-100 rounded text-red-600"><Trash2 className="w-4 h-4" /></button>}
                     </div>
                   </div>
                   {!isCollapsed && (
