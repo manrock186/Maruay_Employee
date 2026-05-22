@@ -6,7 +6,7 @@ import {
   Eye, EyeOff, Network, Save, ChevronDown, ChevronUp, User,
   KeyRound, AlertCircle, CheckCircle2, Crown, Award, MapPinned, Clock,
   Globe, CreditCard, BookOpen, FileText, ExternalLink, Paperclip,
-  Wallet, Banknote, Calculator, Receipt, Minus, TrendingUp, TrendingDown
+  Wallet, Banknote, Calculator, Receipt, Minus, TrendingUp, TrendingDown, Bell, BellRing, Check, CheckCheck
 } from 'lucide-react';
 import { supabase, fromDB, toDB } from './supabase.js';
 
@@ -174,6 +174,8 @@ export default function App() {
   const [positions, setPositions] = useState([]);
   const [employees, setEmployees] = useState([]);
   const [profiles, setProfiles] = useState([]);
+  const [notifications, setNotifications] = useState([]);
+  const [notiReads, setNotiReads] = useState([]); // [{notificationId, userId}]
 
   const [activeBusinessId, setActiveBusinessId] = useState(null);
   const [activeZoneId, setActiveZoneId] = useState(null);
@@ -221,7 +223,7 @@ export default function App() {
     let cancelled = false;
     setDataLoading(true);
     (async () => {
-      const [b, z, p, e, up] = await Promise.all([
+      const [b, z, p, e, up, noti, reads] = await Promise.all([
         supabase.from('businesses').select('*').order('created_at'),
         supabase.from('zones').select('*').order('created_at'),
         supabase.from('positions').select('*').order('created_at'),
@@ -229,6 +231,8 @@ export default function App() {
         profile.isOwner
           ? supabase.from('user_profiles').select('*, email:id').order('created_at')
           : Promise.resolve({ data: [profile] }),
+        supabase.from('notifications').select('*').order('created_at', { ascending: false }),
+        supabase.from('notification_reads').select('*'),
       ]);
       if (cancelled) return;
       setBusinesses(fromDB(b.data || []));
@@ -236,6 +240,8 @@ export default function App() {
       setPositions(fromDB(p.data || []));
       setEmployees(fromDB(e.data || []));
       setProfiles(fromDB(up.data || []));
+      setNotifications(fromDB(noti.data || []));
+      setNotiReads(fromDB(reads.data || []));
       // เลือกธุรกิจเริ่มต้น
       const allBiz = b.data || [];
       const allZones = z.data || [];
@@ -268,6 +274,14 @@ export default function App() {
           // refresh employees ในหน้าจอ
           const { data: e2 } = await supabase.from('employees').select('*').order('created_at');
           if (!cancelled && e2) setEmployees(fromDB(e2));
+        }
+
+        // ---- sync notifications (owner สร้าง/อัปเดตให้ทุก role) ----
+        if (!cancelled) {
+          try {
+            const fresh = await syncNotifications();
+            if (!cancelled && fresh) setNotifications(fresh);
+          } catch (err) { console.error('syncNotifications', err); }
         }
       }
     })();
@@ -304,6 +318,12 @@ export default function App() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'positions' }, handle(setPositions))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'employees' }, handle(setEmployees))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'user_profiles' }, handle(setProfiles))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications' }, handle(setNotifications))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'notification_reads' }, (payload) => {
+        const { eventType, new: nv, old: ov } = payload;
+        if (eventType === 'INSERT') setNotiReads((prev) => prev.some((r) => r.notificationId === nv.notification_id && r.userId === nv.user_id) ? prev : [...prev, fromDB(nv)]);
+        else if (eventType === 'DELETE') setNotiReads((prev) => prev.filter((r) => !(r.notificationId === ov.notification_id && r.userId === ov.user_id)));
+      })
       .subscribe();
 
     return () => { cancelled = true; supabase.removeChannel(ch); };
@@ -313,6 +333,91 @@ export default function App() {
   const changeBusiness = (id) => { setActiveBusinessId(id || null); setActiveZoneId(null); };
   const openZoneEmployees = (bid, zid) => {
     setActiveBusinessId(bid); setActiveZoneId(zid); setView('employees');
+  };
+
+  // ---- สร้าง/อัปเดต notifications (owner client) — reconcile แบบ derived ----
+  const syncNotifications = async () => {
+    // ดึงข้อมูลล่าสุด
+    const [{ data: emps }, { data: poss }, { data: bizs }, { data: zns }, { data: profs }, { data: pendingRaises }] = await Promise.all([
+      supabase.from('employees').select('*'),
+      supabase.from('positions').select('*'),
+      supabase.from('businesses').select('*'),
+      supabase.from('zones').select('*'),
+      supabase.from('user_profiles').select('*'),
+      supabase.from('salary_changes').select('*').eq('status', 'pending'),
+    ]);
+    const E = fromDB(emps || []), P = fromDB(poss || []), B = fromDB(bizs || []), Z = fromDB(zns || []), PR = fromDB(profs || []), SR = fromDB(pendingRaises || []);
+    const bizName = (id) => B.find((b) => b.id === id)?.name || '';
+    const empName = (id) => { const e = E.find((x) => x.id === id); return e ? (e.nickname || e.name) : ''; };
+    const active = E.filter((e) => (e.status || 'active') === 'active');
+    const today = new Date();
+    const desired = []; // {dedupeKey, businessId, zoneId, type, severity, title, body}
+
+    // 1) ผู้ใช้รออนุมัติ (global → owner)
+    PR.filter((p) => p.role === 'pending').forEach((p) => {
+      desired.push({ dedupeKey: `pending_user:${p.id}`, businessId: null, zoneId: null, type: 'pending_user', severity: 'warning', title: 'มีผู้ใช้รออนุมัติ', body: `${p.name || p.id} สมัครเข้าระบบ — รอกำหนดสิทธิ์` });
+    });
+    // 2) บัตรแรงงานใกล้หมด (active + มีบัตร + เหลือ <=30 วัน หรือหมดแล้ว)
+    active.filter((e) => e.hasWorkPermit && e.workPermitExpiry).forEach((e) => {
+      const days = Math.ceil((new Date(e.workPermitExpiry) - today) / 86400000);
+      if (days <= 30) {
+        desired.push({ dedupeKey: `permit_expiry:${e.id}`, businessId: e.businessId, zoneId: e.zoneId, type: 'permit_expiry', severity: days < 0 ? 'urgent' : 'warning', title: 'บัตรแรงงานใกล้หมดอายุ', body: `${e.nickname || e.name} — ${days < 0 ? 'หมดอายุแล้ว' : `เหลือ ${days} วัน`}` });
+      }
+    });
+    // 3) ตำแหน่งว่าง (ต่อโซน: มีคนลาออกแต่ไม่เหลือ active)
+    Z.forEach((zone) => {
+      const inZone = E.filter((e) => e.zoneId === zone.id);
+      const byPos = {};
+      inZone.forEach((e) => { if (e.positionId) (byPos[e.positionId] ||= []).push(e); });
+      Object.entries(byPos).forEach(([posId, list]) => {
+        const act = list.filter((e) => (e.status || 'active') === 'active').length;
+        const resigned = list.filter((e) => (e.status || 'active') !== 'active');
+        if (act === 0 && resigned.length > 0) {
+          const pos = P.find((p) => p.id === posId);
+          desired.push({ dedupeKey: `vacancy:${posId}:${zone.id}`, businessId: zone.businessId, zoneId: zone.id, type: 'vacancy', severity: 'warning', title: 'ตำแหน่งว่าง', body: `${pos?.name || 'ตำแหน่ง'} (${zone.name}) ไม่มีคนทำงาน` });
+        }
+      });
+    });
+    // 4/5) ขาด/เกินอัตรากำลัง (ต่อตำแหน่ง รวมทั้งธุรกิจ)
+    P.forEach((pos) => {
+      const target = pos.targetHeadcount || 0;
+      if (target <= 0) return;
+      const count = active.filter((e) => e.positionId === pos.id).length;
+      if (count < target) desired.push({ dedupeKey: `understaffed:${pos.id}`, businessId: pos.businessId, zoneId: null, type: 'understaffed', severity: 'warning', title: 'ตำแหน่งขาดคน', body: `${pos.name} — มี ${count}/${target} ขาดอีก ${target - count} คน` });
+      else if (count > target) desired.push({ dedupeKey: `overstaffed:${pos.id}`, businessId: pos.businessId, zoneId: null, type: 'overstaffed', severity: 'info', title: 'ตำแหน่งมีคนเกิน', body: `${pos.name} — มี ${count}/${target} เกิน ${count - target} คน` });
+    });
+    // 6) เงินเดือนยังไม่ปิดงวด (เฉพาะใกล้สิ้นเดือน วันที่ >= 25)
+    if (today.getDate() >= 25) {
+      const yr = today.getFullYear(), mo = today.getMonth() + 1;
+      const { data: pys } = await supabase.from('payrolls').select('employee_id,business_id,status').eq('period_year', yr).eq('period_month', mo);
+      const finalizedByBiz = {};
+      (pys || []).forEach((p) => { if (p.status === 'finalized') (finalizedByBiz[p.business_id] ||= new Set()).add(p.employee_id); });
+      B.forEach((biz) => {
+        const need = active.filter((e) => (e.businessId === biz.id || (e.additionalBusinessIds || []).includes(biz.id)) && Number(e.baseSalary) > 0);
+        const done = finalizedByBiz[biz.id] || new Set();
+        const remaining = need.filter((e) => !done.has(e.id)).length;
+        if (need.length > 0 && remaining > 0) {
+          desired.push({ dedupeKey: `payroll_incomplete:${biz.id}:${yr}-${mo}`, businessId: biz.id, zoneId: null, type: 'payroll_incomplete', severity: 'warning', title: 'เงินเดือนยังไม่ปิดงวด', body: `${biz.name} — เดือน ${MONTH_NAMES[mo - 1]} ยังไม่ปิดงวด ${remaining} คน` });
+        }
+      });
+    }
+    // 7) เงินเดือนรอมีผล
+    SR.forEach((sc) => {
+      const d = sc.effectiveDate ? new Date(sc.effectiveDate) : null;
+      const monthLabel = d ? `${MONTH_NAMES[d.getMonth()]} ${d.getFullYear() + 543}` : '';
+      desired.push({ dedupeKey: `pending_raise:${sc.id}`, businessId: sc.businessId, zoneId: null, type: 'pending_raise', severity: 'info', title: 'ปรับเงินเดือนรอมีผล', body: `${empName(sc.employeeId)} → ${fmtMoney(sc.newSalary)} ฿ (มีผล ${monthLabel})` });
+    });
+
+    // reconcile: ลบของเก่าที่ไม่อยู่ในชุดปัจจุบัน + insert ที่ขาด
+    const { data: existing } = await supabase.from('notifications').select('id,dedupe_key');
+    const existKeys = new Set((existing || []).map((n) => n.dedupe_key));
+    const desiredKeys = new Set(desired.map((d) => d.dedupeKey));
+    const toDelete = (existing || []).filter((n) => !desiredKeys.has(n.dedupe_key));
+    const toInsert = desired.filter((d) => !existKeys.has(d.dedupeKey));
+    if (toDelete.length > 0) await supabase.from('notifications').delete().in('id', toDelete.map((n) => n.id));
+    if (toInsert.length > 0) await supabase.from('notifications').insert(toInsert.map((d) => toDB(d)));
+    const { data: finalNoti } = await supabase.from('notifications').select('*').order('created_at', { ascending: false });
+    return fromDB(finalNoti || []);
   };
 
   // CRUD: generic
@@ -396,6 +501,22 @@ export default function App() {
       add: (d) => insertRow('salary_changes', d),
       delete: (id) => deleteRow('salary_changes', id),
     },
+    notification: {
+      markRead: async (notificationId, userId) => {
+        const { error } = await supabase.from('notification_reads').upsert({ notification_id: notificationId, user_id: userId }, { onConflict: 'notification_id,user_id' });
+        if (error) console.error(error);
+      },
+      markAllRead: async (notificationIds, userId) => {
+        if (!notificationIds.length) return;
+        const rows = notificationIds.map((id) => ({ notification_id: id, user_id: userId }));
+        const { error } = await supabase.from('notification_reads').upsert(rows, { onConflict: 'notification_id,user_id' });
+        if (error) console.error(error);
+      },
+      markUnread: async (notificationId, userId) => {
+        const { error } = await supabase.from('notification_reads').delete().eq('notification_id', notificationId).eq('user_id', userId);
+        if (error) console.error(error);
+      },
+    },
   };
 
   if (authLoading) return <LoadingScreen />;
@@ -414,6 +535,20 @@ export default function App() {
         zones={zones}
         activeBusinessId={activeBusinessId}
         setActiveBusinessId={changeBusiness}
+        notiBell={
+          <NotificationBell
+            notifications={notifications}
+            notiReads={notiReads}
+            userId={session.user.id}
+            ops={ops}
+            onJump={(n) => {
+              if (n.type === 'pending_user') setView('users');
+              else if (n.type === 'payroll_incomplete' || n.type === 'pending_raise') { if (n.businessId) changeBusiness(n.businessId); setView(n.type === 'payroll_incomplete' ? 'payroll' : 'employees'); }
+              else if (n.type === 'permit_expiry' || n.type === 'vacancy') { if (n.businessId) changeBusiness(n.businessId); setView('employees'); }
+              else { if (n.businessId) changeBusiness(n.businessId); setView('positions'); }
+            }}
+          />
+        }
       />
       <main className="flex-1 overflow-hidden">
         {view === 'dashboard' && (
@@ -613,8 +748,91 @@ function PendingScreen({ profile }) {
   );
 }
 
+// ============ NOTIFICATION BELL ============
+const NOTI_META = {
+  pending_user:       { icon: UserCircle, color: 'text-amber-600 bg-amber-100' },
+  permit_expiry:      { icon: CreditCard, color: 'text-red-600 bg-red-100' },
+  vacancy:            { icon: Award, color: 'text-amber-600 bg-amber-100' },
+  understaffed:       { icon: Users, color: 'text-rose-600 bg-rose-100' },
+  overstaffed:        { icon: Users, color: 'text-sky-600 bg-sky-100' },
+  payroll_incomplete: { icon: Wallet, color: 'text-amber-600 bg-amber-100' },
+  pending_raise:      { icon: TrendingUp, color: 'text-emerald-600 bg-emerald-100' },
+};
+function timeAgo(ts) {
+  const s = Math.floor((Date.now() - new Date(ts)) / 1000);
+  if (s < 60) return 'เมื่อสักครู่';
+  if (s < 3600) return `${Math.floor(s / 60)} นาทีที่แล้ว`;
+  if (s < 86400) return `${Math.floor(s / 3600)} ชม.ที่แล้ว`;
+  return `${Math.floor(s / 86400)} วันที่แล้ว`;
+}
+function NotificationBell({ notifications, notiReads, userId, ops, onJump }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  const readSet = useMemo(() => new Set(notiReads.filter((r) => r.userId === userId).map((r) => r.notificationId)), [notiReads, userId]);
+  const sorted = useMemo(() => [...notifications].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)), [notifications]);
+  const unread = sorted.filter((n) => !readSet.has(n.id));
+  const unreadCount = unread.length;
+
+  useEffect(() => {
+    const onClick = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', onClick);
+    return () => document.removeEventListener('mousedown', onClick);
+  }, []);
+
+  const clickNoti = (n) => {
+    if (!readSet.has(n.id)) ops.notification.markRead(n.id, userId);
+    if (onJump) onJump(n);
+    setOpen(false);
+  };
+
+  return (
+    <div className="relative" ref={ref}>
+      <button onClick={() => setOpen((o) => !o)} className="relative p-2 rounded-lg hover:bg-emerald-900 text-emerald-100/90 transition-colors" title="การแจ้งเตือน">
+        {unreadCount > 0 ? <BellRing className="w-5 h-5" /> : <Bell className="w-5 h-5" />}
+        {unreadCount > 0 && (
+          <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">{unreadCount > 99 ? '99+' : unreadCount}</span>
+        )}
+      </button>
+      {open && (
+        <div className="absolute left-0 top-full mt-2 w-[340px] max-w-[90vw] bg-white rounded-xl shadow-2xl border border-stone-200 z-[70] overflow-hidden">
+          <div className="px-4 py-3 border-b border-stone-200 flex items-center justify-between bg-stone-50">
+            <div className="font-semibold text-stone-800 text-sm">การแจ้งเตือน {unreadCount > 0 && <span className="text-red-500">({unreadCount})</span>}</div>
+            {unreadCount > 0 && (
+              <button onClick={() => ops.notification.markAllRead(unread.map((n) => n.id), userId)} className="flex items-center gap-1 text-xs text-emerald-700 hover:text-emerald-900 font-medium"><CheckCheck className="w-3.5 h-3.5" />อ่านทั้งหมด</button>
+            )}
+          </div>
+          <div className="max-h-[420px] overflow-auto">
+            {sorted.length === 0 ? (
+              <div className="px-4 py-10 text-center text-stone-400 text-sm"><Bell className="w-8 h-8 mx-auto mb-2 opacity-40" />ไม่มีการแจ้งเตือน</div>
+            ) : (
+              sorted.map((n) => {
+                const meta = NOTI_META[n.type] || { icon: Bell, color: 'text-stone-600 bg-stone-100' };
+                const Icon = meta.icon;
+                const isUnread = !readSet.has(n.id);
+                return (
+                  <button key={n.id} onClick={() => clickNoti(n)} className={`w-full text-left px-4 py-3 flex items-start gap-3 border-b border-stone-100 hover:bg-stone-50 transition-colors ${isUnread ? 'bg-emerald-50/40' : ''}`}>
+                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${meta.color}`}><Icon className="w-4 h-4" /></div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className={`text-sm truncate ${isUnread ? 'font-semibold text-stone-800' : 'font-medium text-stone-600'}`}>{n.title}</span>
+                        {isUnread && <span className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0" />}
+                      </div>
+                      {n.body && <div className="text-xs text-stone-500 mt-0.5 break-words">{n.body}</div>}
+                      <div className="text-[11px] text-stone-400 mt-1">{timeAgo(n.createdAt)}</div>
+                    </div>
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ============ SIDEBAR ============
-function Sidebar({ view, setView, profile, businesses, zones, activeBusinessId, setActiveBusinessId }) {
+function Sidebar({ view, setView, profile, businesses, zones, activeBusinessId, setActiveBusinessId, notiBell }) {
   const isOwner = profile.isOwner;
   const isBM = profile.isBM;
   const isZM = profile.isZM;
@@ -659,10 +877,11 @@ function Sidebar({ view, setView, profile, businesses, zones, activeBusinessId, 
           <div className="w-10 h-10 rounded-lg bg-amber-500 flex items-center justify-center">
             <Users className="w-5 h-5 text-emerald-950" strokeWidth={2.5} />
           </div>
-          <div>
+          <div className="flex-1">
             <div className="font-semibold text-white text-sm">ระบบพนักงาน</div>
             <div className="text-xs text-emerald-300/70">Employee System</div>
           </div>
+          {notiBell}
         </div>
       </div>
       {accessibleBiz.length > 1 && (
@@ -785,6 +1004,29 @@ function Dashboard({ profile, businesses, zones, employees, positions, activeBus
     return result;
   }, [employees, visibleZones, positions, isOwner, isBM, isZM, profile, activeBusinessId]);
 
+  // ตำแหน่งที่อัตรากำลังไม่ตรง (นับรวมทั้งธุรกิจ): ขาด หรือ เกิน
+  const staffingIssues = useMemo(() => {
+    const scopePos = (() => {
+      if (isOwner) return activeBusinessId ? positions.filter((p) => p.businessId === activeBusinessId) : positions;
+      if (isBM) return positions.filter((p) => (profile.businessIds || []).includes(p.businessId));
+      return [];
+    })();
+    const under = [], over = [];
+    scopePos.forEach((pos) => {
+      const target = pos.targetHeadcount || 0;
+      if (target <= 0) return;
+      const count = employees.filter((e) => e.positionId === pos.id && isActive(e)).length;
+      const biz = businesses.find((b) => b.id === pos.businessId);
+      if (count < target) under.push({ position: pos, biz, count, target, shortage: target - count });
+      else if (count > target) over.push({ position: pos, biz, count, target, excess: count - target });
+    });
+    under.sort((a, b) => b.shortage - a.shortage);
+    over.sort((a, b) => b.excess - a.excess);
+    return { under, over };
+  }, [positions, employees, businesses, isOwner, isBM, profile, activeBusinessId]);
+  const understaffed = staffingIssues.under;
+  const overstaffed = staffingIssues.over;
+
   const stats = [
     isOwner && { label: 'ธุรกิจ', value: businesses.length, icon: Building2, color: 'emerald' },
     { label: 'โซน', value: visibleZones.length, icon: MapPin, color: 'amber' },
@@ -842,6 +1084,49 @@ function Dashboard({ profile, businesses, zones, employees, positions, activeBus
             </div>
           </div>
         )}
+        {understaffed.length > 0 && (
+          <div className="bg-rose-50 border border-rose-200 rounded-xl p-5 mb-8">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-8 h-8 rounded-lg bg-rose-100 flex items-center justify-center"><Users className="w-4 h-4 text-rose-700" /></div>
+              <h2 className="font-semibold text-rose-900">ตำแหน่งที่ต้องหาคนเพิ่ม ({understaffed.length})</h2>
+            </div>
+            <p className="text-xs text-rose-700 mb-3">ตำแหน่งเหล่านี้มีพนักงานไม่ครบตามอัตรากำลังที่กำหนด</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+              {understaffed.map((u, i) => (
+                <div key={i} className="flex items-start gap-2 p-3 bg-white border border-rose-200 rounded-lg">
+                  <Award className="w-4 h-4 text-rose-600 mt-0.5 flex-shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium text-stone-800 truncate">{u.position?.name}</div>
+                    {!activeBusinessId && u.biz && <div className="text-xs text-stone-500 truncate">{u.biz.name}</div>}
+                    <div className="text-[11px] text-rose-700 mt-0.5 font-medium">มี {u.count}/{u.target} คน — ขาดอีก {u.shortage} คน</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        {overstaffed.length > 0 && (
+          <div className="bg-sky-50 border border-sky-200 rounded-xl p-5 mb-8">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-8 h-8 rounded-lg bg-sky-100 flex items-center justify-center"><Users className="w-4 h-4 text-sky-700" /></div>
+              <h2 className="font-semibold text-sky-900">ตำแหน่งที่มีคนเกิน ({overstaffed.length})</h2>
+            </div>
+            <p className="text-xs text-sky-700 mb-3">ตำแหน่งเหล่านี้มีพนักงานมากกว่าอัตรากำลังที่กำหนด</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+              {overstaffed.map((u, i) => (
+                <div key={i} className="flex items-start gap-2 p-3 bg-white border border-sky-200 rounded-lg">
+                  <Award className="w-4 h-4 text-sky-600 mt-0.5 flex-shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium text-stone-800 truncate">{u.position?.name}</div>
+                    {!activeBusinessId && u.biz && <div className="text-xs text-stone-500 truncate">{u.biz.name}</div>}
+                    <div className="text-[11px] text-sky-700 mt-0.5 font-medium">มี {u.count}/{u.target} คน — เกิน {u.excess} คน</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        {businesses.length === 0 && isOwner && (
           <div className="bg-gradient-to-br from-emerald-900 to-emerald-950 rounded-2xl p-8 text-white mb-8">
             <h2 className="text-xl font-semibold mb-2">เริ่มต้นใช้งาน</h2>
             <p className="text-emerald-100/80 text-sm mb-5">เริ่มจากสร้างธุรกิจ → เพิ่มโซน → ตำแหน่ง → พนักงาน</p>
@@ -1099,17 +1384,28 @@ function PositionTree({ positions, allPositions, employees, onEdit, onDelete, is
     <div className={level === 0 ? 'space-y-2' : 'mt-2 ml-6 pl-4 border-l-2 border-stone-200 space-y-2'}>
       {positions.map((pos) => {
         const children = allPositions.filter((p) => p.parentId === pos.id);
-        const count = employees.filter((e) => e.positionId === pos.id).length;
+        const count = employees.filter((e) => e.positionId === pos.id && isActive(e)).length;
+        const target = pos.targetHeadcount || 0;
+        const shortage = target > 0 ? Math.max(0, target - count) : 0;
+        const over = target > 0 ? Math.max(0, count - target) : 0;
+        const full = target > 0 && count === target;
         return (
           <div key={pos.id}>
             <div className="flex items-center justify-between p-3 bg-stone-50 hover:bg-stone-100 rounded-lg group">
               <div className="flex items-center gap-3">
                 <Award className="w-4 h-4 text-emerald-700" />
                 <div>
-                  <div className="flex items-center gap-2"><div className="font-medium text-stone-800">{pos.name}</div>
+                  <div className="flex items-center gap-2 flex-wrap"><div className="font-medium text-stone-800">{pos.name}</div>
                     {pos.crossZone && <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-100 text-amber-800 text-[10px] font-medium rounded-full"><MapPin className="w-2.5 h-2.5" />ไม่จำกัดโซน</span>}
+                    {target > 0 && (
+                      full
+                        ? <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-emerald-100 text-emerald-800 text-[10px] font-medium rounded-full"><CheckCircle2 className="w-2.5 h-2.5" />ครบ {count}/{target}</span>
+                        : over > 0
+                          ? <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-sky-100 text-sky-800 text-[10px] font-medium rounded-full"><AlertCircle className="w-2.5 h-2.5" />เกิน {over} ({count}/{target})</span>
+                          : <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-100 text-amber-800 text-[10px] font-medium rounded-full"><AlertCircle className="w-2.5 h-2.5" />ขาด {shortage} ({count}/{target})</span>
+                    )}
                   </div>
-                  <div className="text-xs text-stone-500">{count} คน{pos.description ? ` • ${pos.description}` : ''}</div>
+                  <div className="text-xs text-stone-500">{count} คน{target > 0 ? ` (ต้องการ ${target})` : ''}{pos.description ? ` • ${pos.description}` : ''}</div>
                 </div>
               </div>
               {isOwner && (
@@ -1132,7 +1428,8 @@ function PositionForm({ initial, positions, onSave, onCancel }) {
   const [description, setDescription] = useState(initial?.description || '');
   const [parentId, setParentId] = useState(initial?.parentId || '');
   const [crossZone, setCrossZone] = useState(initial?.crossZone || false);
-  const submit = () => { if (!name.trim()) return alert('กรุณากรอกชื่อตำแหน่ง'); onSave({ name: name.trim(), description: description.trim(), parentId: parentId || null, crossZone }); };
+  const [targetHeadcount, setTargetHeadcount] = useState(initial?.targetHeadcount ?? 0);
+  const submit = () => { if (!name.trim()) return alert('กรุณากรอกชื่อตำแหน่ง'); onSave({ name: name.trim(), description: description.trim(), parentId: parentId || null, crossZone, targetHeadcount: Number(targetHeadcount) || 0 }); };
   const isDescendant = (id, of) => { let p = positions.find((x) => x.id === id); while (p) { if (p.id === of) return true; p = positions.find((x) => x.id === p.parentId); } return false; };
   const validParents = positions.filter((p) => p.id !== initial?.id && !isDescendant(p.id, initial?.id));
 
@@ -1144,6 +1441,10 @@ function PositionForm({ initial, positions, onSave, onCancel }) {
           <option value="">— ตำแหน่งสูงสุด (ไม่มีหัวหน้า) —</option>
           {validParents.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
+      </FormField>
+      <FormField label="จำนวนที่ต้องการ (อัตรากำลัง)">
+        <input type="number" min="0" value={targetHeadcount} onChange={(e) => setTargetHeadcount(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600" placeholder="0 = ไม่กำหนด" />
+        <p className="text-xs text-stone-500 mt-1">ระบุจำนวนพนักงานที่ตำแหน่งนี้ควรมี — ถ้ายังไม่ครบ ระบบจะเตือนให้หาคนเพิ่ม (ใส่ 0 = ไม่เตือน)</p>
       </FormField>
       <FormField label="รายละเอียด"><textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600 resize-none" /></FormField>
       <label className="flex items-start gap-3 p-3 bg-stone-50 rounded-lg cursor-pointer hover:bg-stone-100 border border-stone-200">
