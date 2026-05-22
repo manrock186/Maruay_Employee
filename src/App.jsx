@@ -25,6 +25,16 @@ const NATIONALITIES = [
 const natLabel = (v) => NATIONALITIES.find((n) => n.value === v)?.label || (v ? 'อื่นๆ' : '—');
 const isForeign = (v) => v && v !== 'thai';
 
+// ============ การลาออก ============
+const RESIGN_REASONS = [
+  { value: 'voluntary',    label: 'ลาออกเอง' },
+  { value: 'terminated',   label: 'เลิกจ้าง' },
+  { value: 'contract_end', label: 'หมดสัญญา' },
+  { value: 'other',        label: 'อื่นๆ' },
+];
+const resignLabel = (v) => RESIGN_REASONS.find((r) => r.value === v)?.label || 'อื่นๆ';
+const isActive = (e) => (e?.status || 'active') === 'active';
+
 // ============ PAYROLL HELPERS ============
 const MONTH_NAMES = ['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน', 'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
 const fmtMoney = (n) => (Number(n) || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -48,6 +58,47 @@ function computePayroll(p, items = []) {
     + (Number(p.roomFee) || 0) + (Number(p.paidViaCompany) || 0) + advances + otherDeductions;
   const net = totalIncome - totalDeduction;
   return { daily, holidayWorkPay, bonusTasks, totalIncome, excessDays, excessHolidayDeduction, advances, otherDeductions, totalDeduction, net };
+}
+
+// สร้าง draft ตั้งต้นสำหรับ payroll (จาก payroll เดิม หรือ default จากโปรไฟล์พนักงาน)
+function buildPayrollDraft(emp, payroll, items) {
+  if (payroll) {
+    return {
+      baseSalary: payroll.baseSalary ?? 0,
+      holidayQuota: payroll.holidayQuota ?? 4,
+      commission: payroll.commission ?? 0,
+      holidayWorkDays: payroll.holidayWorkDays ?? 0,
+      holidayDaysTaken: payroll.holidayDaysTaken ?? 0,
+      lateDeduction: payroll.lateDeduction ?? 0,
+      socialSecurity: payroll.socialSecurity ?? 0,
+      roomFee: payroll.roomFee ?? 0,
+      paidViaCompany: payroll.paidViaCompany ?? 0,
+      note: payroll.note ?? '',
+      status: payroll.status ?? 'draft',
+      items: (items || []).map((i) => ({ kind: i.kind, label: i.label, amount: i.amount })),
+    };
+  }
+  return {
+    baseSalary: emp.baseSalary ?? 0,
+    holidayQuota: emp.holidayQuota ?? 4,
+    commission: 0, holidayWorkDays: 0, holidayDaysTaken: 0, lateDeduction: 0,
+    socialSecurity: emp.hasSocialSecurity ? calcSocialSecurity(emp.baseSalary) : 0,
+    roomFee: emp.roomFee ?? 0,
+    paidViaCompany: 0, note: '', status: 'draft', items: [],
+  };
+}
+
+// detect หน้าจอมือถือ
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 768);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const mq = window.matchMedia('(max-width: 767px)');
+    const handler = (e) => setIsMobile(e.matches);
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, []);
+  return isMobile;
 }
 
 // ============ FILE UPLOAD HELPERS ============
@@ -272,6 +323,8 @@ export default function App() {
       add: (d) => insertRow('employees', d),
       update: (id, d) => updateRow('employees', id, d),
       delete: (id) => deleteRow('employees', id),
+      resign: (id, d) => updateRow('employees', id, { status: 'resigned', resignedDate: d.resignedDate, resignReason: d.resignReason, resignNote: d.resignNote }),
+      rehire: (id) => updateRow('employees', id, { status: 'active', resignedDate: null, resignReason: null, resignNote: null }),
     },
     profile: {
       update: (id, d) => updateRow('user_profiles', id, d),
@@ -634,23 +687,24 @@ function Dashboard({ profile, businesses, zones, employees, positions, activeBus
   const isZM = profile.isZM;
   const isViewer = profile.isViewer;
   const visibleEmployees = useMemo(() => {
+    const act = employees.filter(isActive);
     if (isOwner) return activeBusinessId
-      ? employees.filter((e) => e.businessId === activeBusinessId || (e.additionalBusinessIds || []).includes(activeBusinessId))
-      : employees;
+      ? act.filter((e) => e.businessId === activeBusinessId || (e.additionalBusinessIds || []).includes(activeBusinessId))
+      : act;
     if (isBM) {
       const ids = profile.businessIds || [];
-      let list = employees.filter((e) => ids.includes(e.businessId) || (e.additionalBusinessIds || []).some((id) => ids.includes(id)));
+      let list = act.filter((e) => ids.includes(e.businessId) || (e.additionalBusinessIds || []).some((id) => ids.includes(id)));
       if (activeBusinessId) list = list.filter((e) => e.businessId === activeBusinessId || (e.additionalBusinessIds || []).includes(activeBusinessId));
       return list;
     }
     if (isZM) {
       const zoneIds = profile.zoneIds || [];
-      return employees.filter((e) => zoneIds.includes(e.zoneId));
+      return act.filter((e) => zoneIds.includes(e.zoneId));
     }
     if (isViewer) {
       const noScope = profile.businessIds.length === 0 && profile.zoneIds.length === 0;
-      if (noScope) return activeBusinessId ? employees.filter((e) => e.businessId === activeBusinessId) : employees;
-      return employees.filter((e) => profile.businessIds.includes(e.businessId) || profile.zoneIds.includes(e.zoneId));
+      if (noScope) return activeBusinessId ? act.filter((e) => e.businessId === activeBusinessId) : act;
+      return act.filter((e) => profile.businessIds.includes(e.businessId) || profile.zoneIds.includes(e.zoneId));
     }
     return [];
   }, [employees, profile, activeBusinessId, isOwner, isBM, isZM, isViewer]);
@@ -665,6 +719,32 @@ function Dashboard({ profile, businesses, zones, employees, positions, activeBus
     }
     return [];
   }, [zones, profile, activeBusinessId, isOwner, isBM, isZM, isViewer]);
+
+  // ตำแหน่งว่าง: ตำแหน่งที่มีคนลาออก แต่ไม่มีคน active อยู่แล้ว
+  const vacancies = useMemo(() => {
+    const scopeEmp = (() => {
+      if (isOwner) return activeBusinessId ? employees.filter((e) => e.businessId === activeBusinessId) : employees;
+      if (isBM) return employees.filter((e) => (profile.businessIds || []).includes(e.businessId));
+      if (isZM) return employees.filter((e) => (profile.zoneIds || []).includes(e.zoneId));
+      return [];
+    })();
+    const result = [];
+    visibleZones.forEach((zone) => {
+      const inZone = scopeEmp.filter((e) => e.zoneId === zone.id);
+      const byPos = {};
+      inZone.forEach((e) => { if (e.positionId) (byPos[e.positionId] ||= []).push(e); });
+      Object.entries(byPos).forEach(([posId, list]) => {
+        const activeCount = list.filter(isActive).length;
+        const resignedList = list.filter((e) => !isActive(e));
+        if (activeCount === 0 && resignedList.length > 0) {
+          const pos = positions.find((p) => p.id === posId);
+          const lastResigned = resignedList.slice().sort((a, b) => (b.resignedDate || '').localeCompare(a.resignedDate || ''))[0];
+          result.push({ zone, position: pos, lastResigned });
+        }
+      });
+    });
+    return result;
+  }, [employees, visibleZones, positions, isOwner, isBM, isZM, profile, activeBusinessId]);
 
   const stats = [
     isOwner && { label: 'ธุรกิจ', value: businesses.length, icon: Building2, color: 'emerald' },
@@ -702,7 +782,27 @@ function Dashboard({ profile, businesses, zones, employees, positions, activeBus
             );
           })}
         </div>
-        {businesses.length === 0 && isOwner && (
+        {vacancies.length > 0 && (
+          <div className="bg-amber-50 border border-amber-200 rounded-xl p-5 mb-8">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-8 h-8 rounded-lg bg-amber-100 flex items-center justify-center"><AlertCircle className="w-4 h-4 text-amber-700" /></div>
+              <h2 className="font-semibold text-amber-900">ตำแหน่งว่าง ({vacancies.length})</h2>
+            </div>
+            <p className="text-xs text-amber-700 mb-3">ตำแหน่งเหล่านี้มีคนลาออกและยังไม่มีคนทำงานแทน</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+              {vacancies.map((v, i) => (
+                <div key={i} className="flex items-start gap-2 p-3 bg-white border border-amber-200 rounded-lg">
+                  <Award className="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0" />
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium text-stone-800 truncate">{v.position?.name || 'ไม่ระบุตำแหน่ง'}</div>
+                    <div className="text-xs text-stone-500 truncate">{v.zone?.name}</div>
+                    {v.lastResigned && <div className="text-[11px] text-amber-700 mt-0.5">{dispName(v.lastResigned)} ลาออก {v.lastResigned.resignedDate ? new Date(v.lastResigned.resignedDate).toLocaleDateString('th-TH', { day: 'numeric', month: 'short' }) : ''}</div>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
           <div className="bg-gradient-to-br from-emerald-900 to-emerald-950 rounded-2xl p-8 text-white mb-8">
             <h2 className="text-xl font-semibold mb-2">เริ่มต้นใช้งาน</h2>
             <p className="text-emerald-100/80 text-sm mb-5">เริ่มจากสร้างธุรกิจ → เพิ่มโซน → ตำแหน่ง → พนักงาน</p>
@@ -1022,11 +1122,14 @@ function EmployeesPage({ businesses, zones, positions, employees, profile, activ
   const [showModal, setShowModal] = useState(false);
   const [viewing, setViewing] = useState(null);
   const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('active'); // active | resigned | all
+  const [resigningEmp, setResigningEmp] = useState(null);
   const isOwner = profile.isOwner;
   const isBM = profile.isBM;
   const isZM = profile.isZM;
   const isViewer = profile.isViewer;
   const canWrite = profile.canWrite;
+  const canResign = isOwner || isBM; // owner + หัวหน้าธุรกิจ
 
   const visibleEmployees = useMemo(() => {
     let list;
@@ -1052,6 +1155,9 @@ function EmployeesPage({ businesses, zones, positions, employees, profile, activ
     } else {
       list = [];
     }
+    // กรองตามสถานะ ทำงานอยู่/ลาออกแล้ว
+    if (statusFilter === 'active') list = list.filter((e) => isActive(e));
+    else if (statusFilter === 'resigned') list = list.filter((e) => !isActive(e));
     if (activeZoneId === '__nozone__') list = list.filter((e) => !e.zoneId);
     else if (activeZoneId) list = list.filter((e) => e.zoneId === activeZoneId);
     if (search.trim()) {
@@ -1059,7 +1165,7 @@ function EmployeesPage({ businesses, zones, positions, employees, profile, activ
       list = list.filter((e) => e.name?.toLowerCase().includes(s) || e.nickname?.toLowerCase().includes(s) || e.employeeNumber?.toLowerCase().includes(s) || e.phone?.includes(s) || e.email?.toLowerCase().includes(s));
     }
     return list;
-  }, [employees, profile, activeBusinessId, activeZoneId, search, isOwner, isBM, isZM, isViewer]);
+  }, [employees, profile, activeBusinessId, activeZoneId, search, statusFilter, isOwner, isBM, isZM, isViewer]);
 
   // โซนที่ user เลือกได้
   const visibleZones = useMemo(() => {
@@ -1095,6 +1201,15 @@ function EmployeesPage({ businesses, zones, positions, employees, profile, activ
     for (const path of toDelete) await deleteDocument(path);
     await ops.employee.delete(id);
   };
+  const doResign = async (d) => {
+    await ops.employee.resign(resigningEmp.id, d);
+    setResigningEmp(null); setViewing(null);
+  };
+  const doRehire = async (emp) => {
+    if (!confirm(`จ้าง ${dispName(emp)} กลับเข้าทำงาน?`)) return;
+    await ops.employee.rehire(emp.id);
+    setViewing(null);
+  };
 
   const allMode = (isOwner || isBM) && !activeBusinessId && (isOwner || (profile.businessIds || []).length > 1);
 
@@ -1127,6 +1242,11 @@ function EmployeesPage({ businesses, zones, positions, employees, profile, activ
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-stone-400" />
             <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="ค้นหาชื่อ, เลขพนักงาน, เบอร์โทร, อีเมล..." className="w-full pl-10 pr-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600 bg-white" />
           </div>
+          <div className="inline-flex rounded-lg border border-stone-300 overflow-hidden">
+            {[['active', 'ทำงานอยู่'], ['resigned', 'ลาออกแล้ว'], ['all', 'ทั้งหมด']].map(([v, label]) => (
+              <button key={v} onClick={() => setStatusFilter(v)} className={`px-3 py-2 text-sm font-medium ${statusFilter === v ? 'bg-emerald-900 text-white' : 'bg-white text-stone-600 hover:bg-stone-50'}`}>{label}</button>
+            ))}
+          </div>
           {isOwner && activeBusinessId && (
             <select value={activeZoneId || 'all'} onChange={(e) => setActiveZoneId(e.target.value === 'all' ? null : e.target.value)} className="px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600 bg-white">
               <option value="all">ทุกโซน</option>
@@ -1147,13 +1267,19 @@ function EmployeesPage({ businesses, zones, positions, employees, profile, activ
               const initials = display.split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase() || '?';
               const hasNick = emp.nickname?.trim() && emp.nickname.trim() !== emp.name?.trim();
               const extraBizCount = (emp.additionalBusinessIds || []).length;
+              const resigned = !isActive(emp);
               return (
-                <div key={emp.id} onClick={() => setViewing(emp)} className="bg-white rounded-xl border border-stone-200 hover:shadow-lg hover:-translate-y-0.5 hover:border-emerald-300 transition-all group overflow-hidden cursor-pointer">
+                <div key={emp.id} onClick={() => setViewing(emp)} className={`bg-white rounded-xl border ${resigned ? 'border-stone-200 opacity-70' : 'border-stone-200'} hover:shadow-lg hover:-translate-y-0.5 hover:border-emerald-300 transition-all group overflow-hidden cursor-pointer`}>
                   <div className="relative aspect-square bg-gradient-to-br from-stone-100 to-stone-200 overflow-hidden">
-                    {emp.photo ? <img src={emp.photo} alt={display} className="w-full h-full object-contain" /> : (
-                      <div className="w-full h-full flex items-center justify-center"><div className="w-24 h-24 rounded-full bg-gradient-to-br from-emerald-700 to-emerald-900 text-white text-3xl font-semibold flex items-center justify-center">{initials}</div></div>
+                    {emp.photo ? <img src={emp.photo} alt={display} className={`w-full h-full object-contain ${resigned ? 'grayscale' : ''}`} /> : (
+                      <div className="w-full h-full flex items-center justify-center"><div className={`w-24 h-24 rounded-full text-white text-3xl font-semibold flex items-center justify-center ${resigned ? 'bg-stone-400' : 'bg-gradient-to-br from-emerald-700 to-emerald-900'}`}>{initials}</div></div>
                     )}
-                    {canWrite && (
+                    {resigned && (
+                      <div className="absolute top-2 left-2">
+                        <span className="inline-flex items-center gap-1 px-2 py-1 bg-stone-700/90 backdrop-blur text-white text-xs font-medium rounded-md shadow-sm">ลาออกแล้ว</span>
+                      </div>
+                    )}
+                    {canWrite && !resigned && (
                       <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                         <button onClick={(e) => { e.stopPropagation(); setEditing(emp); setShowModal(true); }} className="p-2 bg-white/95 hover:bg-white rounded-lg text-stone-700 shadow-sm"><Edit2 className="w-4 h-4" /></button>
                         <button onClick={(e) => { e.stopPropagation(); del(emp.id); }} className="p-2 bg-white/95 hover:bg-white rounded-lg text-red-600 shadow-sm"><Trash2 className="w-4 h-4" /></button>
@@ -1200,19 +1326,79 @@ function EmployeesPage({ businesses, zones, positions, employees, profile, activ
         </Modal>
       )}
       {viewing && (
-        <EmployeeDetailModal employee={viewing} zones={zones} positions={positions} employees={employees} businesses={businesses} canWrite={canWrite} onClose={() => setViewing(null)} onEdit={() => { setEditing(viewing); setShowModal(true); setViewing(null); }} onDelete={() => { del(viewing.id); setViewing(null); }} />
+        <EmployeeDetailModal employee={viewing} zones={zones} positions={positions} employees={employees} businesses={businesses} canWrite={canWrite} canResign={canResign} onClose={() => setViewing(null)} onEdit={() => { setEditing(viewing); setShowModal(true); setViewing(null); }} onDelete={() => { del(viewing.id); setViewing(null); }} onResign={() => setResigningEmp(viewing)} onRehire={() => doRehire(viewing)} />
+      )}
+      {resigningEmp && (
+        <ResignModal employee={resigningEmp} onClose={() => setResigningEmp(null)} onConfirm={doResign} />
       )}
     </div>
   );
 }
 
-function EmployeeDetailModal({ employee, zones, positions, employees, businesses, canWrite, onClose, onEdit, onDelete }) {
+// ============ MODAL: บันทึกการลาออก ============
+function ResignModal({ employee, onClose, onConfirm }) {
+  const [resignedDate, setResignedDate] = useState(new Date().toISOString().slice(0, 10));
+  const [resignReason, setResignReason] = useState('voluntary');
+  const [resignNote, setResignNote] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const submit = async () => {
+    if (!resignedDate) return alert('กรุณาระบุวันที่ลาออก');
+    setSaving(true);
+    try { await onConfirm({ resignedDate, resignReason, resignNote: resignNote.trim() || null }); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-stone-900/50 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md flex flex-col">
+        <div className="px-6 py-4 border-b border-stone-200 flex items-center justify-between">
+          <h2 className="font-semibold text-stone-800">บันทึกการลาออก</h2>
+          <button onClick={onClose} className="p-1 hover:bg-stone-100 rounded text-stone-500"><X className="w-5 h-5" /></button>
+        </div>
+        <div className="p-6 space-y-4">
+          <div className="flex items-center gap-3 p-3 bg-stone-50 rounded-lg">
+            <Avatar photo={employee.photo} name={dispName(employee)} size={40} />
+            <div>
+              <div className="font-medium text-stone-800"><span className="font-mono text-xs text-stone-400 mr-1">#{employee.employeeNumber}</span>{dispName(employee)}</div>
+              <div className="text-xs text-stone-500">กำลังบันทึกว่าพนักงานคนนี้ลาออก</div>
+            </div>
+          </div>
+          <FormField label="วันที่ลาออก" required>
+            <input type="date" value={resignedDate} onChange={(e) => setResignedDate(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600" />
+          </FormField>
+          <FormField label="เหตุผล" required>
+            <div className="grid grid-cols-2 gap-2">
+              {RESIGN_REASONS.map((r) => (
+                <button key={r.value} type="button" onClick={() => setResignReason(r.value)} className={`px-3 py-2 rounded-lg border-2 text-sm transition-all ${resignReason === r.value ? 'border-emerald-600 bg-emerald-50 font-medium text-emerald-900' : 'border-stone-200 text-stone-700 hover:border-stone-300'}`}>{r.label}</button>
+              ))}
+            </div>
+          </FormField>
+          <FormField label="หมายเหตุ">
+            <textarea value={resignNote} onChange={(e) => setResignNote(e.target.value)} rows={2} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600 resize-none" placeholder="รายละเอียดเพิ่มเติม (ถ้ามี)" />
+          </FormField>
+          <div className="flex items-start gap-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800">
+            <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+            <div>ข้อมูลพนักงานและประวัติเงินเดือนจะยังถูกเก็บไว้ — สามารถจ้างกลับได้ภายหลัง</div>
+          </div>
+        </div>
+        <div className="px-6 py-3 border-t border-stone-200 bg-stone-50 flex justify-end gap-2">
+          <button onClick={onClose} className="px-4 py-2 text-stone-700 hover:bg-stone-100 rounded-lg text-sm font-medium">ยกเลิก</button>
+          <button onClick={submit} disabled={saving} className="flex items-center gap-2 px-4 py-2 bg-stone-700 hover:bg-stone-800 text-white rounded-lg text-sm font-medium disabled:opacity-50"><LogOut className="w-4 h-4" />{saving ? 'กำลังบันทึก...' : 'ยืนยันการลาออก'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EmployeeDetailModal({ employee, zones, positions, employees, businesses, canWrite, canResign, onClose, onEdit, onDelete, onResign, onRehire }) {
   const zone = zones.find((z) => z.id === employee.zoneId);
   const pos = positions.find((p) => p.id === employee.positionId);
   const mgr = employees.find((e) => e.id === employee.managerId);
   const reports = employees.filter((e) => e.managerId === employee.id);
   const primaryBiz = businesses?.find((b) => b.id === employee.businessId);
   const additionalBizs = (employee.additionalBusinessIds || []).map((id) => businesses?.find((b) => b.id === id)).filter(Boolean);
+  const resigned = !isActive(employee);
   const fmt = (d) => (d ? new Date(d).toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' }) : null);
   const yos = employee.startDate ? Math.floor((Date.now() - new Date(employee.startDate)) / (365.25 * 24 * 60 * 60 * 1000)) : null;
   const display = dispName(employee);
@@ -1261,6 +1447,18 @@ function EmployeeDetailModal({ employee, zones, positions, employees, businesses
                   <div className="flex flex-wrap gap-1.5">
                     {primaryBiz && <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-white border border-emerald-300 text-emerald-800 text-xs font-medium rounded">{primaryBiz.name}<span className="text-[9px] text-emerald-600">หลัก</span></span>}
                     {additionalBizs.map((b) => <span key={b.id} className="inline-flex items-center px-2 py-0.5 bg-white border border-stone-300 text-stone-700 text-xs rounded">{b.name}</span>)}
+                  </div>
+                </div>
+              )}
+              {resigned && (
+                <div className="mt-3 p-3 bg-stone-100 border border-stone-300 rounded-lg">
+                  <div className="flex items-center gap-1.5 text-sm font-medium text-stone-700 mb-1">
+                    <LogOut className="w-4 h-4" />ลาออกแล้ว
+                  </div>
+                  <div className="text-xs text-stone-600 space-y-0.5">
+                    <div>วันที่ลาออก: <strong>{fmt(employee.resignedDate) || '—'}</strong></div>
+                    <div>เหตุผล: <strong>{resignLabel(employee.resignReason)}</strong></div>
+                    {employee.resignNote && <div>หมายเหตุ: {employee.resignNote}</div>}
                   </div>
                 </div>
               )}
@@ -1337,9 +1535,18 @@ function EmployeeDetailModal({ employee, zones, positions, employees, businesses
           )}
         </div>
         {canWrite && (
-          <div className="px-6 py-3 border-t border-stone-200 bg-stone-50 flex justify-end gap-2">
-            <button onClick={onDelete} className="flex items-center gap-2 px-4 py-2 text-red-600 hover:bg-red-50 rounded-lg text-sm font-medium"><Trash2 className="w-4 h-4" /> ลบ</button>
-            <button onClick={onEdit} className="flex items-center gap-2 px-4 py-2 bg-emerald-900 hover:bg-emerald-800 text-white rounded-lg text-sm font-medium"><Edit2 className="w-4 h-4" /> แก้ไข</button>
+          <div className="px-6 py-3 border-t border-stone-200 bg-stone-50 flex justify-between gap-2">
+            <div>
+              {canResign && (resigned ? (
+                <button onClick={onRehire} className="flex items-center gap-2 px-4 py-2 text-emerald-700 hover:bg-emerald-50 border border-emerald-300 rounded-lg text-sm font-medium"><UserCircle className="w-4 h-4" /> จ้างกลับ</button>
+              ) : (
+                <button onClick={onResign} className="flex items-center gap-2 px-4 py-2 text-stone-700 hover:bg-stone-100 border border-stone-300 rounded-lg text-sm font-medium"><LogOut className="w-4 h-4" /> ลาออก</button>
+              ))}
+            </div>
+            <div className="flex gap-2">
+              <button onClick={onDelete} className="flex items-center gap-2 px-4 py-2 text-red-600 hover:bg-red-50 rounded-lg text-sm font-medium"><Trash2 className="w-4 h-4" /> ลบ</button>
+              {!resigned && <button onClick={onEdit} className="flex items-center gap-2 px-4 py-2 bg-emerald-900 hover:bg-emerald-800 text-white rounded-lg text-sm font-medium"><Edit2 className="w-4 h-4" /> แก้ไข</button>}
+            </div>
           </div>
         )}
       </div>
@@ -1688,16 +1895,17 @@ function OrgChartPage({ businesses, zones, positions, employees, profile, active
   const isZM = profile.isZM;
   const isViewer = profile.isViewer;
   const visible = useMemo(() => {
-    if (isOwner) return employees.filter((e) => e.businessId === activeBusinessId);
+    const act = employees.filter(isActive);
+    if (isOwner) return act.filter((e) => e.businessId === activeBusinessId);
     if (isBM) {
       const ids = profile.businessIds || [];
-      return employees.filter((e) => ids.includes(e.businessId) && (!activeBusinessId || e.businessId === activeBusinessId));
+      return act.filter((e) => ids.includes(e.businessId) && (!activeBusinessId || e.businessId === activeBusinessId));
     }
-    if (isZM) return employees.filter((e) => (profile.zoneIds || []).includes(e.zoneId));
+    if (isZM) return act.filter((e) => (profile.zoneIds || []).includes(e.zoneId));
     if (isViewer) {
       const noScope = profile.businessIds.length === 0 && profile.zoneIds.length === 0;
-      if (noScope) return employees.filter((e) => e.businessId === activeBusinessId);
-      return employees.filter((e) => (profile.businessIds.includes(e.businessId) || profile.zoneIds.includes(e.zoneId)) && (!activeBusinessId || e.businessId === activeBusinessId));
+      if (noScope) return act.filter((e) => e.businessId === activeBusinessId);
+      return act.filter((e) => (profile.businessIds.includes(e.businessId) || profile.zoneIds.includes(e.zoneId)) && (!activeBusinessId || e.businessId === activeBusinessId));
     }
     return [];
   }, [employees, profile, activeBusinessId, isOwner, isBM, isZM, isViewer]);
@@ -1756,12 +1964,19 @@ function PayrollPage({ businesses, zones, positions, employees, activeBusinessId
   const [loading, setLoading] = useState(false);
   const [editingEmp, setEditingEmp] = useState(null);
   const [reload, setReload] = useState(0);
+  const [mode, setMode] = useState('list'); // 'list' | 'quick'
 
-  // พนักงานในธุรกิจนี้ (รวมดูแลเพิ่มเติม)
+  // พนักงานในธุรกิจนี้ — คนทำงานอยู่ + คนลาออกที่ยังมีงวดค้างจ่ายในเดือนนี้
+  const payrollEmpIds = useMemo(() => new Set(payrolls.map((p) => p.employeeId)), [payrolls]);
   const bizEmployees = useMemo(() => {
     if (!activeBusinessId) return [];
-    return employees.filter((e) => e.businessId === activeBusinessId || (e.additionalBusinessIds || []).includes(activeBusinessId));
-  }, [employees, activeBusinessId]);
+    return employees.filter((e) => {
+      const inBiz = e.businessId === activeBusinessId || (e.additionalBusinessIds || []).includes(activeBusinessId);
+      if (!inBiz) return false;
+      // ทำงานอยู่ → แสดงเสมอ / ลาออกแล้ว → แสดงเฉพาะถ้ามีงวด payroll ในเดือนนี้
+      return isActive(e) || payrollEmpIds.has(e.id);
+    });
+  }, [employees, activeBusinessId, payrollEmpIds]);
 
   // โหลด payroll ของงวดนี้
   useEffect(() => {
@@ -1807,13 +2022,18 @@ function PayrollPage({ businesses, zones, positions, employees, activeBusinessId
       <PageHeader title="เงินเดือน" subtitle={`${bizName} — ${MONTH_NAMES[month - 1]} ${year + 543}`} />
       <div className="p-4 md:p-8">
         {/* ตัวเลือกเดือน + สรุป */}
-        <div className="flex flex-wrap items-center gap-3 mb-6">
+        <div className="flex flex-wrap items-center gap-3 mb-4">
           <select value={month} onChange={(e) => setMonth(Number(e.target.value))} className="px-3 py-2 border border-stone-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500/40">
             {MONTH_NAMES.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
           </select>
           <select value={year} onChange={(e) => setYear(Number(e.target.value))} className="px-3 py-2 border border-stone-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500/40">
             {yearOptions.map((y) => <option key={y} value={y}>{y + 543}</option>)}
           </select>
+          {/* สลับโหมด */}
+          <div className="inline-flex rounded-lg border border-stone-300 overflow-hidden">
+            <button onClick={() => setMode('list')} className={`px-3 py-2 text-sm font-medium ${mode === 'list' ? 'bg-emerald-900 text-white' : 'bg-white text-stone-600 hover:bg-stone-50'}`}>รายคน</button>
+            <button onClick={() => setMode('quick')} className={`px-3 py-2 text-sm font-medium ${mode === 'quick' ? 'bg-emerald-900 text-white' : 'bg-white text-stone-600 hover:bg-stone-50'}`}>กรอกเร็ว</button>
+          </div>
           <div className="flex-1" />
           <div className="flex gap-3">
             <div className="px-4 py-2 bg-white border border-stone-200 rounded-lg">
@@ -1831,6 +2051,14 @@ function PayrollPage({ businesses, zones, positions, employees, activeBusinessId
           <div className="text-center py-16 text-stone-400">กำลังโหลด...</div>
         ) : bizEmployees.length === 0 ? (
           <EmptyState icon={Users} title="ยังไม่มีพนักงาน" description="เพิ่มพนักงานก่อนที่หน้า 'พนักงาน'" />
+        ) : mode === 'quick' ? (
+          <PayrollQuickEntry
+            bizEmployees={bizEmployees} positions={positions}
+            payrollByEmp={payrollByEmp} itemsByPayroll={itemsByPayroll}
+            year={year} month={month} businessId={activeBusinessId} ops={ops}
+            onSaved={() => setReload((r) => r + 1)}
+            onOpenDetail={(emp) => setEditingEmp(emp)}
+          />
         ) : (
           <div className="space-y-2">
             {bizEmployees.map((emp) => {
@@ -2049,6 +2277,272 @@ function PayrollEditor({ employee, existing, existingItems, year, month, busines
               <button onClick={() => save(true)} disabled={saving} className="flex items-center gap-1.5 px-4 py-2 bg-emerald-900 hover:bg-emerald-800 text-white rounded-lg text-sm font-medium"><CheckCircle2 className="w-4 h-4" />บันทึก + ปิดงวด</button>
             </>
           )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============ PAYROLL QUICK ENTRY (Spreadsheet / Cards) ============
+function PayrollQuickEntry({ bizEmployees, positions, payrollByEmp, itemsByPayroll, year, month, businessId, ops, onSaved, onOpenDetail }) {
+  const isMobile = useIsMobile();
+  const [drafts, setDrafts] = useState({});
+  const [touched, setTouched] = useState(() => new Set());
+  const [itemsEmp, setItemsEmp] = useState(null);
+  const [saving, setSaving] = useState(false);
+
+  // init drafts เมื่อข้อมูลเปลี่ยน
+  useEffect(() => {
+    const d = {};
+    bizEmployees.forEach((emp) => {
+      const p = payrollByEmp[emp.id];
+      const its = p ? (itemsByPayroll[p.id] || []) : [];
+      d[emp.id] = buildPayrollDraft(emp, p, its);
+    });
+    setDrafts(d);
+    setTouched(new Set());
+  }, [bizEmployees, payrollByEmp, itemsByPayroll]);
+
+  const upd = (empId, field, value) => {
+    setDrafts((prev) => ({ ...prev, [empId]: { ...prev[empId], [field]: value } }));
+    setTouched((prev) => new Set(prev).add(empId));
+  };
+  const updItems = (empId, items) => {
+    setDrafts((prev) => ({ ...prev, [empId]: { ...prev[empId], items } }));
+    setTouched((prev) => new Set(prev).add(empId));
+  };
+
+  // navigation: Enter/ลูกศร เลื่อนแนวตั้ง
+  const onKeyNav = (e, col, rowIdx) => {
+    if (e.key === 'Enter' || e.key === 'ArrowDown') {
+      e.preventDefault();
+      document.querySelector(`[data-cell="${col}-${rowIdx + 1}"]`)?.focus();
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      document.querySelector(`[data-cell="${col}-${rowIdx - 1}"]`)?.focus();
+    }
+  };
+
+  const eligible = bizEmployees.filter((e) => Number(e.baseSalary) > 0);
+  const noSalaryCount = bizEmployees.length - eligible.length;
+
+  const saveAll = async () => {
+    setSaving(true);
+    try {
+      for (const empId of touched) {
+        const emp = bizEmployees.find((e) => e.id === empId);
+        const draft = drafts[empId];
+        if (!emp || !draft || !Number(draft.baseSalary)) continue;
+        const payload = {
+          employeeId: empId, businessId, periodYear: year, periodMonth: month,
+          baseSalary: Number(draft.baseSalary) || 0, dailyRate: (Number(draft.baseSalary) || 0) / 30,
+          holidayQuota: Number(draft.holidayQuota) || 0,
+          commission: Number(draft.commission) || 0,
+          holidayWorkDays: Number(draft.holidayWorkDays) || 0,
+          holidayDaysTaken: Number(draft.holidayDaysTaken) || 0,
+          lateDeduction: Number(draft.lateDeduction) || 0,
+          socialSecurity: Number(draft.socialSecurity) || 0,
+          roomFee: Number(draft.roomFee) || 0,
+          paidViaCompany: Number(draft.paidViaCompany) || 0,
+          note: draft.note || null,
+          status: draft.status || 'draft',
+          updatedAt: new Date().toISOString(),
+        };
+        const saved = await ops.payroll.upsert(payload);
+        if (!saved) continue;
+        const oldItems = await ops.payrollItem.listByPayrolls([saved.id]);
+        for (const it of oldItems) await ops.payrollItem.delete(it.id);
+        for (const it of (draft.items || [])) {
+          if (!it.label?.trim() && !Number(it.amount)) continue;
+          await ops.payrollItem.add({ payrollId: saved.id, kind: it.kind, label: it.label?.trim() || '-', amount: Number(it.amount) || 0 });
+        }
+      }
+      onSaved();
+    } finally { setSaving(false); }
+  };
+
+  // input cell ในตาราง
+  const Cell = ({ empId, field, col, rowIdx, locked, w = 'w-20' }) => (
+    <input
+      type="number" step="0.01" inputMode="decimal"
+      data-cell={`${col}-${rowIdx}`}
+      disabled={locked}
+      value={drafts[empId]?.[field] ?? ''}
+      onChange={(e) => upd(empId, field, e.target.value)}
+      onKeyDown={(e) => onKeyNav(e, col, rowIdx)}
+      onFocus={(e) => e.target.select()}
+      className={`${w} px-2 py-1.5 text-sm text-right border border-stone-200 rounded focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500 disabled:bg-stone-100 disabled:text-stone-400`}
+    />
+  );
+
+  const itemCount = (empId) => (drafts[empId]?.items || []).filter((i) => i.label?.trim() || Number(i.amount)).length;
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+        <div className="text-sm text-stone-500">
+          {touched.size > 0 ? <span className="text-amber-700 font-medium">● แก้ไข {touched.size} คน ยังไม่บันทึก</span> : 'พิมพ์ตัวเลขในช่อง → กด Enter ลงคนถัดไป'}
+          {noSalaryCount > 0 && <span className="ml-2 text-amber-600">({noSalaryCount} คนยังไม่ตั้งเงินเดือน)</span>}
+        </div>
+        <button onClick={saveAll} disabled={saving || touched.size === 0} className="flex items-center gap-2 px-4 py-2 bg-emerald-900 hover:bg-emerald-800 disabled:bg-stone-300 disabled:cursor-not-allowed text-white rounded-lg text-sm font-medium">
+          <Save className="w-4 h-4" />{saving ? 'กำลังบันทึก...' : `บันทึกทั้งหมด${touched.size > 0 ? ` (${touched.size})` : ''}`}
+        </button>
+      </div>
+
+      {isMobile ? (
+        /* ===== มือถือ: การ์ด ===== */
+        <div className="space-y-3">
+          {eligible.map((emp) => {
+            const d = drafts[emp.id]; if (!d) return null;
+            const locked = d.status === 'finalized';
+            const calc = computePayroll(d, d.items);
+            const dirty = touched.has(emp.id);
+            const F = ({ label, field, hint }) => (
+              <div className="flex items-center justify-between gap-2 py-1">
+                <span className="text-sm text-stone-600">{label}{hint && <span className="block text-[11px] text-stone-400">{hint}</span>}</span>
+                <input type="number" step="0.01" inputMode="decimal" disabled={locked} value={d[field] ?? ''} onChange={(e) => upd(emp.id, field, e.target.value)} onFocus={(e) => e.target.select()} className="w-28 px-2 py-1.5 text-sm text-right border border-stone-200 rounded focus:outline-none focus:ring-2 focus:ring-emerald-500/40 disabled:bg-stone-100" />
+              </div>
+            );
+            return (
+              <div key={emp.id} className={`bg-white rounded-xl border-2 p-4 ${dirty ? 'border-amber-300 bg-amber-50/20' : locked ? 'border-emerald-300' : 'border-stone-200'}`}>
+                <div className="flex items-center gap-3 mb-2">
+                  <Avatar photo={emp.photo} name={dispName(emp)} size={36} />
+                  <div className="flex-1 min-w-0">
+                    <div className="font-medium text-stone-800 truncate"><span className="font-mono text-xs text-stone-400 mr-1">#{emp.employeeNumber}</span>{dispName(emp)}</div>
+                    <div className="text-xs text-stone-500">ฐาน {fmtMoney(d.baseSalary)} ฿ • {fmtMoney(calc.daily)}/วัน</div>
+                  </div>
+                  {locked && <span className="text-[10px] text-emerald-700 font-medium">ปิดงวดแล้ว</span>}
+                </div>
+                <F label="คอมมิชชั่น" field="commission" />
+                <F label="ทำงานวันหยุด (วัน)" field="holidayWorkDays" hint={calc.holidayWorkPay > 0 ? `+${fmtMoney(calc.holidayWorkPay)}` : null} />
+                <F label="วันหยุดที่ใช้" field="holidayDaysTaken" hint={`โควต้า ${d.holidayQuota}${calc.excessDays > 0 ? ` • เกิน ${calc.excessDays}` : ''}`} />
+                <F label="หักมาสาย" field="lateDeduction" />
+                <F label="รับผ่านบัญชีแล้ว" field="paidViaCompany" />
+                <button onClick={() => setItemsEmp(emp)} disabled={locked} className="w-full mt-2 px-3 py-2 border border-stone-200 rounded-lg text-sm text-stone-600 hover:bg-stone-50 flex items-center justify-center gap-1.5 disabled:opacity-50">
+                  <Plus className="w-3.5 h-3.5" />งานเสริม/เบิก/หักอื่นๆ {itemCount(emp.id) > 0 && <span className="px-1.5 py-0.5 bg-emerald-100 text-emerald-700 rounded text-xs">{itemCount(emp.id)}</span>}
+                </button>
+                <div className="flex justify-between items-center mt-3 pt-3 border-t border-stone-100">
+                  <button onClick={() => onOpenDetail(emp)} className="text-xs text-stone-500 underline">ดูละเอียด/ปิดงวด</button>
+                  <div className="text-right"><span className="text-xs text-stone-400 mr-2">สุทธิ</span><span className="font-bold text-emerald-700">{fmtMoney(calc.net)} ฿</span></div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        /* ===== Desktop: ตาราง grid ===== */
+        <div className="bg-white rounded-xl border border-stone-200 overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-stone-50 border-b border-stone-200 text-xs text-stone-500">
+              <tr>
+                <th className="text-left px-3 py-2.5 sticky left-0 bg-stone-50 z-10 min-w-[160px]">ชื่อ</th>
+                <th className="text-right px-2 py-2.5">ฐาน</th>
+                <th className="text-right px-2 py-2.5">คอม</th>
+                <th className="text-center px-2 py-2.5">ทำหยุด</th>
+                <th className="text-center px-2 py-2.5">หยุด</th>
+                <th className="text-right px-2 py-2.5">สาย</th>
+                <th className="text-right px-2 py-2.5">รับแล้ว</th>
+                <th className="text-center px-2 py-2.5">รายการ</th>
+                <th className="text-right px-3 py-2.5 sticky right-0 bg-stone-50 z-10">สุทธิ</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-stone-100">
+              {eligible.map((emp, rowIdx) => {
+                const d = drafts[emp.id]; if (!d) return null;
+                const locked = d.status === 'finalized';
+                const calc = computePayroll(d, d.items);
+                const dirty = touched.has(emp.id);
+                const ic = itemCount(emp.id);
+                return (
+                  <tr key={emp.id} className={dirty ? 'bg-amber-50/40' : locked ? 'bg-emerald-50/30' : 'hover:bg-stone-50'}>
+                    <td className={`px-3 py-2 sticky left-0 z-10 ${dirty ? 'bg-amber-50' : locked ? 'bg-emerald-50/60' : 'bg-white'}`}>
+                      <button onClick={() => onOpenDetail(emp)} className="text-left">
+                        <div className="font-medium text-stone-800 truncate max-w-[150px] hover:text-emerald-700"><span className="font-mono text-xs text-stone-400 mr-1">#{emp.employeeNumber}</span>{dispName(emp)}</div>
+                        {locked && <span className="text-[10px] text-emerald-700">ปิดงวดแล้ว</span>}
+                      </button>
+                    </td>
+                    <td className="px-2 py-2 text-right text-stone-500 whitespace-nowrap">{fmtMoney(d.baseSalary)}</td>
+                    <td className="px-2 py-2"><Cell empId={emp.id} field="commission" col="commission" rowIdx={rowIdx} locked={locked} /></td>
+                    <td className="px-2 py-2 text-center"><Cell empId={emp.id} field="holidayWorkDays" col="holidayWorkDays" rowIdx={rowIdx} locked={locked} w="w-14" /></td>
+                    <td className="px-2 py-2 text-center"><Cell empId={emp.id} field="holidayDaysTaken" col="holidayDaysTaken" rowIdx={rowIdx} locked={locked} w="w-14" /></td>
+                    <td className="px-2 py-2"><Cell empId={emp.id} field="lateDeduction" col="lateDeduction" rowIdx={rowIdx} locked={locked} /></td>
+                    <td className="px-2 py-2"><Cell empId={emp.id} field="paidViaCompany" col="paidViaCompany" rowIdx={rowIdx} locked={locked} /></td>
+                    <td className="px-2 py-2 text-center">
+                      <button onClick={() => setItemsEmp(emp)} disabled={locked} className="inline-flex items-center gap-1 px-2 py-1.5 border border-stone-200 rounded hover:bg-stone-50 text-stone-600 disabled:opacity-50">
+                        <Plus className="w-3.5 h-3.5" />{ic > 0 ? <span className="px-1 bg-emerald-100 text-emerald-700 rounded text-xs">{ic}</span> : <span className="text-xs">เพิ่ม</span>}
+                      </button>
+                    </td>
+                    <td className={`px-3 py-2 text-right font-semibold text-emerald-700 whitespace-nowrap sticky right-0 z-10 ${dirty ? 'bg-amber-50' : locked ? 'bg-emerald-50/60' : 'bg-white'}`}>{fmtMoney(calc.net)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {itemsEmp && drafts[itemsEmp.id] && (
+        <PayrollItemsModal
+          employee={itemsEmp}
+          draft={drafts[itemsEmp.id]}
+          onApply={(items) => { updItems(itemsEmp.id, items); setItemsEmp(null); }}
+          onClose={() => setItemsEmp(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ============ POPUP: งานเสริม/เบิก/หักอื่นๆ (สำหรับโหมดกรอกเร็ว) ============
+function PayrollItemsModal({ employee, draft, onApply, onClose }) {
+  const [bonusTasks, setBonusTasks] = useState(draft.items.filter((i) => i.kind === 'bonus_task').map((i) => ({ label: i.label, amount: i.amount })));
+  const [advances, setAdvances] = useState(draft.items.filter((i) => i.kind === 'advance').map((i) => ({ label: i.label, amount: i.amount })));
+  const [others, setOthers] = useState(draft.items.filter((i) => i.kind === 'other_deduction').map((i) => ({ label: i.label, amount: i.amount })));
+
+  const apply = () => {
+    onApply([
+      ...bonusTasks.map((i) => ({ ...i, kind: 'bonus_task' })),
+      ...advances.map((i) => ({ ...i, kind: 'advance' })),
+      ...others.map((i) => ({ ...i, kind: 'other_deduction' })),
+    ]);
+  };
+
+  const List = ({ title, list, setList, color, addLabel }) => (
+    <div>
+      <div className="flex items-center justify-between mb-1.5">
+        <span className="text-xs font-medium text-stone-600">{title}</span>
+        <button type="button" onClick={() => setList([...list, { label: '', amount: '' }])} className={`text-xs ${color} hover:underline flex items-center gap-0.5`}><Plus className="w-3 h-3" />{addLabel}</button>
+      </div>
+      <div className="space-y-1.5">
+        {list.length === 0 && <div className="text-xs text-stone-400 italic">ไม่มี</div>}
+        {list.map((it, idx) => (
+          <div key={idx} className="flex gap-2">
+            <input value={it.label} onChange={(e) => setList(list.map((x, i) => i === idx ? { ...x, label: e.target.value } : x))} placeholder="รายการ" className="flex-1 px-2 py-1.5 text-sm border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40" />
+            <input type="number" step="0.01" value={it.amount} onChange={(e) => setList(list.map((x, i) => i === idx ? { ...x, amount: e.target.value } : x))} placeholder="0.00" className="w-28 px-2 py-1.5 text-sm border border-stone-300 rounded-lg text-right focus:outline-none focus:ring-2 focus:ring-emerald-500/40" />
+            <button type="button" onClick={() => setList(list.filter((_, i) => i !== idx))} className="p-1.5 text-red-500 hover:bg-red-50 rounded"><X className="w-4 h-4" /></button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="fixed inset-0 bg-stone-900/50 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[85vh] flex flex-col">
+        <div className="px-5 py-3 border-b border-stone-200 flex items-center justify-between">
+          <div className="font-semibold text-stone-800 text-sm">{dispName(employee)} — งานเสริม/เบิก/หัก</div>
+          <button onClick={onClose} className="p-1 hover:bg-stone-100 rounded text-stone-500"><X className="w-5 h-5" /></button>
+        </div>
+        <div className="p-5 overflow-auto space-y-4">
+          <div className="bg-emerald-50/50 rounded-xl p-3"><List title="งานเสริม (ล้างห้องน้ำ, ลอกท่อ ฯลฯ)" list={bonusTasks} setList={setBonusTasks} color="text-emerald-700" addLabel="เพิ่ม" /></div>
+          <div className="bg-red-50/40 rounded-xl p-3 space-y-3">
+            <List title="เบิกล่วงหน้า" list={advances} setList={setAdvances} color="text-red-600" addLabel="เพิ่ม" />
+            <List title="หักอื่นๆ" list={others} setList={setOthers} color="text-red-600" addLabel="เพิ่ม" />
+          </div>
+        </div>
+        <div className="px-5 py-3 border-t border-stone-200 bg-stone-50 flex justify-end gap-2">
+          <button onClick={onClose} className="px-4 py-2 text-stone-700 hover:bg-stone-100 rounded-lg text-sm font-medium">ยกเลิก</button>
+          <button onClick={apply} className="px-4 py-2 bg-emerald-900 hover:bg-emerald-800 text-white rounded-lg text-sm font-medium">ใช้รายการนี้</button>
         </div>
       </div>
     </div>
