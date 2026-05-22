@@ -1438,7 +1438,23 @@ function ResignModal({ employee, onClose, onConfirm }) {
 function SalaryRaiseModal({ employee, ops, onClose, onSaved }) {
   const current = Number(employee.baseSalary) || 0;
   const [newSalary, setNewSalary] = useState('');
-  const [effectiveDate, setEffectiveDate] = useState(todayStr());
+  // สร้างรายการเดือน: เดือนปัจจุบัน + อีก 12 เดือนข้างหน้า
+  const monthOptions = useMemo(() => {
+    const opts = [];
+    const now = new Date();
+    for (let i = 0; i < 13; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
+      const y = d.getFullYear(), m = d.getMonth() + 1;
+      opts.push({
+        value: `${y}-${String(m).padStart(2, '0')}`,   // เช่น 2026-05
+        date: `${y}-${String(m).padStart(2, '0')}-01`,   // วันที่ 1 ของเดือน
+        label: `${MONTH_NAMES[m - 1]} ${y + 543}`,
+        isCurrent: i === 0,
+      });
+    }
+    return opts;
+  }, []);
+  const [effectiveMonth, setEffectiveMonth] = useState(monthOptions[0].value);
   const [reason, setReason] = useState('annual');
   const [note, setNote] = useState('');
   const [saving, setSaving] = useState(false);
@@ -1446,17 +1462,16 @@ function SalaryRaiseModal({ employee, ops, onClose, onSaved }) {
   const newVal = Number(newSalary) || 0;
   const diff = newVal - current;
   const pct = current > 0 ? (diff / current) * 100 : 0;
-  const isFuture = effectiveDate > todayStr();
+  const selectedOpt = monthOptions.find((o) => o.value === effectiveMonth) || monthOptions[0];
+  const isFuture = !selectedOpt.isCurrent;
 
   const submit = async () => {
     if (!newVal || newVal <= 0) return alert('กรุณากรอกเงินเดือนใหม่');
     if (newVal === current) return alert('เงินเดือนใหม่เท่ากับเดิม');
-    if (!effectiveDate) return alert('กรุณาระบุวันที่มีผล');
     setSaving(true);
     try {
-      const today = todayStr();
-      const applyNow = effectiveDate <= today;
-      // บันทึกประวัติ
+      const effectiveDate = selectedOpt.date;     // วันที่ 1 ของเดือนที่เลือก
+      const applyNow = !isFuture;                  // เดือนปัจจุบัน = มีผลทันที
       await ops.salaryChange.add({
         employeeId: employee.id, businessId: employee.businessId,
         effectiveDate, oldSalary: current, newSalary: newVal,
@@ -1464,7 +1479,6 @@ function SalaryRaiseModal({ employee, ops, onClose, onSaved }) {
         status: applyNow ? 'applied' : 'pending',
         appliedAt: applyNow ? new Date().toISOString() : null,
       });
-      // ถ้าถึงกำหนดแล้ว อัปเดต base_salary ทันที
       if (applyNow) await ops.employee.update(employee.id, { baseSalary: newVal });
       onSaved();
     } finally { setSaving(false); }
@@ -1493,9 +1507,15 @@ function SalaryRaiseModal({ employee, ops, onClose, onSaved }) {
               </p>
             )}
           </FormField>
-          <FormField label="วันที่มีผล" required>
-            <input type="date" value={effectiveDate} onChange={(e) => setEffectiveDate(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600" />
-            {isFuture && <p className="text-xs text-amber-700 mt-1 flex items-center gap-1"><Clock className="w-3 h-3" />ตั้งเวลาในอนาคต — เงินเดือนจะเปลี่ยนอัตโนมัติเมื่อถึงวันนี้</p>}
+          <FormField label="เดือนที่มีผล" required>
+            <select value={effectiveMonth} onChange={(e) => setEffectiveMonth(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600 bg-white">
+              {monthOptions.map((o) => (
+                <option key={o.value} value={o.value}>{o.label}{o.isCurrent ? ' (เดือนนี้)' : ''}</option>
+              ))}
+            </select>
+            {isFuture
+              ? <p className="text-xs text-amber-700 mt-1 flex items-center gap-1"><Clock className="w-3 h-3" />ตั้งล่วงหน้า — เงินเดือนจะปรับอัตโนมัติเมื่อถึงต้นเดือน {selectedOpt.label}</p>
+              : <p className="text-xs text-emerald-700 mt-1 flex items-center gap-1"><CheckCircle2 className="w-3 h-3" />ปรับทันทีสำหรับเดือนนี้</p>}
           </FormField>
           <FormField label="เหตุผล" required>
             <div className="grid grid-cols-2 gap-2">
@@ -1685,7 +1705,7 @@ function EmployeeDetailModal({ employee, zones, positions, employees, businesses
                             <span className={`text-xs font-medium ${diff >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>({diff >= 0 ? '+' : ''}{pct.toFixed(1)}%)</span>
                             {pending && <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-amber-100 text-amber-700 text-[10px] font-medium rounded"><Clock className="w-2.5 h-2.5" />รอมีผล</span>}
                           </div>
-                          <div className="text-xs text-stone-500 mt-0.5">{salaryReasonLabel(sc.reason)} • มีผล {fmt(sc.effectiveDate)}</div>
+                          <div className="text-xs text-stone-500 mt-0.5">{salaryReasonLabel(sc.reason)} • มีผล {sc.effectiveDate ? `${MONTH_NAMES[new Date(sc.effectiveDate).getMonth()]} ${new Date(sc.effectiveDate).getFullYear() + 543}` : '—'}</div>
                           {sc.note && <div className="text-xs text-stone-400 mt-0.5">{sc.note}</div>}
                         </div>
                       </div>
