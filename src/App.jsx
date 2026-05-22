@@ -210,12 +210,23 @@ export default function App() {
   useEffect(() => {
     if (!session) { setProfile(null); return; }
     (async () => {
-      const { data, error } = await supabase
+      let { data, error } = await supabase
         .from('user_profiles')
         .select('*')
         .eq('id', session.user.id)
         .maybeSingle();
       if (error) console.error('Profile load error:', error);
+      // self-heal: ถ้าไม่มี profile (เช่นเคยถูกลบ) สร้างใหม่เป็น pending เพื่อไม่ให้ค้าง
+      if (!data) {
+        const fallbackName = session.user.user_metadata?.name || (session.user.email || '').split('@')[0];
+        const { data: created, error: insErr } = await supabase
+          .from('user_profiles')
+          .insert({ id: session.user.id, name: fallbackName, role: 'pending' })
+          .select('*')
+          .maybeSingle();
+        if (insErr) console.error('Profile self-heal error:', insErr);
+        else data = created;
+      }
       const p = fromDB(data);
       if (p) {
         p.businessIds = p.businessIds || [];
