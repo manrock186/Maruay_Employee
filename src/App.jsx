@@ -1989,7 +1989,7 @@ function EmployeeDetailModal({ employee, zones, positions, employees, businesses
         <div className="px-6 py-4 border-b border-stone-200 flex items-center justify-between">
           <h2 className="font-semibold text-stone-800">รายละเอียดพนักงาน</h2>
           <div className="flex items-center gap-2">
-            <button onClick={() => setShowCard(true)} className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-lg text-sm font-medium"><CreditCard className="w-4 h-4" /> บัตรพนักงาน</button>
+            {canResign && <button onClick={() => setShowCard(true)} className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-lg text-sm font-medium"><CreditCard className="w-4 h-4" /> บัตรพนักงาน</button>}
             <button onClick={onClose} className="p-1.5 hover:bg-stone-100 rounded-lg text-stone-500"><X className="w-5 h-5" /></button>
           </div>
         </div>
