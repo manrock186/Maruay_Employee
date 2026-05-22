@@ -16,13 +16,14 @@ const dispName = (e) => (e?.nickname?.trim() || e?.name?.trim() || '');
 
 // ============ NATIONALITY ============
 const NATIONALITIES = [
-  { value: 'thai',     label: 'ไทย' },
-  { value: 'myanmar',  label: 'พม่า' },
-  { value: 'cambodia', label: 'กัมพูชา' },
-  { value: 'laos',     label: 'ลาว' },
-  { value: 'other',    label: 'อื่นๆ' },
+  { value: 'thai',     label: 'ไทย',     flag: '🇹🇭' },
+  { value: 'myanmar',  label: 'พม่า',    flag: '🇲🇲' },
+  { value: 'cambodia', label: 'กัมพูชา', flag: '🇰🇭' },
+  { value: 'laos',     label: 'ลาว',     flag: '🇱🇦' },
+  { value: 'other',    label: 'อื่นๆ',   flag: '🌐' },
 ];
 const natLabel = (v) => NATIONALITIES.find((n) => n.value === v)?.label || (v ? 'อื่นๆ' : '—');
+const natFlag = (v) => NATIONALITIES.find((n) => n.value === v)?.flag || (v ? '🌐' : '');
 const isForeign = (v) => v && v !== 'thai';
 
 // ============ การลาออก ============
@@ -189,6 +190,7 @@ export default function App() {
   const [profiles, setProfiles] = useState([]);
   const [notifications, setNotifications] = useState([]);
   const [notiReads, setNotiReads] = useState([]); // [{notificationId, userId}]
+  const [expiryWarnMonths, setExpiryWarnMonths] = useState(2); // เตือนก่อนเอกสารหมดอายุกี่เดือน (ตั้งค่าทั้งระบบ)
 
   const [activeBusinessId, setActiveBusinessId] = useState(null);
   const [activeZoneId, setActiveZoneId] = useState(null);
@@ -253,7 +255,7 @@ export default function App() {
     let cancelled = false;
     setDataLoading(true);
     (async () => {
-      const [b, z, p, e, up, noti, reads] = await Promise.all([
+      const [b, z, p, e, up, noti, reads, settingsRow] = await Promise.all([
         supabase.from('businesses').select('*').order('created_at'),
         supabase.from('zones').select('*').order('created_at'),
         supabase.from('positions').select('*').order('created_at'),
@@ -263,8 +265,10 @@ export default function App() {
           : Promise.resolve({ data: [profile] }),
         supabase.from('notifications').select('*').order('created_at', { ascending: false }),
         supabase.from('notification_reads').select('*'),
+        supabase.from('app_settings').select('expiry_warn_months').eq('id', 1).maybeSingle(),
       ]);
       if (cancelled) return;
+      if (settingsRow?.data?.expiry_warn_months != null) setExpiryWarnMonths(settingsRow.data.expiry_warn_months);
       setBusinesses(fromDB(b.data || []));
       setZones(fromDB(z.data || []));
       const posRows = fromDB(p.data || []);
@@ -375,14 +379,16 @@ export default function App() {
   // ---- สร้าง/อัปเดต notifications (owner client) — reconcile แบบ derived ----
   const syncNotifications = async () => {
     // ดึงข้อมูลล่าสุด
-    const [{ data: emps }, { data: poss }, { data: bizs }, { data: zns }, { data: profs }, { data: pendingRaises }] = await Promise.all([
+    const [{ data: emps }, { data: poss }, { data: bizs }, { data: zns }, { data: profs }, { data: pendingRaises }, { data: settingsRow }] = await Promise.all([
       supabase.from('employees').select('*'),
       supabase.from('positions').select('*'),
       supabase.from('businesses').select('*'),
       supabase.from('zones').select('*'),
       supabase.from('user_profiles').select('*'),
       supabase.from('salary_changes').select('*').eq('status', 'pending'),
+      supabase.from('app_settings').select('expiry_warn_months').eq('id', 1).maybeSingle(),
     ]);
+    const warnMonths = settingsRow?.expiry_warn_months ?? 2;
     const E = fromDB(emps || []), P = fromDB(poss || []), B = fromDB(bizs || []), Z = fromDB(zns || []), PR = fromDB(profs || []), SR = fromDB(pendingRaises || []);
     const bizName = (id) => B.find((b) => b.id === id)?.name || '';
     const empName = (id) => { const e = E.find((x) => x.id === id); return e ? (e.nickname || e.name) : ''; };
@@ -394,12 +400,23 @@ export default function App() {
     PR.filter((p) => p.role === 'pending').forEach((p) => {
       desired.push({ dedupeKey: `pending_user:${p.id}`, businessId: null, zoneId: null, type: 'pending_user', severity: 'warning', title: 'มีผู้ใช้รออนุมัติ', body: `${p.name || p.id} สมัครเข้าระบบ — รอกำหนดสิทธิ์` });
     });
-    // 2) บัตรแรงงานใกล้หมด (active + มีบัตร + เหลือ <=30 วัน หรือหมดแล้ว)
-    active.filter((e) => e.hasWorkPermit && e.workPermitExpiry).forEach((e) => {
-      const days = Math.ceil((new Date(e.workPermitExpiry) - today) / 86400000);
-      if (days <= 30) {
-        desired.push({ dedupeKey: `permit_expiry:${e.id}`, businessId: e.businessId, zoneId: e.zoneId, type: 'permit_expiry', severity: days < 0 ? 'urgent' : 'warning', title: 'บัตรแรงงานใกล้หมดอายุ', body: `${e.nickname || e.name} — ${days < 0 ? 'หมดอายุแล้ว' : `เหลือ ${days} วัน`}` });
-      }
+    // 2) เอกสารใกล้หมดอายุ (active) — บัตรแรงงาน / พาสปอร์ต / บัตรประจำตัว
+    //    เตือนเมื่อหมดอายุภายใน warnMonths เดือน หรือหมดอายุแล้ว (ตั้งค่าได้ที่หน้า "ตั้งค่า")
+    const warnCutoff = new Date(today);
+    warnCutoff.setMonth(warnCutoff.getMonth() + warnMonths);
+    const docChecks = [
+      { type: 'permit_expiry',  title: 'บัตรแรงงานใกล้หมดอายุ',   when: (e) => e.hasWorkPermit && e.workPermitExpiry, date: (e) => e.workPermitExpiry },
+      { type: 'passport_expiry', title: 'พาสปอร์ตใกล้หมดอายุ',     when: (e) => e.hasPassport && e.passportExpiry,    date: (e) => e.passportExpiry },
+      { type: 'idcard_expiry',   title: 'บัตรประจำตัวใกล้หมดอายุ', when: (e) => !!e.idCardExpiry,                     date: (e) => e.idCardExpiry },
+    ];
+    docChecks.forEach((dc) => {
+      active.filter(dc.when).forEach((e) => {
+        const exp = new Date(dc.date(e));
+        if (exp <= warnCutoff) {
+          const days = Math.ceil((exp - today) / 86400000);
+          desired.push({ dedupeKey: `${dc.type}:${e.id}`, businessId: e.businessId, zoneId: e.zoneId, type: dc.type, severity: days < 0 ? 'urgent' : 'warning', title: dc.title, body: `${e.nickname || e.name} — ${days < 0 ? 'หมดอายุแล้ว' : `เหลือ ${days} วัน`}` });
+        }
+      });
     });
     // 3) ตำแหน่งว่าง (ต่อโซน: มีคนลาออกแต่ไม่เหลือ active)
     Z.forEach((zone) => {
@@ -562,6 +579,14 @@ export default function App() {
         if (error) console.error(error);
       },
     },
+    settings: {
+      // อัปเดตค่าตั้งค่าทั้งระบบ (owner เท่านั้นตาม RLS)
+      update: async (patch) => {
+        const { error } = await supabase.from('app_settings').update({ ...toDB(patch), updated_at: new Date().toISOString() }).eq('id', 1);
+        if (error) { alert('บันทึกการตั้งค่าไม่สำเร็จ: ' + error.message); return false; }
+        return true;
+      },
+    },
   };
 
   if (authLoading) return <LoadingScreen />;
@@ -594,7 +619,7 @@ export default function App() {
             onJump={(n) => {
               if (n.type === 'pending_user') setView('users');
               else if (n.type === 'payroll_incomplete' || n.type === 'pending_raise') { if (n.businessId) changeBusiness(n.businessId); setView(n.type === 'payroll_incomplete' ? 'payroll' : 'employees'); }
-              else if (n.type === 'permit_expiry' || n.type === 'vacancy') { if (n.businessId) changeBusiness(n.businessId); setView('employees'); }
+              else if (n.type === 'permit_expiry' || n.type === 'passport_expiry' || n.type === 'idcard_expiry' || n.type === 'vacancy') { if (n.businessId) changeBusiness(n.businessId); setView('employees'); }
               else { if (n.businessId) changeBusiness(n.businessId); setView('positions'); }
             }}
           />
@@ -681,6 +706,13 @@ export default function App() {
             zones={zones}
             ops={ops}
             currentUserId={session.user.id}
+          />
+        )}
+        {view === 'settings' && profile.isOwner && (
+          <SettingsPage
+            expiryWarnMonths={expiryWarnMonths}
+            ops={ops}
+            onSaved={(m) => setExpiryWarnMonths(m)}
           />
         )}
         </div>
@@ -809,6 +841,8 @@ function PendingScreen({ profile }) {
 const NOTI_META = {
   pending_user:       { icon: UserCircle, color: 'text-amber-600 bg-amber-100' },
   permit_expiry:      { icon: CreditCard, color: 'text-red-600 bg-red-100' },
+  passport_expiry:    { icon: BookOpen, color: 'text-red-600 bg-red-100' },
+  idcard_expiry:      { icon: Shield, color: 'text-red-600 bg-red-100' },
   vacancy:            { icon: Award, color: 'text-amber-600 bg-amber-100' },
   understaffed:       { icon: Users, color: 'text-rose-600 bg-rose-100' },
   overstaffed:        { icon: Users, color: 'text-sky-600 bg-sky-100' },
@@ -953,6 +987,7 @@ function Sidebar({ view, setView, profile, businesses, zones, activeBusinessId, 
     { id: 'orgchart', label: 'แผนผังองค์กร', icon: Network },
     { id: 'payroll', label: 'เงินเดือน', icon: Wallet, show: profile.canManagePayroll },
     { id: 'users', label: 'ผู้ใช้ระบบ', icon: Shield, show: isOwner },
+    { id: 'settings', label: 'ตั้งค่า', icon: Settings, show: isOwner },
   ];
 
   // ธุรกิจที่ user เลือกได้
@@ -1836,7 +1871,7 @@ function EmployeesPage({ businesses, zones, positions, employees, profile, activ
                     )}
                     {isForeign(emp.nationality) && (
                       <div className="absolute top-2 left-2">
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-emerald-900/90 text-white text-[10px] font-medium rounded-md backdrop-blur"><Globe className="w-2.5 h-2.5" />{natLabel(emp.nationality)}</span>
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-emerald-900/90 text-white text-[10px] font-medium rounded-md backdrop-blur"><span className="text-xs leading-none">{natFlag(emp.nationality)}</span>{natLabel(emp.nationality)}</span>
                       </div>
                     )}
                   </div>
@@ -2074,6 +2109,12 @@ function EmployeeDetailModal({ employee, zones, positions, employees, businesses
     else if (days < 30) permitStatus = { label: `เหลือ ${days} วัน`, cls: 'text-amber-800 bg-amber-100' };
     else permitStatus = { label: `เหลือ ${days} วัน`, cls: 'text-emerald-700 bg-emerald-50' };
   }
+  // ข้อความสถานะวันหมดอายุ (ใช้กับบัตรประจำตัว/พาสปอร์ต)
+  const expLabel = (d) => {
+    if (!d) return '';
+    const days = Math.ceil((new Date(d) - Date.now()) / 86400000);
+    return days < 0 ? 'หมดอายุแล้ว' : `เหลือ ${days} วัน`;
+  };
 
   return (
     <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
@@ -2100,7 +2141,7 @@ function EmployeeDetailModal({ employee, zones, positions, employees, businesses
                 {pos && <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-100 text-emerald-800 text-sm font-medium rounded-md"><Award className="w-3.5 h-3.5" />{pos.name}</span>}
                 {zone ? <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-stone-100 text-stone-700 text-sm rounded-md"><MapPin className="w-3.5 h-3.5" />{zone.name}</span>
                   : pos?.crossZone && <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-amber-100 text-amber-800 text-sm font-medium rounded-md"><MapPin className="w-3.5 h-3.5" />ไม่จำกัดโซน</span>}
-                {employee.nationality && <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-sky-50 text-sky-800 text-sm rounded-md"><Globe className="w-3.5 h-3.5" />{natLabel(employee.nationality)}</span>}
+                {employee.nationality && <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-sky-50 text-sky-800 text-sm rounded-md"><span className="leading-none">{natFlag(employee.nationality)}</span>{natLabel(employee.nationality)}</span>}
               </div>
               {additionalBizs.length > 0 && (
                 <div className="mt-3 p-3 bg-sky-50/60 border border-sky-200 rounded-lg">
@@ -2178,10 +2219,12 @@ function EmployeeDetailModal({ employee, zones, positions, employees, businesses
             </div>
           )}
 
-          {(employee.address || employee.nationalId || employee.notes) && (
+          {(employee.address || employee.nationalId || employee.idCardExpiry || employee.passportExpiry || employee.notes) && (
             <div className="px-6 pb-6 space-y-4 pt-4">
               {employee.address && <DetailBlock icon={MapPin} label="ที่อยู่" value={employee.address} />}
               {employee.nationalId && <DetailBlock icon={Shield} label="เลขบัตรประชาชน" value={employee.nationalId} mono />}
+              {employee.idCardExpiry && <DetailBlock icon={Shield} label="บัตรประจำตัวหมดอายุ" value={`${fmt(employee.idCardExpiry)} • ${expLabel(employee.idCardExpiry)}`} />}
+              {employee.passportExpiry && <DetailBlock icon={BookOpen} label="พาสปอร์ตหมดอายุ" value={`${fmt(employee.passportExpiry)} • ${expLabel(employee.passportExpiry)}`} />}
               {employee.notes && <DetailBlock icon={Edit2} label="บันทึกเพิ่มเติม" value={employee.notes} />}
             </div>
           )}
@@ -2440,12 +2483,14 @@ function EmployeeForm({ initial, zones, positions, employees, businesses, onSave
   const [startDate, setStartDate] = useState(initial?.startDate || '');
   const [birthDate, setBirthDate] = useState(initial?.birthDate || '');
   const [nationalId, setNationalId] = useState(initial?.nationalId || '');
+  const [idCardExpiry, setIdCardExpiry] = useState(initial?.idCardExpiry || '');
   const [emergencyContact, setEmergencyContact] = useState(initial?.emergencyContact || '');
   const [notes, setNotes] = useState(initial?.notes || '');
   const [nationality, setNationality] = useState(initial?.nationality || 'thai');
   const [hasWorkPermit, setHasWorkPermit] = useState(initial?.hasWorkPermit ?? null);
   const [workPermitExpiry, setWorkPermitExpiry] = useState(initial?.workPermitExpiry || '');
   const [hasPassport, setHasPassport] = useState(initial?.hasPassport ?? null);
+  const [passportExpiry, setPassportExpiry] = useState(initial?.passportExpiry || '');
   const [workPermitDocs, setWorkPermitDocs] = useState(initial?.workPermitDocs || []);
   const [passportDocs, setPassportDocs] = useState(initial?.passportDocs || []);
   const [baseSalary, setBaseSalary] = useState(initial?.baseSalary ?? '');
@@ -2475,11 +2520,13 @@ function EmployeeForm({ initial, zones, positions, employees, businesses, onSave
       additionalBusinessIds: additionalBusinessIds.filter((id) => id !== businessId),
       phone: phone.trim(), email: email.trim(), address: address.trim(),
       startDate: startDate || null, birthDate: birthDate || null, nationalId: nationalId.trim(),
+      idCardExpiry: idCardExpiry || null,
       emergencyContact: emergencyContact.trim(), notes: notes.trim(),
       nationality: nationality || null,
       hasWorkPermit: foreign ? hasWorkPermit : null,
       workPermitExpiry: foreign && hasWorkPermit === true ? (workPermitExpiry || null) : null,
       hasPassport: foreign ? hasPassport : null,
+      passportExpiry: foreign && hasPassport === true ? (passportExpiry || null) : null,
       workPermitDocs: foreign ? workPermitDocs : [],
       passportDocs: foreign ? passportDocs : [],
       ...(canEditPay ? {
@@ -2530,7 +2577,7 @@ function EmployeeForm({ initial, zones, positions, employees, businesses, onSave
         </FormField>
         <FormField label="สัญชาติ">
           <select value={nationality} onChange={(e) => setNationality(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600 bg-white">
-            {NATIONALITIES.map((n) => <option key={n.value} value={n.value}>{n.label}</option>)}
+            {NATIONALITIES.map((n) => <option key={n.value} value={n.value}>{n.flag} {n.label}</option>)}
           </select>
         </FormField>
         <FormField label="เบอร์โทร"><input value={phone} onChange={(e) => setPhone(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600" placeholder="0XX-XXX-XXXX" /></FormField>
@@ -2538,6 +2585,7 @@ function EmployeeForm({ initial, zones, positions, employees, businesses, onSave
         <FormField label="วันเริ่มงาน"><input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600" /></FormField>
         <FormField label="วันเกิด"><input type="date" value={birthDate} onChange={(e) => setBirthDate(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600" /></FormField>
         <FormField label={nationality === 'thai' ? 'เลขบัตรประชาชน' : 'เลขบัตรประจำตัว'}><input value={nationalId} onChange={(e) => setNationalId(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600" /></FormField>
+        <FormField label="บัตรประจำตัวหมดอายุ"><input type="date" value={idCardExpiry} onChange={(e) => setIdCardExpiry(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600 bg-white" /><p className="text-xs text-stone-400 mt-1">เว้นว่างได้ถ้าไม่ต้องการให้เตือน</p></FormField>
         <FormField label="ผู้ติดต่อฉุกเฉิน"><input value={emergencyContact} onChange={(e) => setEmergencyContact(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600" /></FormField>
       </div>
 
@@ -2619,7 +2667,12 @@ function EmployeeForm({ initial, zones, positions, employees, businesses, onSave
             </div>
           </FormField>
           {hasPassport === true && (
-            <MultiDocUpload label="ไฟล์/รูปพาสปอร์ต" paths={passportDocs} businessId={businessId} docType="passport" onChange={setPassportDocs} />
+            <>
+              <FormField label="พาสปอร์ตหมดอายุ">
+                <input type="date" value={passportExpiry} onChange={(e) => setPassportExpiry(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600 bg-white" />
+              </FormField>
+              <MultiDocUpload label="ไฟล์/รูปพาสปอร์ต" paths={passportDocs} businessId={businessId} docType="passport" onChange={setPassportDocs} />
+            </>
           )}
         </div>
       )}
@@ -3712,6 +3765,64 @@ function ProfileEditForm({ initial, businesses, zones, onSave, onCancel, isSelf 
       )}
 
       <FormActions onCancel={onCancel} onSubmit={submit} />
+    </div>
+  );
+}
+
+// ============ SETTINGS PAGE ============
+function SettingsPage({ expiryWarnMonths, ops, onSaved }) {
+  const [months, setMonths] = useState(expiryWarnMonths ?? 2);
+  const [saving, setSaving] = useState(false);
+  const [savedAt, setSavedAt] = useState(0);
+  useEffect(() => { setMonths(expiryWarnMonths ?? 2); }, [expiryWarnMonths]);
+
+  const clamp = (n) => Math.min(12, Math.max(1, Math.round(Number(n) || 1)));
+  const dirty = clamp(months) !== (expiryWarnMonths ?? 2);
+
+  const save = async () => {
+    const m = clamp(months);
+    setSaving(true);
+    const ok = await ops.settings.update({ expiryWarnMonths: m });
+    setSaving(false);
+    if (ok) { setMonths(m); onSaved?.(m); setSavedAt(Date.now()); }
+  };
+
+  return (
+    <div className="h-full overflow-auto">
+      <PageHeader title="ตั้งค่า" subtitle="ตั้งค่าที่มีผลกับทั้งระบบ" />
+      <div className="p-8 max-w-2xl">
+        <div className="bg-white rounded-xl border border-stone-200 p-6">
+          <div className="flex items-center gap-2.5 mb-1">
+            <div className="w-9 h-9 rounded-lg bg-red-100 flex items-center justify-center"><BellRing className="w-5 h-5 text-red-600" /></div>
+            <h3 className="font-semibold text-stone-800">แจ้งเตือนเอกสารใกล้หมดอายุ</h3>
+          </div>
+          <p className="text-sm text-stone-500 mb-5">เตือนล่วงหน้าก่อนเอกสารหมดอายุ — มีผลกับบัตรแรงงาน, พาสปอร์ต และบัตรประจำตัว ของพนักงานทุกคนทั้งระบบ</p>
+
+          <FormField label="เตือนก่อนหมดอายุ (เดือน)">
+            <div className="flex flex-wrap items-center gap-2">
+              {[1, 2, 3, 6].map((m) => (
+                <button key={m} type="button" onClick={() => setMonths(m)} className={`px-4 py-2 rounded-lg border-2 text-sm font-medium transition-all ${clamp(months) === m ? 'border-emerald-600 bg-emerald-50 text-emerald-900' : 'border-stone-200 text-stone-600 hover:border-stone-300'}`}>{m} เดือน</button>
+              ))}
+              <div className="flex items-center gap-2 ml-1">
+                <span className="text-sm text-stone-400">หรือกำหนดเอง</span>
+                <input type="number" min={1} max={12} value={months} onChange={(e) => setMonths(e.target.value)} className="w-20 px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600 text-center" />
+                <span className="text-sm text-stone-500">เดือน</span>
+              </div>
+            </div>
+          </FormField>
+
+          <p className="text-xs text-stone-500 mt-3">ระบบจะแจ้งเตือนเมื่อเอกสารเหลืออายุไม่เกิน {clamp(months)} เดือน หรือหมดอายุไปแล้ว (ตั้งได้ 1–12 เดือน)</p>
+
+          <div className="flex items-center gap-3 mt-6">
+            <button onClick={save} disabled={saving || !dirty} className="flex items-center gap-2 px-4 py-2 bg-emerald-900 hover:bg-emerald-800 disabled:bg-stone-200 disabled:cursor-not-allowed text-white rounded-lg text-sm font-medium">
+              <Save className="w-4 h-4" />{saving ? 'กำลังบันทึก...' : 'บันทึก'}
+            </button>
+            {savedAt > 0 && !dirty && <span className="inline-flex items-center gap-1.5 text-sm text-emerald-700"><CheckCircle2 className="w-4 h-4" />บันทึกแล้ว</span>}
+          </div>
+        </div>
+
+        <p className="text-xs text-stone-400 mt-4">หมายเหตุ: การแจ้งเตือนจะอัปเดตเมื่อเจ้าของระบบเปิดแอป (ระบบ generate ฝั่งเจ้าของ) — ค่าที่ตั้งมีผลกับทั้งระบบทันทีหลังบันทึก</p>
+      </div>
     </div>
   );
 }
