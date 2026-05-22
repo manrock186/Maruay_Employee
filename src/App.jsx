@@ -430,7 +430,7 @@ export default function App() {
       const finalizedByBiz = {};
       (pys || []).forEach((p) => { if (p.status === 'finalized') (finalizedByBiz[p.business_id] ||= new Set()).add(p.employee_id); });
       B.forEach((biz) => {
-        const need = active.filter((e) => (e.businessId === biz.id || (e.additionalBusinessIds || []).includes(biz.id)) && Number(e.baseSalary) > 0);
+        const need = active.filter((e) => e.businessId === biz.id && Number(e.baseSalary) > 0);
         const done = finalizedByBiz[biz.id] || new Set();
         const remaining = need.filter((e) => !done.has(e.id)).length;
         if (need.length > 0 && remaining > 0) {
@@ -1377,7 +1377,14 @@ function BusinessesPage({ businesses, zones, employees, positions, profile, ops,
                         </button>
                       </div>
                       {(() => {
-                        const crossZoneEmps = employees.filter((e) => e.businessId === biz.id && !e.zoneId);
+                        // คนที่อยู่ในธุรกิจนี้ (หลักหรือข้ามธุรกิจ) แต่ไม่มีโซนในธุรกิจนี้
+                        // → รวมพนักงานข้ามธุรกิจที่ zone อยู่ในธุรกิจหลักของเขา ให้โผล่ในกลุ่ม "ไม่จำกัดโซน"
+                        const crossZoneEmps = employees.filter((e) => {
+                          const inThisBiz = e.businessId === biz.id || (e.additionalBusinessIds || []).includes(biz.id);
+                          if (!inThisBiz) return false;
+                          const zoneInThisBiz = e.zoneId && bizZones.some((z) => z.id === e.zoneId);
+                          return !zoneInThisBiz;
+                        });
                         const empty = bizZones.length === 0 && crossZoneEmps.length === 0;
                         if (empty) return <div className="text-center py-6 text-sm text-stone-400 italic">ยังไม่มีโซนในธุรกิจนี้</div>;
                         return (
@@ -2722,16 +2729,19 @@ function OrgChartPage({ businesses, zones, positions, employees, profile, active
   const isViewer = profile.isViewer;
   const visible = useMemo(() => {
     const act = employees.filter(isActive);
-    if (isOwner) return act.filter((e) => e.businessId === activeBusinessId);
+    // พนักงานอยู่ในธุรกิจนี้ ถ้าเป็นธุรกิจหลัก หรือเป็นหนึ่งในธุรกิจที่ดูแลเพิ่ม
+    const inBiz = (e) => e.businessId === activeBusinessId || (e.additionalBusinessIds || []).includes(activeBusinessId);
+    if (isOwner) return act.filter(inBiz);
     if (isBM) {
       const ids = profile.businessIds || [];
-      return act.filter((e) => ids.includes(e.businessId) && (!activeBusinessId || e.businessId === activeBusinessId));
+      const inScope = (e) => ids.includes(e.businessId) || (e.additionalBusinessIds || []).some((id) => ids.includes(id));
+      return act.filter((e) => inScope(e) && (!activeBusinessId || inBiz(e)));
     }
     if (isZM) return act.filter((e) => (profile.zoneIds || []).includes(e.zoneId));
     if (isViewer) {
       const noScope = profile.businessIds.length === 0 && profile.zoneIds.length === 0;
-      if (noScope) return act.filter((e) => e.businessId === activeBusinessId);
-      return act.filter((e) => (profile.businessIds.includes(e.businessId) || profile.zoneIds.includes(e.zoneId)) && (!activeBusinessId || e.businessId === activeBusinessId));
+      if (noScope) return act.filter(inBiz);
+      return act.filter((e) => (profile.businessIds.includes(e.businessId) || profile.zoneIds.includes(e.zoneId)) && (!activeBusinessId || inBiz(e)));
     }
     return [];
   }, [employees, profile, activeBusinessId, isOwner, isBM, isZM, isViewer]);
@@ -2745,7 +2755,7 @@ function OrgChartPage({ businesses, zones, positions, employees, profile, active
       <div className="p-8">
         {visible.length === 0 ? <EmptyState icon={Network} title="ยังไม่มีพนักงาน" /> : (
           <div className="bg-white rounded-xl border border-stone-200 p-6 overflow-auto">
-            <EmployeeTree employees={roots} allEmployees={visible} zones={zones} positions={positions} level={0} />
+            <EmployeeTree employees={roots} allEmployees={visible} zones={zones} positions={positions} businesses={businesses} activeBusinessId={activeBusinessId} level={0} />
           </div>
         )}
       </div>
@@ -2753,13 +2763,16 @@ function OrgChartPage({ businesses, zones, positions, employees, profile, active
   );
 }
 
-function EmployeeTree({ employees, allEmployees, zones, positions, level }) {
+function EmployeeTree({ employees, allEmployees, zones, positions, businesses, activeBusinessId, level }) {
   return (
     <div className={level === 0 ? 'space-y-3' : 'mt-3 ml-8 pl-5 border-l-2 border-stone-200 space-y-3'}>
       {employees.map((emp) => {
         const reports = allEmployees.filter((e) => e.managerId === emp.id);
         const zone = zones.find((z) => z.id === emp.zoneId);
         const pos = positions.find((p) => p.id === emp.positionId);
+        // พนักงานข้ามธุรกิจ: ธุรกิจหลักไม่ใช่ธุรกิจที่กำลังดูอยู่
+        const isGuest = activeBusinessId && emp.businessId !== activeBusinessId;
+        const homeBiz = isGuest ? (businesses || []).find((b) => b.id === emp.businessId) : null;
         return (
           <div key={emp.id}>
             <div className="flex items-center gap-3 p-3 bg-stone-50 hover:bg-stone-100 rounded-lg">
@@ -2768,11 +2781,16 @@ function EmployeeTree({ employees, allEmployees, zones, positions, level }) {
                 <div className="font-medium text-stone-800 truncate flex items-center gap-2">
                   <span className="font-mono text-xs text-stone-400">#{emp.employeeNumber}</span>
                   <span className="truncate">{dispName(emp)}</span>
+                  {isGuest && (
+                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-sky-100 text-sky-700 text-[10px] font-medium rounded flex-shrink-0">
+                      <Building2 className="w-2.5 h-2.5" />ข้ามธุรกิจ{homeBiz ? ` • ${homeBiz.name}` : ''}
+                    </span>
+                  )}
                 </div>
                 <div className="text-xs text-stone-500 truncate">{pos?.name || '—'} {zone && `• ${zone.name}`}{reports.length > 0 && ` • ดูแล ${reports.length} คน`}</div>
               </div>
             </div>
-            {reports.length > 0 && <EmployeeTree employees={reports} allEmployees={allEmployees} zones={zones} positions={positions} level={level + 1} />}
+            {reports.length > 0 && <EmployeeTree employees={reports} allEmployees={allEmployees} zones={zones} positions={positions} businesses={businesses} activeBusinessId={activeBusinessId} level={level + 1} />}
           </div>
         );
       })}
@@ -2797,7 +2815,9 @@ function PayrollPage({ businesses, zones, positions, employees, activeBusinessId
   const bizEmployees = useMemo(() => {
     if (!activeBusinessId) return [];
     return employees.filter((e) => {
-      const inBiz = e.businessId === activeBusinessId || (e.additionalBusinessIds || []).includes(activeBusinessId);
+      // หน้าทำเงินเดือนจ่ายเฉพาะธุรกิจหลักเท่านั้น (ไม่รวม additionalBusinessIds)
+      // พนักงานข้ามธุรกิจจะถูกจ่ายเงินเดือนที่ธุรกิจหลักของตัวเองเพียงที่เดียว
+      const inBiz = e.businessId === activeBusinessId;
       if (!inBiz) return false;
       // ทำงานอยู่ → แสดงเสมอ / ลาออกแล้ว → แสดงเฉพาะถ้ามีงวด payroll ในเดือนนี้
       return isActive(e) || payrollEmpIds.has(e.id);
@@ -3574,6 +3594,8 @@ function ProfileEditForm({ initial, businesses, zones, onSave, onCancel, isSelf 
           </div>
         </FormField>
       )}
+
+      {role === 'zone_manager' && (
         <FormField label="โซนที่ดูแล" required>
           <p className="text-xs text-stone-500 -mt-1 mb-2">ติ๊กโซนที่ผู้ใช้คนนี้จะจัดการพนักงานได้ (เลือกได้หลายโซน, ข้ามธุรกิจได้)</p>
           <div className="space-y-3 max-h-72 overflow-auto p-1">
