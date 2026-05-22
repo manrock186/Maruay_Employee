@@ -225,6 +225,7 @@ export default function App() {
         p.isZM = p.role === 'zone_manager';
         p.isViewer = p.role === 'viewer';
         p.canWrite = ['owner', 'business_manager', 'zone_manager'].includes(p.role);
+        p.canManagePayroll = p.role === 'owner' || (p.role === 'business_manager' && !!p.canManagePayroll);
       }
       setProfile(p);
       if (p?.theme) applyTheme(p.theme);
@@ -257,7 +258,7 @@ export default function App() {
       setZones(fromDB(z.data || []));
       setPositions(fromDB(p.data || []));
       const empRows = fromDB(e.data || []);
-      if (!profile.isOwner) empRows.forEach((r) => { delete r.baseSalary; delete r.holidayQuota; delete r.hasSocialSecurity; delete r.roomFee; });
+      if (!profile.canManagePayroll) empRows.forEach((r) => { delete r.baseSalary; delete r.holidayQuota; delete r.hasSocialSecurity; delete r.roomFee; });
       setEmployees(empRows);
       setProfiles(fromDB(up.data || []));
       setNotifications(fromDB(noti.data || []));
@@ -279,30 +280,27 @@ export default function App() {
       }
       setDataLoading(false);
 
-      // ---- auto-apply การปรับเงินเดือนที่ถึงกำหนด (owner เท่านั้น) ----
-      if (profile.isOwner) {
+      // ---- auto-apply การปรับเงินเดือนที่ถึงกำหนด (owner หรือ หัวหน้าธุรกิจที่มีสิทธิ์) ----
+      if (profile.canManagePayroll) {
         const today = new Date().toISOString().slice(0, 10);
         const { data: pending } = await supabase.from('salary_changes')
           .select('*').eq('status', 'pending').lte('effective_date', today);
         if (pending && pending.length > 0 && !cancelled) {
           for (const sc of pending) {
-            // อัปเดต base_salary ของพนักงานเป็นค่าใหม่
             await supabase.from('employees').update({ base_salary: sc.new_salary }).eq('id', sc.employee_id);
-            // mark applied
             await supabase.from('salary_changes').update({ status: 'applied', applied_at: new Date().toISOString() }).eq('id', sc.id);
           }
-          // refresh employees ในหน้าจอ
           const { data: e2 } = await supabase.from('employees').select('*').order('created_at');
           if (!cancelled && e2) setEmployees(fromDB(e2));
         }
+      }
 
-        // ---- sync notifications (owner สร้าง/อัปเดตให้ทุก role) ----
-        if (!cancelled) {
-          try {
-            const fresh = await syncNotifications();
-            if (!cancelled && fresh) setNotifications(fresh);
-          } catch (err) { console.error('syncNotifications', err); }
-        }
+      // ---- sync notifications (owner เท่านั้น เพราะ insert ถูกจำกัดไว้ที่ owner) ----
+      if (profile.isOwner && !cancelled) {
+        try {
+          const fresh = await syncNotifications();
+          if (!cancelled && fresh) setNotifications(fresh);
+        } catch (err) { console.error('syncNotifications', err); }
       }
     })();
 
@@ -317,6 +315,7 @@ export default function App() {
       out.isZM = out.role === 'zone_manager';
       out.isViewer = out.role === 'viewer';
       out.canWrite = ['owner', 'business_manager', 'zone_manager'].includes(out.role);
+      out.canManagePayroll = out.role === 'owner' || (out.role === 'business_manager' && !!out.canManagePayroll);
       return out;
     };
     const handle = (setter) => (payload) => {
@@ -643,7 +642,7 @@ export default function App() {
             activeBusinessId={activeBusinessId}
           />
         )}
-        {view === 'payroll' && profile.isOwner && (
+        {view === 'payroll' && profile.canManagePayroll && (
           <PayrollPage
             businesses={businesses}
             zones={zones}
@@ -927,7 +926,7 @@ function Sidebar({ view, setView, profile, businesses, zones, activeBusinessId, 
     { id: 'positions', label: 'ตำแหน่ง', icon: Award },
     { id: 'employees', label: 'พนักงาน', icon: Users },
     { id: 'orgchart', label: 'แผนผังองค์กร', icon: Network },
-    { id: 'payroll', label: 'เงินเดือน', icon: Wallet, show: isOwner },
+    { id: 'payroll', label: 'เงินเดือน', icon: Wallet, show: profile.canManagePayroll },
     { id: 'users', label: 'ผู้ใช้ระบบ', icon: Shield, show: isOwner },
   ];
 
@@ -1797,11 +1796,11 @@ function EmployeesPage({ businesses, zones, positions, employees, profile, activ
       </div>
       {showModal && (
         <Modal title={editing?.id ? 'แก้ไขข้อมูลพนักงาน' : 'เพิ่มพนักงานใหม่'} onClose={() => { setShowModal(false); setEditing(null); }} wide>
-          <EmployeeForm initial={editing} zones={visibleZones} positions={positions.filter((p) => p.businessId === targetBusinessId)} employees={employees.filter((e) => e.businessId === targetBusinessId && e.id !== editing?.id)} businesses={businesses} onSave={save} onCancel={() => { setShowModal(false); setEditing(null); }} lockedZoneId={isZM && (profile.zoneIds || []).length === 1 ? profile.zoneIds[0] : null} allowedZoneIds={isZM ? (profile.zoneIds || []) : null} businessId={targetBusinessId} isOwner={isOwner || isBM} canEditPay={isOwner} />
+          <EmployeeForm initial={editing} zones={visibleZones} positions={positions.filter((p) => p.businessId === targetBusinessId)} employees={employees.filter((e) => e.businessId === targetBusinessId && e.id !== editing?.id)} businesses={businesses} onSave={save} onCancel={() => { setShowModal(false); setEditing(null); }} lockedZoneId={isZM && (profile.zoneIds || []).length === 1 ? profile.zoneIds[0] : null} allowedZoneIds={isZM ? (profile.zoneIds || []) : null} businessId={targetBusinessId} isOwner={isOwner || isBM} canEditPay={profile.canManagePayroll} />
         </Modal>
       )}
       {viewing && (
-        <EmployeeDetailModal employee={viewing} zones={zones} positions={positions} employees={employees} businesses={businesses} canWrite={canWrite} canResign={canResign} canRaise={isOwner} ops={ops} onClose={() => setViewing(null)} onEdit={() => { setEditing(viewing); setShowModal(true); setViewing(null); }} onDelete={() => { del(viewing.id); setViewing(null); }} onResign={() => setResigningEmp(viewing)} onRehire={() => doRehire(viewing)} onRaise={() => setRaisingEmp(viewing)} />
+        <EmployeeDetailModal employee={viewing} zones={zones} positions={positions} employees={employees} businesses={businesses} canWrite={canWrite} canResign={canResign} canRaise={profile.canManagePayroll} ops={ops} onClose={() => setViewing(null)} onEdit={() => { setEditing(viewing); setShowModal(true); setViewing(null); }} onDelete={() => { del(viewing.id); setViewing(null); }} onResign={() => setResigningEmp(viewing)} onRehire={() => doRehire(viewing)} onRaise={() => setRaisingEmp(viewing)} />
       )}
       {resigningEmp && (
         <ResignModal employee={resigningEmp} onClose={() => setResigningEmp(null)} onConfirm={doResign} />
@@ -3439,6 +3438,7 @@ function ProfileEditForm({ initial, businesses, zones, onSave, onCancel, isSelf 
   const [role, setRole] = useState(initial?.role || 'pending');
   const [businessIds, setBusinessIds] = useState(initial?.businessIds || []);
   const [zoneIds, setZoneIds] = useState(initial?.zoneIds || []);
+  const [canManagePayroll, setCanManagePayroll] = useState(!!initial?.canManagePayroll);
   // สำหรับ viewer: เลือก scope แบบใด
   const [viewerScope, setViewerScope] = useState(() => {
     if (initial?.role !== 'viewer') return 'system';
@@ -3462,7 +3462,7 @@ function ProfileEditForm({ initial, businesses, zones, onSave, onCancel, isSelf 
       if (viewerScope === 'business') bizIds = businessIds;
       else if (viewerScope === 'zone') zIds = zoneIds;
     }
-    onSave({ name: name.trim(), role, businessIds: bizIds, zoneIds: zIds });
+    onSave({ name: name.trim(), role, businessIds: bizIds, zoneIds: zIds, canManagePayroll: role === 'business_manager' ? canManagePayroll : false });
   };
 
   const ROLES = [
@@ -3514,8 +3514,26 @@ function ProfileEditForm({ initial, businesses, zones, onSave, onCancel, isSelf 
         </FormField>
       )}
 
-      {/* Zone Manager: multi-select zones */}
-      {role === 'zone_manager' && (
+      {role === 'business_manager' && (
+        <FormField label="สิทธิ์เงินเดือน">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <button type="button" onClick={() => setCanManagePayroll(false)} className={`flex items-start gap-2.5 p-3 rounded-lg border-2 text-left transition-all ${!canManagePayroll ? 'border-emerald-600 bg-emerald-50' : 'border-stone-200 hover:border-stone-300'}`}>
+              <EyeOff className={`w-4 h-4 mt-0.5 flex-shrink-0 ${!canManagePayroll ? 'text-emerald-700' : 'text-stone-400'}`} />
+              <div>
+                <div className={`text-sm font-medium ${!canManagePayroll ? 'text-emerald-900' : 'text-stone-700'}`}>ไม่เห็นเงินเดือน</div>
+                <div className="text-[11px] text-stone-500 mt-0.5">ซ่อนข้อมูลเงินเดือนทั้งหมด (ค่าเริ่มต้น)</div>
+              </div>
+            </button>
+            <button type="button" onClick={() => setCanManagePayroll(true)} className={`flex items-start gap-2.5 p-3 rounded-lg border-2 text-left transition-all ${canManagePayroll ? 'border-emerald-600 bg-emerald-50' : 'border-stone-200 hover:border-stone-300'}`}>
+              <Wallet className={`w-4 h-4 mt-0.5 flex-shrink-0 ${canManagePayroll ? 'text-emerald-700' : 'text-stone-400'}`} />
+              <div>
+                <div className={`text-sm font-medium ${canManagePayroll ? 'text-emerald-900' : 'text-stone-700'}`}>เห็น + แก้ไขเงินเดือนได้</div>
+                <div className="text-[11px] text-stone-500 mt-0.5">ทำเงินเดือน, ปรับเงินเดือน เฉพาะธุรกิจที่ดูแล</div>
+              </div>
+            </button>
+          </div>
+        </FormField>
+      )}
         <FormField label="โซนที่ดูแล" required>
           <p className="text-xs text-stone-500 -mt-1 mb-2">ติ๊กโซนที่ผู้ใช้คนนี้จะจัดการพนักงานได้ (เลือกได้หลายโซน, ข้ามธุรกิจได้)</p>
           <div className="space-y-3 max-h-72 overflow-auto p-1">
