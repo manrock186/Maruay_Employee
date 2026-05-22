@@ -952,9 +952,26 @@ function Sidebar({ view, setView, profile, businesses, zones, activeBusinessId, 
           {notiBell}
         </div>
       </div>
+      {(() => {
+        const activeBiz = activeBusinessId ? businesses.find((b) => b.id === activeBusinessId) : null;
+        if (!activeBiz) return null;
+        return (
+          <div className="px-3 pt-3">
+            <div className="flex items-center gap-2.5 px-2.5 py-2 bg-emerald-900/60 rounded-lg">
+              <div className="w-9 h-9 rounded-lg bg-white/95 flex items-center justify-center flex-shrink-0 overflow-hidden">
+                {activeBiz.logo ? <img src={activeBiz.logo} alt={activeBiz.name} className="w-full h-full object-contain" /> : <Building2 className="w-5 h-5 text-emerald-800" />}
+              </div>
+              <div className="min-w-0">
+                <div className="text-[10px] text-emerald-300/70">ธุรกิจที่กำลังดู</div>
+                <div className="text-sm text-white font-medium truncate">{activeBiz.name}</div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
       {accessibleBiz.length > 1 && (
         <div className="p-3 border-b border-emerald-900">
-          <label className="block text-xs text-emerald-300/70 mb-1.5 px-1">ธุรกิจที่กำลังดู</label>
+          <label className="block text-xs text-emerald-300/70 mb-1.5 px-1">เปลี่ยนธุรกิจ</label>
           <select value={activeBusinessId || ''} onChange={(e) => setActiveBusinessId(e.target.value)} className="w-full px-3 py-2 bg-emerald-900 border border-emerald-800 rounded-lg text-sm text-white focus:outline-none focus:border-amber-500">
             {isOwner && <option value="">🌐 ทุกธุรกิจ (ภาพรวม)</option>}
             {accessibleBiz.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
@@ -1295,7 +1312,9 @@ function BusinessesPage({ businesses, zones, employees, positions, ops, activeBu
                     <button onClick={() => toggle(biz.id)} className="p-1 hover:bg-stone-200 rounded">
                       {isCollapsed ? <ChevronRight className="w-5 h-5 text-stone-500" /> : <ChevronDown className="w-5 h-5 text-stone-500" />}
                     </button>
-                    <div className="w-12 h-12 rounded-xl bg-emerald-100 flex items-center justify-center flex-shrink-0"><Building2 className="w-6 h-6 text-emerald-800" /></div>
+                    <div className="w-12 h-12 rounded-xl bg-emerald-100 flex items-center justify-center flex-shrink-0 overflow-hidden">
+                      {biz.logo ? <img src={biz.logo} alt={biz.name} className="w-full h-full object-contain" /> : <Building2 className="w-6 h-6 text-emerald-800" />}
+                    </div>
                     <div className="flex-1 min-w-0">
                       <h3 className="font-semibold text-stone-800 text-lg">{biz.name}</h3>
                       {biz.description && <p className="text-sm text-stone-500 line-clamp-1">{biz.description}</p>}
@@ -1377,9 +1396,31 @@ function BusinessesPage({ businesses, zones, employees, positions, ops, activeBu
 function BusinessForm({ initial, onSave, onCancel }) {
   const [name, setName] = useState(initial?.name || '');
   const [description, setDescription] = useState(initial?.description || '');
-  const submit = () => { if (!name.trim()) return alert('กรุณากรอกชื่อธุรกิจ'); onSave({ name: name.trim(), description: description.trim() }); };
+  const [logo, setLogo] = useState(initial?.logo || '');
+  const [uploading, setUploading] = useState(false);
+  const fileRef = useRef(null);
+  const handleLogo = async (e) => {
+    const f = e.target.files?.[0]; if (!f) return;
+    setUploading(true);
+    try { setLogo(await resizeImage(f, 400)); } finally { setUploading(false); }
+  };
+  const submit = () => { if (!name.trim()) return alert('กรุณากรอกชื่อธุรกิจ'); onSave({ name: name.trim(), description: description.trim(), logo: logo || null }); };
   return (
     <div className="space-y-4">
+      <FormField label="โลโก้ธุรกิจ">
+        <div className="flex items-center gap-4">
+          <div className="w-20 h-20 rounded-xl border-2 border-dashed border-stone-300 bg-stone-50 flex items-center justify-center overflow-hidden flex-shrink-0">
+            {logo ? <img src={logo} alt="logo" className="w-full h-full object-contain" /> : <Building2 className="w-7 h-7 text-stone-300" />}
+          </div>
+          <div className="flex flex-col gap-2">
+            <input ref={fileRef} type="file" accept="image/*" onChange={handleLogo} className="hidden" />
+            <button type="button" onClick={() => fileRef.current?.click()} disabled={uploading} className="flex items-center gap-2 px-3 py-2 border border-stone-300 rounded-lg text-sm text-stone-700 hover:bg-stone-50 disabled:opacity-50">
+              <Upload className="w-4 h-4" />{uploading ? 'กำลังอัปโหลด...' : (logo ? 'เปลี่ยนโลโก้' : 'อัปโหลดโลโก้')}
+            </button>
+            {logo && <button type="button" onClick={() => setLogo('')} className="text-xs text-red-600 hover:underline text-left">ลบโลโก้</button>}
+          </div>
+        </div>
+      </FormField>
       <FormField label="ชื่อธุรกิจ" required><input autoFocus value={name} onChange={(e) => setName(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600" placeholder="เช่น ร้านอาหาร ABC" /></FormField>
       <FormField label="รายละเอียด"><textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600 resize-none" /></FormField>
       <FormActions onCancel={onCancel} onSubmit={submit} />
