@@ -6,7 +6,7 @@ import {
   Eye, EyeOff, Network, Save, ChevronDown, ChevronUp, User,
   KeyRound, AlertCircle, CheckCircle2, Crown, Award, MapPinned, Clock,
   Globe, CreditCard, BookOpen, FileText, ExternalLink, Paperclip,
-  Wallet, Banknote, Calculator, Receipt, Minus, TrendingUp, TrendingDown, Bell, BellRing, Check, CheckCheck, Hash
+  Wallet, Banknote, Calculator, Receipt, Minus, TrendingUp, TrendingDown, Bell, BellRing, Check, CheckCheck, Hash, Menu
 } from 'lucide-react';
 import { supabase, fromDB, toDB } from './supabase.js';
 
@@ -192,6 +192,7 @@ export default function App() {
 
   const [activeBusinessId, setActiveBusinessId] = useState(null);
   const [activeZoneId, setActiveZoneId] = useState(null);
+  const [sidebarOpen, setSidebarOpen] = useState(() => typeof window !== 'undefined' && window.innerWidth >= 1024);
 
   // ---- AUTH ----
   useEffect(() => {
@@ -548,7 +549,8 @@ export default function App() {
   if (dataLoading) return <LoadingScreen msg="กำลังโหลดข้อมูล..." />;
 
   return (
-    <div className="min-h-screen bg-stone-50 flex">
+    <div className="min-h-screen bg-stone-50 lg:flex">
+      {sidebarOpen && <div onClick={() => setSidebarOpen(false)} className="fixed inset-0 bg-stone-900/50 z-40 lg:hidden" />}
       <Sidebar
         view={view}
         setView={setView}
@@ -558,6 +560,8 @@ export default function App() {
         activeBusinessId={activeBusinessId}
         setActiveBusinessId={changeBusiness}
         onThemeChange={changeTheme}
+        open={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
         notiBell={
           <NotificationBell
             notifications={notifications}
@@ -573,7 +577,13 @@ export default function App() {
           />
         }
       />
-      <main className="flex-1 overflow-hidden">
+      <main className="flex-1 min-w-0 h-screen flex flex-col overflow-hidden">
+        <div className="shrink-0 flex items-center gap-2 px-3 py-2 bg-white/95 backdrop-blur border-b border-stone-200 z-30">
+          <button onClick={() => setSidebarOpen((o) => !o)} className="p-2 rounded-lg hover:bg-stone-100 text-stone-600" title="แสดง/ซ่อนเมนู" aria-label="เมนู"><Menu className="w-5 h-5" /></button>
+          <div className="w-7 h-7 rounded-md bg-amber-500 flex items-center justify-center lg:hidden"><Users className="w-4 h-4 text-emerald-950" strokeWidth={2.5} /></div>
+          <span className="font-semibold text-stone-700 text-sm lg:hidden">ระบบพนักงาน</span>
+        </div>
+        <div className="flex-1 min-h-0">
         {view === 'dashboard' && (
           <Dashboard
             profile={profile}
@@ -650,6 +660,7 @@ export default function App() {
             currentUserId={session.user.id}
           />
         )}
+        </div>
       </main>
     </div>
   );
@@ -900,7 +911,7 @@ function ThemePicker({ current, onSelect }) {
 }
 
 // ============ SIDEBAR ============
-function Sidebar({ view, setView, profile, businesses, zones, activeBusinessId, setActiveBusinessId, notiBell, onThemeChange }) {
+function Sidebar({ view, setView, profile, businesses, zones, activeBusinessId, setActiveBusinessId, notiBell, onThemeChange, open, onClose }) {
   const isOwner = profile.isOwner;
   const isBM = profile.isBM;
   const isZM = profile.isZM;
@@ -938,8 +949,15 @@ function Sidebar({ view, setView, profile, businesses, zones, activeBusinessId, 
     return businesses;
   })();
 
+  const navClick = (id) => {
+    setView(id);
+    if (typeof window !== 'undefined' && window.matchMedia('(max-width: 1023px)').matches) onClose?.();
+  };
+
   return (
-    <aside className="w-64 bg-emerald-950 text-emerald-50 flex flex-col h-screen sticky top-0">
+    <aside className={`w-64 bg-emerald-950 text-emerald-50 flex flex-col h-screen z-50 transition-transform duration-200 ease-out
+      fixed inset-y-0 left-0 ${open ? 'translate-x-0' : '-translate-x-full'}
+      lg:static lg:z-auto lg:translate-x-0 ${open ? 'lg:flex' : 'lg:hidden'}`}>
       <div className="p-5 border-b border-emerald-900">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-lg bg-amber-500 flex items-center justify-center">
@@ -950,6 +968,7 @@ function Sidebar({ view, setView, profile, businesses, zones, activeBusinessId, 
             <div className="text-xs text-emerald-300/70">Employee System</div>
           </div>
           {notiBell}
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-emerald-900 text-emerald-100/80 lg:hidden" aria-label="ปิดเมนู"><X className="w-5 h-5" /></button>
         </div>
       </div>
       {(() => {
@@ -984,7 +1003,7 @@ function Sidebar({ view, setView, profile, businesses, zones, activeBusinessId, 
           const Icon = item.icon;
           const active = view === item.id;
           return (
-            <button key={item.id} onClick={() => setView(item.id)} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all ${active ? 'bg-amber-500 text-emerald-950 font-medium shadow-lg shadow-amber-500/20' : 'text-emerald-100/80 hover:bg-emerald-900 hover:text-white'}`}>
+            <button key={item.id} onClick={() => navClick(item.id)} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all ${active ? 'bg-amber-500 text-emerald-950 font-medium shadow-lg shadow-amber-500/20' : 'text-emerald-100/80 hover:bg-emerald-900 hover:text-white'}`}>
               <Icon className="w-4 h-4" />
               <span>{item.label}</span>
             </button>
@@ -1130,7 +1149,7 @@ function Dashboard({ profile, businesses, zones, employees, positions, activeBus
   const recentEmployees = [...visibleEmployees].sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0)).slice(0, 5);
 
   return (
-    <div className="h-screen overflow-auto">
+    <div className="h-full overflow-auto">
       <PageHeader title={`สวัสดี, ${profile.name || 'ผู้ใช้'}`} subtitle="ภาพรวมข้อมูลในระบบ" />
       <div className="p-8">
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
@@ -1292,7 +1311,7 @@ function BusinessesPage({ businesses, zones, employees, positions, profile, ops,
   };
 
   return (
-    <div className="h-screen overflow-auto">
+    <div className="h-full overflow-auto">
       <PageHeader title="ธุรกิจและโซน" subtitle="จัดการธุรกิจและโซนภายในแต่ละธุรกิจ">
         {isOwner && (
           <button onClick={() => { setEditingBiz({}); setShowBizModal(true); }} className="flex items-center gap-2 px-4 py-2 bg-emerald-900 hover:bg-emerald-800 text-white rounded-lg text-sm font-medium">
@@ -1465,12 +1484,12 @@ function PositionsPage({ businesses, positions, employees, profile, activeBusine
   };
 
   if (!activeBusinessId) return (
-    <div className="h-screen overflow-auto"><PageHeader title="ตำแหน่ง" /><div className="p-8"><EmptyState icon={Award} title="เลือกธุรกิจที่ sidebar" description="ตำแหน่งเป็นข้อมูลเฉพาะของแต่ละธุรกิจ — ต้องเลือกธุรกิจที่ sidebar ก่อน" /></div></div>
+    <div className="h-full overflow-auto"><PageHeader title="ตำแหน่ง" /><div className="p-8"><EmptyState icon={Award} title="เลือกธุรกิจที่ sidebar" description="ตำแหน่งเป็นข้อมูลเฉพาะของแต่ละธุรกิจ — ต้องเลือกธุรกิจที่ sidebar ก่อน" /></div></div>
   );
   const roots = bizPositions.filter((p) => !p.parentId);
 
   return (
-    <div className="h-screen overflow-auto">
+    <div className="h-full overflow-auto">
       <PageHeader title="ตำแหน่ง" subtitle={`ธุรกิจ: ${businesses.find((b) => b.id === activeBusinessId)?.name}`}>
         {canManageBiz && <button onClick={() => { setEditing({}); setShowModal(true); }} className="flex items-center gap-2 px-4 py-2 bg-emerald-900 hover:bg-emerald-800 text-white rounded-lg text-sm font-medium"><Plus className="w-4 h-4" /> เพิ่มตำแหน่ง</button>}
       </PageHeader>
@@ -1668,11 +1687,11 @@ function EmployeesPage({ businesses, zones, positions, employees, profile, activ
   const allMode = (isOwner || isBM) && !activeBusinessId && (isOwner || (profile.businessIds || []).length > 1);
 
   if (isOwner && businesses.length === 0) return (
-    <div className="h-screen overflow-auto"><PageHeader title="พนักงาน" /><div className="p-8"><EmptyState icon={Users} title="ยังไม่มีธุรกิจ" description="สร้างธุรกิจก่อนที่หน้า 'ธุรกิจและโซน'" /></div></div>
+    <div className="h-full overflow-auto"><PageHeader title="พนักงาน" /><div className="p-8"><EmptyState icon={Users} title="ยังไม่มีธุรกิจ" description="สร้างธุรกิจก่อนที่หน้า 'ธุรกิจและโซน'" /></div></div>
   );
 
   return (
-    <div className="h-screen overflow-auto">
+    <div className="h-full overflow-auto">
       <PageHeader title={filteredZoneName ? `พนักงาน — ${filteredZoneName}` : (allMode ? 'พนักงานทุกคน — ภาพรวมทุกธุรกิจ' : 'พนักงาน')} subtitle={`${visibleEmployees.length} คน${filteredZoneName ? ' ในโซนนี้' : (allMode ? ' รวมทุกธุรกิจ' : '')}`}>
         {canWrite && !allMode && targetBusinessId && (
           <button onClick={() => { setEditing({}); setShowModal(true); }} className="flex items-center gap-2 px-4 py-2 bg-emerald-900 hover:bg-emerald-800 text-white rounded-lg text-sm font-medium"><Plus className="w-4 h-4" /> เพิ่มพนักงาน</button>
@@ -2675,10 +2694,10 @@ function OrgChartPage({ businesses, zones, positions, employees, profile, active
   }, [employees, profile, activeBusinessId, isOwner, isBM, isZM, isViewer]);
   const roots = visible.filter((e) => !e.managerId || !visible.find((x) => x.id === e.managerId));
 
-  if ((isOwner || isBM || isViewer) && !activeBusinessId) return <div className="h-screen overflow-auto"><PageHeader title="แผนผังองค์กร" /><div className="p-8"><EmptyState icon={Network} title="เลือกธุรกิจที่ sidebar" description="แผนผังองค์กรเป็นข้อมูลเฉพาะของแต่ละธุรกิจ — ต้องเลือกธุรกิจที่ sidebar ก่อน" /></div></div>;
+  if ((isOwner || isBM || isViewer) && !activeBusinessId) return <div className="h-full overflow-auto"><PageHeader title="แผนผังองค์กร" /><div className="p-8"><EmptyState icon={Network} title="เลือกธุรกิจที่ sidebar" description="แผนผังองค์กรเป็นข้อมูลเฉพาะของแต่ละธุรกิจ — ต้องเลือกธุรกิจที่ sidebar ก่อน" /></div></div>;
 
   return (
-    <div className="h-screen overflow-auto">
+    <div className="h-full overflow-auto">
       <PageHeader title="แผนผังองค์กร" subtitle="สายบังคับบัญชาตามที่กำหนด" />
       <div className="p-8">
         {visible.length === 0 ? <EmptyState icon={Network} title="ยังไม่มีพนักงาน" /> : (
@@ -2775,14 +2794,14 @@ function PayrollPage({ businesses, zones, positions, employees, activeBusinessId
   const finalizedCount = payrolls.filter((p) => p.status === 'finalized').length;
 
   if (!activeBusinessId) return (
-    <div className="h-screen overflow-auto"><PageHeader title="เงินเดือน" /><div className="p-8"><EmptyState icon={Wallet} title="เลือกธุรกิจที่ sidebar" description="เงินเดือนคำนวณแยกตามธุรกิจ — เลือกธุรกิจก่อน" /></div></div>
+    <div className="h-full overflow-auto"><PageHeader title="เงินเดือน" /><div className="p-8"><EmptyState icon={Wallet} title="เลือกธุรกิจที่ sidebar" description="เงินเดือนคำนวณแยกตามธุรกิจ — เลือกธุรกิจก่อน" /></div></div>
   );
 
   const bizName = businesses.find((b) => b.id === activeBusinessId)?.name;
   const yearOptions = [now.getFullYear(), now.getFullYear() - 1, now.getFullYear() - 2];
 
   return (
-    <div className="h-screen overflow-auto">
+    <div className="h-full overflow-auto">
       <PageHeader title="เงินเดือน" subtitle={`${bizName} — ${MONTH_NAMES[month - 1]} ${year + 543}`} />
       <div className="p-4 md:p-8">
         {/* ตัวเลือกเดือน + สรุป */}
@@ -3356,7 +3375,7 @@ function UsersPage({ profiles, businesses, zones, ops, currentUserId }) {
   };
 
   return (
-    <div className="h-screen overflow-auto">
+    <div className="h-full overflow-auto">
       <PageHeader title="ผู้ใช้ระบบ" subtitle="จัดการสิทธิ์การเข้าถึง — ผู้ใช้ใหม่สมัครเองที่หน้า login แล้วเจ้าของอนุมัติที่นี่" />
       <div className="p-4 md:p-8">
         <div className="space-y-3">
