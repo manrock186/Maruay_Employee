@@ -256,7 +256,9 @@ export default function App() {
       setBusinesses(fromDB(b.data || []));
       setZones(fromDB(z.data || []));
       setPositions(fromDB(p.data || []));
-      setEmployees(fromDB(e.data || []));
+      const empRows = fromDB(e.data || []);
+      if (!profile.isOwner) empRows.forEach((r) => { delete r.baseSalary; delete r.holidayQuota; delete r.hasSocialSecurity; delete r.roomFee; });
+      setEmployees(empRows);
       setProfiles(fromDB(up.data || []));
       setNotifications(fromDB(noti.data || []));
       setNotiReads(fromDB(reads.data || []));
@@ -1795,7 +1797,7 @@ function EmployeesPage({ businesses, zones, positions, employees, profile, activ
       </div>
       {showModal && (
         <Modal title={editing?.id ? 'แก้ไขข้อมูลพนักงาน' : 'เพิ่มพนักงานใหม่'} onClose={() => { setShowModal(false); setEditing(null); }} wide>
-          <EmployeeForm initial={editing} zones={visibleZones} positions={positions.filter((p) => p.businessId === targetBusinessId)} employees={employees.filter((e) => e.businessId === targetBusinessId && e.id !== editing?.id)} businesses={businesses} onSave={save} onCancel={() => { setShowModal(false); setEditing(null); }} lockedZoneId={isZM && (profile.zoneIds || []).length === 1 ? profile.zoneIds[0] : null} allowedZoneIds={isZM ? (profile.zoneIds || []) : null} businessId={targetBusinessId} isOwner={isOwner || isBM} />
+          <EmployeeForm initial={editing} zones={visibleZones} positions={positions.filter((p) => p.businessId === targetBusinessId)} employees={employees.filter((e) => e.businessId === targetBusinessId && e.id !== editing?.id)} businesses={businesses} onSave={save} onCancel={() => { setShowModal(false); setEditing(null); }} lockedZoneId={isZM && (profile.zoneIds || []).length === 1 ? profile.zoneIds[0] : null} allowedZoneIds={isZM ? (profile.zoneIds || []) : null} businessId={targetBusinessId} isOwner={isOwner || isBM} canEditPay={isOwner} />
         </Modal>
       )}
       {viewing && (
@@ -2355,7 +2357,7 @@ function DetailBlock({ icon: Icon, label, value, mono }) {
   );
 }
 
-function EmployeeForm({ initial, zones, positions, employees, businesses, onSave, onCancel, lockedZoneId, allowedZoneIds, businessId, isOwner }) {
+function EmployeeForm({ initial, zones, positions, employees, businesses, onSave, onCancel, lockedZoneId, allowedZoneIds, businessId, isOwner, canEditPay }) {
   const [name, setName] = useState(initial?.name || '');
   const [nickname, setNickname] = useState(initial?.nickname || '');
   const [employeeNumber, setEmployeeNumber] = useState(initial?.employeeNumber || '');
@@ -2412,10 +2414,12 @@ function EmployeeForm({ initial, zones, positions, employees, businesses, onSave
       hasPassport: foreign ? hasPassport : null,
       workPermitDocs: foreign ? workPermitDocs : [],
       passportDocs: foreign ? passportDocs : [],
-      baseSalary: Number(baseSalary) || 0,
-      holidayQuota: Number(holidayQuota) || 0,
-      hasSocialSecurity: !!hasSocialSecurity,
-      roomFee: Number(roomFee) || 0,
+      ...(canEditPay ? {
+        baseSalary: Number(baseSalary) || 0,
+        holidayQuota: Number(holidayQuota) || 0,
+        hasSocialSecurity: !!hasSocialSecurity,
+        roomFee: Number(roomFee) || 0,
+      } : {}),
     });
   };
 
@@ -2492,7 +2496,7 @@ function EmployeeForm({ initial, zones, positions, employees, businesses, onSave
         </FormField>
       )}
 
-      {isOwner && (
+      {canEditPay && (
         <div className="bg-emerald-50/50 border border-emerald-200 rounded-xl p-4 space-y-4">
           <div className="flex items-center gap-2">
             <Wallet className="w-4 h-4 text-emerald-700" />
