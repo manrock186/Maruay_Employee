@@ -457,15 +457,23 @@ export default function App() {
     return fromDB(finalNoti || []);
   };
 
+  // แปลง error ของ DB ให้เป็นข้อความที่อ่านง่าย (เช่น เลขพนักงานซ้ำ = unique violation 23505)
+  const friendlyDBError = (error, fallback) => {
+    if (error?.code === '23505' && /employee_number/.test(error?.message || '')) {
+      return 'เลขพนักงานนี้ซ้ำกับคนอื่นในระบบ กรุณาใช้เลขอื่น หรือเว้นว่างไว้เพื่อให้ระบบรันเลขให้อัตโนมัติ';
+    }
+    return fallback + (error?.message || '');
+  };
+
   // CRUD: generic
   const insertRow = async (table, data) => {
     const { data: row, error } = await supabase.from(table).insert(toDB(data)).select().single();
-    if (error) { alert('บันทึกไม่สำเร็จ: ' + error.message); return null; }
+    if (error) { alert(friendlyDBError(error, 'บันทึกไม่สำเร็จ: ')); return null; }
     return fromDB(row);
   };
   const updateRow = async (table, id, data) => {
     const { error } = await supabase.from(table).update(toDB(data)).eq('id', id);
-    if (error) { alert('แก้ไขไม่สำเร็จ: ' + error.message); return false; }
+    if (error) { alert(friendlyDBError(error, 'แก้ไขไม่สำเร็จ: ')); return false; }
     return true;
   };
   const deleteRow = async (table, id) => {
@@ -1711,6 +1719,20 @@ function EmployeesPage({ businesses, zones, positions, employees, profile, activ
 
   const save = async (d) => {
     const payload = { ...d, businessId: targetBusinessId };
+    // เลขพนักงานไม่ซ้ำทั้งระบบ (global unique)
+    const parseNum = (v) => { const n = parseInt(String(v ?? '').trim(), 10); return Number.isFinite(n) ? n : 0; };
+    if (!payload.employeeNumber) {
+      // เว้นว่าง → สร้างเลขถัดไปแบบไม่ซ้ำทั้งระบบ เติม 0 เป็น 3 หลัก
+      const maxNum = employees.reduce((m, e) => Math.max(m, parseNum(e.employeeNumber)), 0);
+      payload.employeeNumber = String(maxNum + 1).padStart(3, '0');
+    } else {
+      // กรอกเอง → เลขล้วนปรับเป็น 3 หลัก แล้วกันซ้ำกับคนอื่นทั้งระบบ
+      let num = String(payload.employeeNumber).trim();
+      if (/^\d+$/.test(num)) num = num.padStart(3, '0');
+      payload.employeeNumber = num;
+      const dup = employees.find((e) => e.id !== editing?.id && String(e.employeeNumber || '').trim() === num);
+      if (dup) { alert(`เลขพนักงาน #${num} ซ้ำกับ ${dispName(dup)} แล้ว กรุณาใช้เลขอื่น (เว้นว่างไว้เพื่อให้ระบบรันเลขให้อัตโนมัติ)`); return; }
+    }
     if (editing?.id) await ops.employee.update(editing.id, payload);
     else await ops.employee.add(payload);
     setShowModal(false); setEditing(null);
