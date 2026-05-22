@@ -581,6 +581,7 @@ export default function App() {
             notifications={notifications}
             notiReads={notiReads}
             userId={session.user.id}
+            canManagePayroll={profile.canManagePayroll}
             ops={ops}
             onJump={(n) => {
               if (n.type === 'pending_user') setView('users');
@@ -813,11 +814,14 @@ function timeAgo(ts) {
   if (s < 86400) return `${Math.floor(s / 3600)} ชม.ที่แล้ว`;
   return `${Math.floor(s / 86400)} วันที่แล้ว`;
 }
-function NotificationBell({ notifications, notiReads, userId, ops, onJump }) {
+function NotificationBell({ notifications, notiReads, userId, canManagePayroll, ops, onJump }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   const readSet = useMemo(() => new Set(notiReads.filter((r) => r.userId === userId).map((r) => r.notificationId)), [notiReads, userId]);
-  const sorted = useMemo(() => [...notifications].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)), [notifications]);
+  // ซ่อนการแจ้งเตือนที่เกี่ยวกับเงินเดือน จากผู้ที่ไม่มีสิทธิ์ดูเงินเดือน
+  const PAYROLL_NOTI = ['payroll_incomplete', 'pending_raise'];
+  const visibleNoti = useMemo(() => (canManagePayroll ? notifications : notifications.filter((n) => !PAYROLL_NOTI.includes(n.type))), [notifications, canManagePayroll]);
+  const sorted = useMemo(() => [...visibleNoti].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)), [visibleNoti]);
   const unread = sorted.filter((n) => !readSet.has(n.id));
   const unreadCount = unread.length;
 
