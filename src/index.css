@@ -8,6 +8,17 @@ html, body, #root {
   -webkit-font-smoothing: antialiased;
 }
 
+/* ============ หัวข้อ (HEADINGS) ============ */
+/* ใช้ฟอนต์ Kanit — หนา ชัด เด่น สำหรับหัวข้อทั้งแอป */
+h1, h2, h3, h4 {
+  font-family: 'Kanit', 'Prompt', 'IBM Plex Sans Thai', system-ui, sans-serif;
+  letter-spacing: -0.01em;
+  font-weight: 600;
+}
+/* ขนาดเริ่มต้นของหัวข้อที่ไม่ได้กำหนดขนาด (เช่น หัวข้อใน modal / section) */
+h2 { font-size: 1.25rem; line-height: 1.85rem; }
+h3 { font-size: 1.0625rem; line-height: 1.6rem; }
+
 /* ============ THEME COLOR VARIABLES ============ */
 /* แต่ละธีมกำหนดค่าสีหลัก (primary) + สีรอง (accent) เป็น RGB channels */
 /* สีพื้น (stone/white) และสีสถานะ (red/sky/rose) คงเดิมทุกธีม */
