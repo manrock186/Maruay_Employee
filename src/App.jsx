@@ -256,7 +256,9 @@ export default function App() {
       if (cancelled) return;
       setBusinesses(fromDB(b.data || []));
       setZones(fromDB(z.data || []));
-      setPositions(fromDB(p.data || []));
+      const posRows = fromDB(p.data || []);
+      if (!profile.canManagePayroll) posRows.forEach((r) => { delete r.standardSalary; });
+      setPositions(posRows);
       const empRows = fromDB(e.data || []);
       if (!profile.canManagePayroll) empRows.forEach((r) => { delete r.baseSalary; delete r.holidayQuota; delete r.hasSocialSecurity; delete r.roomFee; });
       setEmployees(empRows);
@@ -1470,6 +1472,7 @@ function PositionsPage({ businesses, positions, employees, profile, activeBusine
   const [showModal, setShowModal] = useState(false);
   const isOwner = profile.isOwner;
   const canManageBiz = isOwner || profile.isBM;
+  const canManagePayroll = profile.canManagePayroll;
   const bizPositions = positions.filter((p) => p.businessId === activeBusinessId);
 
   const save = async (d) => {
@@ -1499,20 +1502,20 @@ function PositionsPage({ businesses, positions, employees, profile, activeBusine
           <EmptyState icon={Award} title="ยังไม่มีตำแหน่ง" description="เพิ่มตำแหน่งและกำหนดสายบังคับบัญชา (เช่น ผู้จัดการ → หัวหน้าโซน → พนักงาน)" />
         ) : (
           <div className="bg-white rounded-xl border border-stone-200 p-6">
-            <PositionTree positions={roots} allPositions={bizPositions} employees={employees} onEdit={(p) => { setEditing(p); setShowModal(true); }} onDelete={del} isOwner={canManageBiz} level={0} />
+            <PositionTree positions={roots} allPositions={bizPositions} employees={employees} onEdit={(p) => { setEditing(p); setShowModal(true); }} onDelete={del} isOwner={canManageBiz} canManagePayroll={canManagePayroll} level={0} />
           </div>
         )}
       </div>
       {showModal && (
         <Modal title={editing?.id ? 'แก้ไขตำแหน่ง' : 'เพิ่มตำแหน่งใหม่'} onClose={() => { setShowModal(false); setEditing(null); }}>
-          <PositionForm initial={editing} positions={bizPositions} onSave={save} onCancel={() => { setShowModal(false); setEditing(null); }} />
+          <PositionForm initial={editing} positions={bizPositions} canManagePayroll={canManagePayroll} onSave={save} onCancel={() => { setShowModal(false); setEditing(null); }} />
         </Modal>
       )}
     </div>
   );
 }
 
-function PositionTree({ positions, allPositions, employees, onEdit, onDelete, isOwner, level }) {
+function PositionTree({ positions, allPositions, employees, onEdit, onDelete, isOwner, canManagePayroll, level }) {
   return (
     <div className={level === 0 ? 'space-y-2' : 'mt-2 ml-6 pl-4 border-l-2 border-stone-200 space-y-2'}>
       {positions.map((pos) => {
@@ -1539,6 +1542,15 @@ function PositionTree({ positions, allPositions, employees, onEdit, onDelete, is
                     )}
                   </div>
                   <div className="text-xs text-stone-500">{count} คน{target > 0 ? ` (ต้องการ ${target})` : ''}{pos.description ? ` • ${pos.description}` : ''}</div>
+                  {canManagePayroll && pos.standardSalary && (
+                    <div className="mt-1.5 inline-flex items-start gap-1.5 px-2.5 py-1.5 bg-emerald-50 border border-emerald-200 rounded-lg">
+                      <Wallet className="w-3.5 h-3.5 text-emerald-700 mt-0.5 flex-shrink-0" />
+                      <div>
+                        <div className="text-[10px] font-medium text-emerald-700 uppercase tracking-wide">Standard Salary</div>
+                        <div className="text-xs text-stone-700 whitespace-pre-line">{pos.standardSalary}</div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
               {isOwner && (
@@ -1548,7 +1560,7 @@ function PositionTree({ positions, allPositions, employees, onEdit, onDelete, is
                 </div>
               )}
             </div>
-            {children.length > 0 && <PositionTree positions={children} allPositions={allPositions} employees={employees} onEdit={onEdit} onDelete={onDelete} isOwner={isOwner} level={level + 1} />}
+            {children.length > 0 && <PositionTree positions={children} allPositions={allPositions} employees={employees} onEdit={onEdit} onDelete={onDelete} isOwner={isOwner} canManagePayroll={canManagePayroll} level={level + 1} />}
           </div>
         );
       })}
@@ -1556,13 +1568,20 @@ function PositionTree({ positions, allPositions, employees, onEdit, onDelete, is
   );
 }
 
-function PositionForm({ initial, positions, onSave, onCancel }) {
+function PositionForm({ initial, positions, canManagePayroll, onSave, onCancel }) {
   const [name, setName] = useState(initial?.name || '');
   const [description, setDescription] = useState(initial?.description || '');
   const [parentId, setParentId] = useState(initial?.parentId || '');
   const [crossZone, setCrossZone] = useState(initial?.crossZone || false);
   const [targetHeadcount, setTargetHeadcount] = useState(initial?.targetHeadcount ?? 0);
-  const submit = () => { if (!name.trim()) return alert('กรุณากรอกชื่อตำแหน่ง'); onSave({ name: name.trim(), description: description.trim(), parentId: parentId || null, crossZone, targetHeadcount: Number(targetHeadcount) || 0 }); };
+  const [standardSalary, setStandardSalary] = useState(initial?.standardSalary || '');
+  const submit = () => {
+    if (!name.trim()) return alert('กรุณากรอกชื่อตำแหน่ง');
+    onSave({
+      name: name.trim(), description: description.trim(), parentId: parentId || null, crossZone, targetHeadcount: Number(targetHeadcount) || 0,
+      ...(canManagePayroll ? { standardSalary: standardSalary.trim() || null } : {}),
+    });
+  };
   const isDescendant = (id, of) => { let p = positions.find((x) => x.id === id); while (p) { if (p.id === of) return true; p = positions.find((x) => x.id === p.parentId); } return false; };
   const validParents = positions.filter((p) => p.id !== initial?.id && !isDescendant(p.id, initial?.id));
 
@@ -1579,6 +1598,12 @@ function PositionForm({ initial, positions, onSave, onCancel }) {
         <input type="number" min="0" value={targetHeadcount} onChange={(e) => setTargetHeadcount(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600" placeholder="0 = ไม่กำหนด" />
         <p className="text-xs text-stone-500 mt-1">ระบุจำนวนพนักงานที่ตำแหน่งนี้ควรมี — ถ้ายังไม่ครบ ระบบจะเตือนให้หาคนเพิ่ม (ใส่ 0 = ไม่เตือน)</p>
       </FormField>
+      {canManagePayroll && (
+        <FormField label="Standard Salary">
+          <textarea value={standardSalary} onChange={(e) => setStandardSalary(e.target.value)} rows={3} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600 resize-none" placeholder="เช่น เริ่มต้น 12,000 / ผ่านโปร 13,500 / มีประสบการณ์ 15,000+" />
+          <p className="text-xs text-emerald-700 mt-1 flex items-center gap-1"><Wallet className="w-3 h-3" />เห็นเฉพาะผู้ที่มีสิทธิ์ดูเงินเดือนเท่านั้น</p>
+        </FormField>
+      )}
       <FormField label="รายละเอียด"><textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600 resize-none" /></FormField>
       <label className="flex items-start gap-3 p-3 bg-stone-50 rounded-lg cursor-pointer hover:bg-stone-100 border border-stone-200">
         <input type="checkbox" checked={crossZone} onChange={(e) => setCrossZone(e.target.checked)} className="mt-0.5 w-4 h-4 rounded text-emerald-700" />
