@@ -53,6 +53,7 @@ const THEMES = [
   { value: 'vibrant', label: 'สีสัน',      desc: 'ม่วง + ชมพู สดใส', primary: '#7c3aed', accent: '#ec4899' },
   { value: 'ocean',   label: 'ฟ้าทะเล',    desc: 'น้ำเงิน + ฟ้า',   primary: '#2563eb', accent: '#06b6d4' },
   { value: 'grape',   label: 'ม่วง',       desc: 'ม่วง + ทอง หรูหรา', primary: '#9333ea', accent: '#f59e0b' },
+  { value: 'dark',    label: 'ดาร์กโหมด',  desc: 'พื้นดำ ถนอมสายตา', primary: '#10b981', accent: '#1c1c22', dark: true },
 ];
 const applyTheme = (theme) => {
   if (typeof document !== 'undefined') document.documentElement.dataset.theme = theme || 'default';
