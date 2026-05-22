@@ -6,7 +6,7 @@ import {
   Eye, EyeOff, Network, Save, ChevronDown, ChevronUp, User,
   KeyRound, AlertCircle, CheckCircle2, Crown, Award, MapPinned, Clock,
   Globe, CreditCard, BookOpen, FileText, ExternalLink, Paperclip,
-  Wallet, Banknote, Calculator, Receipt, Minus, TrendingUp, TrendingDown, Bell, BellRing, Check, CheckCheck
+  Wallet, Banknote, Calculator, Receipt, Minus, TrendingUp, TrendingDown, Bell, BellRing, Check, CheckCheck, Hash
 } from 'lucide-react';
 import { supabase, fromDB, toDB } from './supabase.js';
 
@@ -1972,6 +1972,7 @@ function EmployeeDetailModal({ employee, zones, positions, employees, businesses
   const hasNick = employee.nickname?.trim() && employee.nickname.trim() !== employee.name?.trim();
   const initials = display.split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase() || '?';
   const foreign = isForeign(employee.nationality);
+  const [showCard, setShowCard] = useState(false);
 
   // คำนวณว่าบัตรแรงงานหมดอายุหรือใกล้หมดอายุไหม
   let permitStatus = null;
@@ -1987,7 +1988,10 @@ function EmployeeDetailModal({ employee, zones, positions, employees, businesses
       <div onClick={(e) => e.stopPropagation()} className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[92vh] flex flex-col overflow-hidden">
         <div className="px-6 py-4 border-b border-stone-200 flex items-center justify-between">
           <h2 className="font-semibold text-stone-800">รายละเอียดพนักงาน</h2>
-          <button onClick={onClose} className="p-1.5 hover:bg-stone-100 rounded-lg text-stone-500"><X className="w-5 h-5" /></button>
+          <div className="flex items-center gap-2">
+            <button onClick={() => setShowCard(true)} className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-lg text-sm font-medium"><CreditCard className="w-4 h-4" /> บัตรพนักงาน</button>
+            <button onClick={onClose} className="p-1.5 hover:bg-stone-100 rounded-lg text-stone-500"><X className="w-5 h-5" /></button>
+          </div>
         </div>
         <div className="overflow-auto">
           <div className="grid grid-cols-1 md:grid-cols-[280px_1fr] gap-6 p-6">
@@ -2153,6 +2157,159 @@ function EmployeeDetailModal({ employee, zones, positions, employees, businesses
             </div>
           </div>
         )}
+      </div>
+      {showCard && (
+        <EmployeeIDCard employee={employee} business={primaryBiz} zone={zone} position={pos} onClose={() => setShowCard(false)} />
+      )}
+    </div>
+  );
+}
+
+// ============ บัตรพนักงาน (ID CARD) — CR80 แนวตั้ง 54×85.6mm ============
+// สร้าง QR code เป็น data URL (ใช้ lib qrcode-generator จาก CDN ใน index.html)
+function makeQRDataUrl(text) {
+  try {
+    if (typeof window === 'undefined' || !window.qrcode) return null;
+    const qr = window.qrcode(0, 'M');
+    qr.addData(text);
+    qr.make();
+    return qr.createDataURL(5, 0);
+  } catch { return null; }
+}
+
+// สีแบรนด์คงที่ (ไม่ตามธีม) เพื่อให้บัตรพิมพ์ออกมาตรงเสมอ
+const CARD = {
+  green1: '#065f46', green2: '#053d31', greenDeep: '#04332a',
+  gold: '#d4a017', goldLight: '#f0b429', ink: '#1c1917', muted: '#9a958f', line: '#ece9e4',
+};
+
+function EmployeeIDCard({ employee, business, zone, position, onClose }) {
+  const display = dispName(employee);
+  const initials = display.split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase() || '?';
+  const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('th-TH', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '—');
+  const hasRealNick = employee.nickname && employee.name && employee.nickname !== employee.name;
+
+  // QR: เข้ารหัสรหัสพนักงาน + ชื่อ + บริษัท
+  const qrText = `${business?.name || 'บริษัท'} | #${employee.employeeNumber || '-'} | ${display}${employee.phone ? ' | ' + employee.phone : ''}`;
+  const [qrUrl, setQrUrl] = useState(() => makeQRDataUrl(qrText));
+  useEffect(() => {
+    if (qrUrl) return;
+    let tries = 0;
+    const t = setInterval(() => {
+      const u = makeQRDataUrl(qrText);
+      if (u || ++tries > 20) { if (u) setQrUrl(u); clearInterval(t); }
+    }, 150);
+    return () => clearInterval(t);
+  }, []);
+
+  const printCard = () => {
+    const cardEl = document.getElementById('emp-id-card');
+    if (!cardEl) return;
+    const w = window.open('', '_blank', 'width=440,height=720');
+    if (!w) { alert('กรุณาอนุญาต popup เพื่อพิมพ์บัตร'); return; }
+    w.document.write(`<!DOCTYPE html><html lang="th"><head><title>บัตรพนักงาน - ${display}</title>
+      <meta charset="utf-8" />
+      <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@400;500;600;700&family=Prompt:wght@300;400;500;600&display=swap" rel="stylesheet" />
+      <style>
+        @page { size: 54mm 85.6mm; margin: 0; }
+        * { margin:0; padding:0; box-sizing:border-box; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+        body { font-family:'Prompt',sans-serif; display:flex; align-items:center; justify-content:center; background:#e7e5e4; }
+        .wrap { width:54mm; height:85.6mm; overflow:hidden; }
+        .wrap > #emp-id-card { transform: scale(0.7559); transform-origin: top left; box-shadow:none !important; }
+        @media print { body { background:#fff; } }
+      </style></head><body>
+      <div class="wrap">${cardEl.outerHTML}</div>
+      <script>window.onload=function(){setTimeout(function(){window.print();},500);};window.onafterprint=function(){window.close();};</script>
+      </body></html>`);
+    w.document.close();
+  };
+
+  const rows = [
+    { icon: Hash, label: 'รหัสพนักงาน', value: `#${employee.employeeNumber || '—'}` },
+    { icon: MapPin, label: 'สังกัด / โซน', value: zone?.name || (position?.crossZone ? 'ไม่จำกัดโซน' : '—') },
+    { icon: Phone, label: 'เบอร์โทร', value: employee.phone || '—' },
+    { icon: Calendar, label: 'เริ่มงาน', value: fmtDate(employee.startDate) },
+  ];
+
+  return (
+    <div className="fixed inset-0 bg-stone-900/70 backdrop-blur-sm z-[60] flex items-center justify-center p-4 overflow-auto" onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} className="flex flex-col items-center gap-4 my-auto">
+        {/* ===== บัตร (inline styles ทั้งหมด เพื่อพิมพ์ตรงจอ) ===== */}
+        <div id="emp-id-card" style={{ width: '270px', height: '428px', position: 'relative', borderRadius: '16px', overflow: 'hidden', background: '#ffffff', boxShadow: '0 20px 50px rgba(0,0,0,0.35)', fontFamily: "'Prompt', sans-serif", border: `1px solid ${CARD.line}` }}>
+          {/* แถบหัวโค้ง + ลายเส้น guilloché */}
+          <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: '136px', background: `linear-gradient(135deg, ${CARD.green1} 0%, ${CARD.greenDeep} 100%)`, borderBottomLeftRadius: '40px 22px', borderBottomRightRadius: '40px 22px' }}>
+            <svg width="270" height="136" viewBox="0 0 270 136" style={{ position: 'absolute', inset: 0, opacity: 0.12 }} preserveAspectRatio="none">
+              {[...Array(9)].map((_, i) => <ellipse key={i} cx="135" cy="20" rx={40 + i * 26} ry={14 + i * 9} fill="none" stroke="#ffffff" strokeWidth="0.6" />)}
+            </svg>
+            <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: '3px', background: `linear-gradient(90deg, ${CARD.gold}, ${CARD.goldLight}, ${CARD.gold})` }} />
+          </div>
+
+          {/* ลายน้ำโลโก้ */}
+          <div style={{ position: 'absolute', top: '170px', left: 0, right: 0, display: 'flex', justifyContent: 'center', opacity: 0.05, pointerEvents: 'none' }}>
+            {business?.logo ? <img src={business.logo} alt="" style={{ width: '150px', height: '150px', objectFit: 'contain' }} /> : <Building2 style={{ width: '150px', height: '150px', color: CARD.green1 }} />}
+          </div>
+
+          {/* หัว: โลโก้ + ชื่อบริษัท */}
+          <div style={{ position: 'relative', padding: '14px 16px 0', display: 'flex', alignItems: 'center', gap: '8px', color: '#fff' }}>
+            <div style={{ width: '34px', height: '34px', borderRadius: '9px', background: '#ffffff', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0, boxShadow: `0 0 0 1.5px ${CARD.gold}` }}>
+              {business?.logo ? <img src={business.logo} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain' }} /> : <Building2 style={{ width: '18px', height: '18px', color: CARD.green1 }} />}
+            </div>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: '11px', fontWeight: 600, lineHeight: 1.2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontFamily: "'Kanit', sans-serif" }}>{business?.name || 'บริษัท'}</div>
+              <div style={{ fontSize: '7.5px', letterSpacing: '2.5px', color: CARD.goldLight, fontWeight: 500 }}>EMPLOYEE ID CARD</div>
+            </div>
+          </div>
+
+          {/* รูปพนักงาน */}
+          <div style={{ position: 'relative', display: 'flex', justifyContent: 'center', marginTop: '12px' }}>
+            <div style={{ width: '106px', height: '106px', borderRadius: '14px', overflow: 'hidden', background: '#f5f5f4', boxShadow: `0 0 0 3px #ffffff, 0 0 0 5px ${CARD.gold}, 0 8px 18px rgba(0,0,0,0.25)`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              {employee.photo ? <img src={employee.photo} alt={display} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                : <div style={{ width: '100%', height: '100%', background: `linear-gradient(135deg, ${CARD.green1}, ${CARD.greenDeep})`, color: '#fff', fontSize: '32px', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Kanit', sans-serif" }}>{initials}</div>}
+            </div>
+          </div>
+
+          {/* ชื่อ + ตำแหน่ง */}
+          <div style={{ position: 'relative', textAlign: 'center', padding: '0 14px', marginTop: '9px' }}>
+            <div style={{ fontWeight: 700, color: CARD.ink, fontSize: '17px', lineHeight: 1.15, fontFamily: "'Kanit', sans-serif" }}>{display}</div>
+            {hasRealNick && <div style={{ fontSize: '9.5px', color: CARD.muted, lineHeight: 1.3, marginTop: '1px' }}>{employee.name}</div>}
+            <div style={{ display: 'inline-block', marginTop: '5px', padding: '2px 12px', background: `linear-gradient(90deg, ${CARD.gold}, ${CARD.goldLight})`, color: '#fff', fontSize: '10px', fontWeight: 600, borderRadius: '999px', fontFamily: "'Kanit', sans-serif", boxShadow: '0 2px 5px rgba(212,160,23,0.4)' }}>{position?.name || 'พนักงาน'}</div>
+          </div>
+
+          {/* ข้อมูล */}
+          <div style={{ position: 'relative', padding: '0 18px', marginTop: '11px' }}>
+            {rows.map((r, i) => {
+              const Icon = r.icon;
+              return (
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '7px', borderBottom: i < rows.length - 1 ? `1px solid ${CARD.line}` : 'none', padding: '4px 0' }}>
+                  <Icon style={{ width: '12px', height: '12px', color: CARD.green1, flexShrink: 0 }} />
+                  <span style={{ fontSize: '8.5px', color: CARD.muted, letterSpacing: '0.3px', flexShrink: 0, width: '62px' }}>{r.label}</span>
+                  <span style={{ fontSize: '11px', fontWeight: 600, color: CARD.ink, textAlign: 'right', flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.value}</span>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* ท้ายบัตร: QR + ป้าย */}
+          <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0 }}>
+            <div style={{ background: '#faf9f7', borderTop: `1px solid ${CARD.line}`, padding: '8px 14px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <div style={{ width: '46px', height: '46px', borderRadius: '7px', background: '#fff', border: `1px solid ${CARD.line}`, padding: '2px', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                {qrUrl ? <img src={qrUrl} alt="QR" style={{ width: '100%', height: '100%', imageRendering: 'pixelated' }} /> : <Building2 style={{ width: '20px', height: '20px', color: CARD.muted }} />}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: '7.5px', color: CARD.muted, letterSpacing: '1px' }}>STAFF ID</div>
+                <div style={{ fontSize: '15px', fontWeight: 700, color: CARD.green1, fontFamily: "'Kanit', sans-serif", lineHeight: 1.1 }}>#{employee.employeeNumber || '—'}</div>
+                <div style={{ fontSize: '7px', color: CARD.muted, lineHeight: 1.2, marginTop: '1px' }}>ทรัพย์สินของบริษัท · พบกรุณาส่งคืน</div>
+              </div>
+            </div>
+            <div style={{ height: '5px', background: `linear-gradient(90deg, ${CARD.green1}, ${CARD.gold})` }} />
+          </div>
+        </div>
+
+        {/* ปุ่ม */}
+        <div className="flex gap-2">
+          <button onClick={printCard} className="flex items-center gap-2 px-5 py-2.5 bg-emerald-900 hover:bg-emerald-800 text-white rounded-lg text-sm font-medium shadow-lg"><FileText className="w-4 h-4" /> พิมพ์ / บันทึก PDF</button>
+          <button onClick={onClose} className="px-5 py-2.5 bg-white hover:bg-stone-100 text-stone-700 rounded-lg text-sm font-medium shadow-lg">ปิด</button>
+        </div>
       </div>
     </div>
   );
