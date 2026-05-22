@@ -705,7 +705,7 @@ function AuthScreen() {
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-amber-500 mb-4 shadow-lg shadow-amber-500/30">
             <Users className="w-8 h-8 text-emerald-950" strokeWidth={2.5} />
           </div>
-          <h1 className="text-3xl font-semibold text-white tracking-tight">ระบบจัดการพนักงาน</h1>
+          <h1 className="text-4xl font-bold text-white tracking-tight">ระบบจัดการพนักงาน</h1>
           <p className="text-emerald-200/70 mt-2 text-sm">Employee Management System</p>
         </div>
         <div onKeyDown={(e) => e.key === 'Enter' && handleSubmit()} className="bg-white/95 backdrop-blur rounded-2xl shadow-2xl p-8 border border-white/20">
@@ -999,8 +999,8 @@ function PageHeader({ title, subtitle, children }) {
   return (
     <div className="bg-white border-b border-stone-200 px-8 py-5 flex items-center justify-between">
       <div>
-        <h1 className="text-2xl font-semibold text-stone-800 tracking-tight">{title}</h1>
-        {subtitle && <p className="text-sm text-stone-500 mt-0.5">{subtitle}</p>}
+        <h1 className="text-3xl font-bold text-stone-800 tracking-tight">{title}</h1>
+        {subtitle && <p className="text-[15px] text-stone-500 mt-1">{subtitle}</p>}
       </div>
       <div className="flex items-center gap-2">{children}</div>
     </div>
@@ -1957,7 +1957,7 @@ function EmployeeDetailModal({ employee, zones, positions, employees, businesses
             </div>
             <div>
               <div className="text-sm font-mono text-stone-500">#{employee.employeeNumber || '—'}</div>
-              <h1 className="text-2xl font-semibold text-stone-800">{display}</h1>
+              <h1 className="text-3xl font-bold text-stone-800">{display}</h1>
               {hasNick && <div className="text-sm text-stone-500 mt-0.5">ชื่อจริง: {employee.name}</div>}
               <div className="flex flex-wrap items-center gap-2 mt-2">
                 {pos && <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-100 text-emerald-800 text-sm font-medium rounded-md"><Award className="w-3.5 h-3.5" />{pos.name}</span>}
