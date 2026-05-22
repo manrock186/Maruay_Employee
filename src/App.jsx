@@ -191,6 +191,8 @@ export default function App() {
   const [notifications, setNotifications] = useState([]);
   const [notiReads, setNotiReads] = useState([]); // [{notificationId, userId}]
   const [expiryWarnMonths, setExpiryWarnMonths] = useState(2); // เตือนก่อนเอกสารหมดอายุกี่เดือน (ตั้งค่าทั้งระบบ)
+  const [birthdayNotify, setBirthdayNotify] = useState(true);  // เปิด/ปิด แจ้งเตือนวันเกิด
+  const [birthdayWarnDays, setBirthdayWarnDays] = useState(7); // เตือนวันเกิดล่วงหน้ากี่วัน
 
   const [activeBusinessId, setActiveBusinessId] = useState(null);
   const [activeZoneId, setActiveZoneId] = useState(null);
@@ -265,10 +267,12 @@ export default function App() {
           : Promise.resolve({ data: [profile] }),
         supabase.from('notifications').select('*').order('created_at', { ascending: false }),
         supabase.from('notification_reads').select('*'),
-        supabase.from('app_settings').select('expiry_warn_months').eq('id', 1).maybeSingle(),
+        supabase.from('app_settings').select('expiry_warn_months, birthday_notify_enabled, birthday_warn_days').eq('id', 1).maybeSingle(),
       ]);
       if (cancelled) return;
       if (settingsRow?.data?.expiry_warn_months != null) setExpiryWarnMonths(settingsRow.data.expiry_warn_months);
+      if (settingsRow?.data?.birthday_notify_enabled != null) setBirthdayNotify(settingsRow.data.birthday_notify_enabled);
+      if (settingsRow?.data?.birthday_warn_days != null) setBirthdayWarnDays(settingsRow.data.birthday_warn_days);
       setBusinesses(fromDB(b.data || []));
       setZones(fromDB(z.data || []));
       const posRows = fromDB(p.data || []);
@@ -386,9 +390,11 @@ export default function App() {
       supabase.from('zones').select('*'),
       supabase.from('user_profiles').select('*'),
       supabase.from('salary_changes').select('*').eq('status', 'pending'),
-      supabase.from('app_settings').select('expiry_warn_months').eq('id', 1).maybeSingle(),
+      supabase.from('app_settings').select('expiry_warn_months, birthday_notify_enabled, birthday_warn_days').eq('id', 1).maybeSingle(),
     ]);
     const warnMonths = settingsRow?.expiry_warn_months ?? 2;
+    const bdayOn = settingsRow?.birthday_notify_enabled ?? true;
+    const bdayDays = settingsRow?.birthday_warn_days ?? 7;
     const E = fromDB(emps || []), P = fromDB(poss || []), B = fromDB(bizs || []), Z = fromDB(zns || []), PR = fromDB(profs || []), SR = fromDB(pendingRaises || []);
     const bizName = (id) => B.find((b) => b.id === id)?.name || '';
     const empName = (id) => { const e = E.find((x) => x.id === id); return e ? (e.nickname || e.name) : ''; };
@@ -418,6 +424,21 @@ export default function App() {
         }
       });
     });
+    // 2.5) วันเกิดพนักงาน (เปิด/ปิด + ล่วงหน้ากี่วัน ตั้งค่าได้ที่หน้า "ตั้งค่า")
+    if (bdayOn) {
+      const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+      active.filter((e) => e.birthDate).forEach((e) => {
+        const bd = new Date(e.birthDate);
+        if (isNaN(bd)) return;
+        let next = new Date(startOfToday.getFullYear(), bd.getMonth(), bd.getDate());
+        if (next < startOfToday) next = new Date(startOfToday.getFullYear() + 1, bd.getMonth(), bd.getDate());
+        const days = Math.round((next - startOfToday) / 86400000);
+        if (days <= bdayDays) {
+          const dd = String(bd.getDate()).padStart(2, '0'), mm = String(bd.getMonth() + 1).padStart(2, '0');
+          desired.push({ dedupeKey: `birthday:${e.id}:${next.getFullYear()}`, businessId: e.businessId, zoneId: e.zoneId, type: 'birthday', severity: 'info', title: 'วันเกิดพนักงาน', body: `${e.nickname || e.name} — ${days === 0 ? 'วันนี้วันเกิด! 🎂' : `อีก ${days} วัน (${dd}/${mm})`}` });
+        }
+      });
+    }
     // 3) ตำแหน่งว่าง (ต่อโซน: มีคนลาออกแต่ไม่เหลือ active)
     Z.forEach((zone) => {
       const inZone = E.filter((e) => e.zoneId === zone.id);
@@ -619,7 +640,7 @@ export default function App() {
             onJump={(n) => {
               if (n.type === 'pending_user') setView('users');
               else if (n.type === 'payroll_incomplete' || n.type === 'pending_raise') { if (n.businessId) changeBusiness(n.businessId); setView(n.type === 'payroll_incomplete' ? 'payroll' : 'employees'); }
-              else if (n.type === 'permit_expiry' || n.type === 'passport_expiry' || n.type === 'idcard_expiry' || n.type === 'vacancy') { if (n.businessId) changeBusiness(n.businessId); setView('employees'); }
+              else if (n.type === 'permit_expiry' || n.type === 'passport_expiry' || n.type === 'idcard_expiry' || n.type === 'birthday' || n.type === 'vacancy') { if (n.businessId) changeBusiness(n.businessId); setView('employees'); }
               else { if (n.businessId) changeBusiness(n.businessId); setView('positions'); }
             }}
           />
@@ -711,8 +732,11 @@ export default function App() {
         {view === 'settings' && profile.isOwner && (
           <SettingsPage
             expiryWarnMonths={expiryWarnMonths}
+            birthdayNotify={birthdayNotify}
+            birthdayWarnDays={birthdayWarnDays}
             ops={ops}
             onSaved={(m) => setExpiryWarnMonths(m)}
+            onSavedBirthday={(en, d) => { setBirthdayNotify(en); setBirthdayWarnDays(d); }}
           />
         )}
         </div>
@@ -843,6 +867,7 @@ const NOTI_META = {
   permit_expiry:      { icon: CreditCard, color: 'text-red-600 bg-red-100' },
   passport_expiry:    { icon: BookOpen, color: 'text-red-600 bg-red-100' },
   idcard_expiry:      { icon: Shield, color: 'text-red-600 bg-red-100' },
+  birthday:           { icon: Calendar, color: 'text-pink-600 bg-pink-100' },
   vacancy:            { icon: Award, color: 'text-amber-600 bg-amber-100' },
   understaffed:       { icon: Users, color: 'text-rose-600 bg-rose-100' },
   overstaffed:        { icon: Users, color: 'text-sky-600 bg-sky-100' },
@@ -1775,7 +1800,7 @@ function EmployeesPage({ businesses, zones, positions, employees, profile, activ
   const del = async (id) => {
     if (!confirm('ลบพนักงานคนนี้?')) return;
     const emp = employees.find((e) => e.id === id);
-    const toDelete = [...(emp?.workPermitDocs || []), ...(emp?.passportDocs || [])];
+    const toDelete = [...(emp?.workPermitDocs || []), ...(emp?.passportDocs || []), ...(emp?.applicationDocs || [])];
     for (const path of toDelete) await deleteDocument(path);
     await ops.employee.delete(id);
   };
@@ -2219,6 +2244,18 @@ function EmployeeDetailModal({ employee, zones, positions, employees, businesses
             </div>
           )}
 
+          {employee.applicationDocs?.length > 0 && (
+            <div className="px-6 pb-2">
+              <div className="bg-stone-50 border border-stone-200 rounded-xl p-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <Paperclip className="w-4 h-4 text-stone-600" />
+                  <h3 className="text-sm font-medium text-stone-800">เอกสารสมัครงาน</h3>
+                </div>
+                <DocList paths={employee.applicationDocs} />
+              </div>
+            </div>
+          )}
+
           {(employee.address || employee.nationalId || employee.idCardExpiry || employee.passportExpiry || employee.notes) && (
             <div className="px-6 pb-6 space-y-4 pt-4">
               {employee.address && <DetailBlock icon={MapPin} label="ที่อยู่" value={employee.address} />}
@@ -2493,6 +2530,7 @@ function EmployeeForm({ initial, zones, positions, employees, businesses, onSave
   const [passportExpiry, setPassportExpiry] = useState(initial?.passportExpiry || '');
   const [workPermitDocs, setWorkPermitDocs] = useState(initial?.workPermitDocs || []);
   const [passportDocs, setPassportDocs] = useState(initial?.passportDocs || []);
+  const [applicationDocs, setApplicationDocs] = useState(initial?.applicationDocs || []);
   const [baseSalary, setBaseSalary] = useState(initial?.baseSalary ?? '');
   const [holidayQuota, setHolidayQuota] = useState(initial?.holidayQuota ?? 4);
   const [hasSocialSecurity, setHasSocialSecurity] = useState(initial?.hasSocialSecurity ?? false);
@@ -2529,6 +2567,7 @@ function EmployeeForm({ initial, zones, positions, employees, businesses, onSave
       passportExpiry: foreign && hasPassport === true ? (passportExpiry || null) : null,
       workPermitDocs: foreign ? workPermitDocs : [],
       passportDocs: foreign ? passportDocs : [],
+      applicationDocs,
       ...(canEditPay ? {
         baseSalary: Number(baseSalary) || 0,
         holidayQuota: Number(holidayQuota) || 0,
@@ -2676,6 +2715,15 @@ function EmployeeForm({ initial, zones, positions, employees, businesses, onSave
           )}
         </div>
       )}
+
+      <div className="bg-stone-50 border border-stone-200 rounded-xl p-4 space-y-3">
+        <div className="flex items-center gap-2">
+          <Paperclip className="w-4 h-4 text-stone-600" />
+          <h3 className="text-sm font-medium text-stone-800">เอกสารสมัครงาน</h3>
+        </div>
+        <p className="text-xs text-stone-500 -mt-1">เช่น ใบสมัคร, สำเนาวุฒิการศึกษา, รูปถ่าย, เอกสารอ้างอิง (อัปโหลดได้ทุกคน ทั้งคนไทยและต่างชาติ)</p>
+        <MultiDocUpload label="ไฟล์/รูปเอกสารสมัครงาน" paths={applicationDocs} businessId={businessId} docType="application" onChange={setApplicationDocs} />
+      </div>
 
       <FormField label="ที่อยู่"><textarea value={address} onChange={(e) => setAddress(e.target.value)} rows={2} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600 resize-none" /></FormField>
       <FormField label="บันทึกเพิ่มเติม"><textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600 resize-none" /></FormField>
@@ -3770,14 +3818,23 @@ function ProfileEditForm({ initial, businesses, zones, onSave, onCancel, isSelf 
 }
 
 // ============ SETTINGS PAGE ============
-function SettingsPage({ expiryWarnMonths, ops, onSaved }) {
+function SettingsPage({ expiryWarnMonths, birthdayNotify, birthdayWarnDays, ops, onSaved, onSavedBirthday }) {
   const [months, setMonths] = useState(expiryWarnMonths ?? 2);
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState(0);
   useEffect(() => { setMonths(expiryWarnMonths ?? 2); }, [expiryWarnMonths]);
 
+  // วันเกิด
+  const [bdayOn, setBdayOn] = useState(birthdayNotify ?? true);
+  const [bdayDays, setBdayDays] = useState(birthdayWarnDays ?? 7);
+  const [savingB, setSavingB] = useState(false);
+  const [savedBAt, setSavedBAt] = useState(0);
+  useEffect(() => { setBdayOn(birthdayNotify ?? true); setBdayDays(birthdayWarnDays ?? 7); }, [birthdayNotify, birthdayWarnDays]);
+
   const clamp = (n) => Math.min(12, Math.max(1, Math.round(Number(n) || 1)));
   const dirty = clamp(months) !== (expiryWarnMonths ?? 2);
+  const clampD = (n) => Math.min(60, Math.max(0, Math.round(Number(n) || 0)));
+  const dirtyB = bdayOn !== (birthdayNotify ?? true) || clampD(bdayDays) !== (birthdayWarnDays ?? 7);
 
   const save = async () => {
     const m = clamp(months);
@@ -3786,11 +3843,18 @@ function SettingsPage({ expiryWarnMonths, ops, onSaved }) {
     setSaving(false);
     if (ok) { setMonths(m); onSaved?.(m); setSavedAt(Date.now()); }
   };
+  const saveBirthday = async () => {
+    const d = clampD(bdayDays);
+    setSavingB(true);
+    const ok = await ops.settings.update({ birthdayNotifyEnabled: bdayOn, birthdayWarnDays: d });
+    setSavingB(false);
+    if (ok) { setBdayDays(d); onSavedBirthday?.(bdayOn, d); setSavedBAt(Date.now()); }
+  };
 
   return (
     <div className="h-full overflow-auto">
       <PageHeader title="ตั้งค่า" subtitle="ตั้งค่าที่มีผลกับทั้งระบบ" />
-      <div className="p-8 max-w-2xl">
+      <div className="p-8 max-w-2xl space-y-5">
         <div className="bg-white rounded-xl border border-stone-200 p-6">
           <div className="flex items-center gap-2.5 mb-1">
             <div className="w-9 h-9 rounded-lg bg-red-100 flex items-center justify-center"><BellRing className="w-5 h-5 text-red-600" /></div>
@@ -3821,7 +3885,43 @@ function SettingsPage({ expiryWarnMonths, ops, onSaved }) {
           </div>
         </div>
 
-        <p className="text-xs text-stone-400 mt-4">หมายเหตุ: การแจ้งเตือนจะอัปเดตเมื่อเจ้าของระบบเปิดแอป (ระบบ generate ฝั่งเจ้าของ) — ค่าที่ตั้งมีผลกับทั้งระบบทันทีหลังบันทึก</p>
+        <div className="bg-white rounded-xl border border-stone-200 p-6">
+          <div className="flex items-center justify-between mb-1">
+            <div className="flex items-center gap-2.5">
+              <div className="w-9 h-9 rounded-lg bg-pink-100 flex items-center justify-center"><Calendar className="w-5 h-5 text-pink-600" /></div>
+              <h3 className="font-semibold text-stone-800">แจ้งเตือนวันเกิดพนักงาน</h3>
+            </div>
+            <button type="button" onClick={() => setBdayOn((v) => !v)} className={`relative w-12 h-7 rounded-full transition-colors ${bdayOn ? 'bg-emerald-600' : 'bg-stone-300'}`} aria-label="เปิด/ปิดแจ้งเตือนวันเกิด">
+              <span className={`absolute top-1 left-1 w-5 h-5 bg-white rounded-full shadow transition-transform ${bdayOn ? 'translate-x-5' : ''}`} />
+            </button>
+          </div>
+          <p className="text-sm text-stone-500 mb-5">แจ้งเตือนวันเกิดของพนักงานทุกคนทั้งระบบ — แยกจากการเตือนเอกสารหมดอายุ</p>
+
+          <div className={bdayOn ? '' : 'opacity-40 pointer-events-none'}>
+            <FormField label="เตือนล่วงหน้า (วัน)">
+              <div className="flex flex-wrap items-center gap-2">
+                {[0, 1, 3, 7].map((d) => (
+                  <button key={d} type="button" onClick={() => setBdayDays(d)} className={`px-4 py-2 rounded-lg border-2 text-sm font-medium transition-all ${clampD(bdayDays) === d ? 'border-emerald-600 bg-emerald-50 text-emerald-900' : 'border-stone-200 text-stone-600 hover:border-stone-300'}`}>{d === 0 ? 'เฉพาะวันเกิด' : `${d} วัน`}</button>
+                ))}
+                <div className="flex items-center gap-2 ml-1">
+                  <span className="text-sm text-stone-400">หรือกำหนดเอง</span>
+                  <input type="number" min={0} max={60} value={bdayDays} onChange={(e) => setBdayDays(e.target.value)} className="w-20 px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600 text-center" />
+                  <span className="text-sm text-stone-500">วัน</span>
+                </div>
+              </div>
+            </FormField>
+            <p className="text-xs text-stone-500 mt-3">{clampD(bdayDays) === 0 ? 'แจ้งเตือนเฉพาะวันเกิดเท่านั้น' : `แจ้งเตือนล่วงหน้า ${clampD(bdayDays)} วันก่อนวันเกิด`} (ตั้งได้ 0–60 วัน)</p>
+          </div>
+
+          <div className="flex items-center gap-3 mt-6">
+            <button onClick={saveBirthday} disabled={savingB || !dirtyB} className="flex items-center gap-2 px-4 py-2 bg-emerald-900 hover:bg-emerald-800 disabled:bg-stone-200 disabled:cursor-not-allowed text-white rounded-lg text-sm font-medium">
+              <Save className="w-4 h-4" />{savingB ? 'กำลังบันทึก...' : 'บันทึก'}
+            </button>
+            {savedBAt > 0 && !dirtyB && <span className="inline-flex items-center gap-1.5 text-sm text-emerald-700"><CheckCircle2 className="w-4 h-4" />บันทึกแล้ว</span>}
+          </div>
+        </div>
+
+        <p className="text-xs text-stone-400">หมายเหตุ: การแจ้งเตือนจะอัปเดตเมื่อเจ้าของระบบเปิดแอป (ระบบ generate ฝั่งเจ้าของ) — ค่าที่ตั้งมีผลกับทั้งระบบทันทีหลังบันทึก</p>
       </div>
     </div>
   );
