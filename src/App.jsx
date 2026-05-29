@@ -6,7 +6,7 @@ import {
   Eye, EyeOff, Network, Save, ChevronDown, ChevronUp, User,
   KeyRound, AlertCircle, CheckCircle2, Crown, Award, MapPinned, Clock,
   Globe, CreditCard, BookOpen, FileText, ExternalLink, Paperclip,
-  Wallet, Banknote, Calculator, Receipt, Minus, TrendingUp, TrendingDown, Bell, BellRing, Check, CheckCheck, Hash, Menu
+  Wallet, Banknote, Calculator, Receipt, Minus, TrendingUp, TrendingDown, Bell, BellRing, Check, CheckCheck, Hash, Menu, Wrench
 } from 'lucide-react';
 import { supabase, fromDB, toDB } from './supabase.js';
 
@@ -113,6 +113,218 @@ function buildPayrollDraft(emp, payroll, items) {
   };
 }
 
+// ============ PAYROLL PRINT HELPERS (สลิป + รายงานรวม) ============
+// escape ข้อความผู้ใช้ก่อนยัดเข้า HTML ของหน้าต่างพิมพ์
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+// แปลงจำนวนเงินเป็นข้อความภาษาไทย (บาทอักษร)
+function bahtText(num) {
+  num = Number(num) || 0;
+  const isNeg = num < 0; num = Math.abs(Math.round(num * 100) / 100);
+  const baht = Math.floor(num);
+  const satang = Math.round((num - baht) * 100);
+  const digits = ['', 'หนึ่ง', 'สอง', 'สาม', 'สี่', 'ห้า', 'หก', 'เจ็ด', 'แปด', 'เก้า'];
+  const units = ['', 'สิบ', 'ร้อย', 'พัน', 'หมื่น', 'แสน'];
+  const readInt = (n) => {
+    if (n === 0) return '';
+    if (n >= 1000000) {
+      const m = Math.floor(n / 1000000), rest = n % 1000000;
+      return readInt(m) + 'ล้าน' + (rest > 0 ? readInt(rest) : '');
+    }
+    const str = String(n), len = str.length; let s = '';
+    for (let i = 0; i < len; i++) {
+      const d = Number(str[i]); const pos = len - i - 1;
+      if (d === 0) continue;
+      if (pos === 0 && d === 1 && len > 1) s += 'เอ็ด';
+      else if (pos === 1 && d === 2) s += 'ยี่' + units[pos];
+      else if (pos === 1 && d === 1) s += units[pos];
+      else s += digits[d] + units[pos];
+    }
+    return s;
+  };
+  let result;
+  if (baht === 0 && satang === 0) result = 'ศูนย์บาทถ้วน';
+  else if (baht === 0) result = readInt(satang) + 'สตางค์';
+  else result = readInt(baht) + 'บาท' + (satang > 0 ? readInt(satang) + 'สตางค์' : 'ถ้วน');
+  return (isNeg ? 'ลบ' : '') + result;
+}
+
+// หัวเอกสาร: บริษัท (ชื่อ+ที่อยู่+เลขภาษี) หรือเฉพาะชื่อตลาด ตามที่ตั้งไว้ในแต่ละธุรกิจ
+function slipHeaderHtml(business) {
+  const logo = business?.logo ? `<img src="${esc(business.logo)}" style="width:62px;height:62px;object-fit:contain;border-radius:8px;flex-shrink:0;" />` : '';
+  const useCompany = business?.slipUseCompanyHeader && (business.companyName || business.companyAddress || business.taxId);
+  let lines;
+  if (useCompany) {
+    lines = `<div style="font-family:'Kanit';font-size:19px;font-weight:700;line-height:1.25;">${esc(business.companyName || business.name || '')}</div>`
+      + (business.companyAddress ? `<div style="font-size:12.5px;color:#57534e;white-space:pre-line;margin-top:2px;">${esc(business.companyAddress)}</div>` : '')
+      + (business.taxId ? `<div style="font-size:12.5px;color:#57534e;">เลขประจำตัวผู้เสียภาษี: ${esc(business.taxId)}</div>` : '');
+  } else {
+    lines = `<div style="font-family:'Kanit';font-size:19px;font-weight:700;">${esc(business?.name || '')}</div>`;
+  }
+  return `<div style="display:flex;align-items:center;gap:14px;">${logo}<div>${lines}</div></div>`;
+}
+
+// เปิดหน้าต่างพิมพ์ พร้อมฟอนต์ Sarabun/Kanit + สั่ง print อัตโนมัติ
+function openPrintHtml(title, inner, pageCss) {
+  const w = window.open('', '_blank', 'width=1000,height=1000');
+  if (!w) { alert('กรุณาอนุญาต popup เพื่อพิมพ์เอกสาร'); return; }
+  w.document.write(`<!DOCTYPE html><html lang="th"><head><meta charset="utf-8" /><title>${esc(title)}</title>
+    <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700&family=Kanit:wght@500;600;700&display=swap" rel="stylesheet" />
+    <style>
+      *{margin:0;padding:0;box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+      body{font-family:'Sarabun',sans-serif;color:#1c1917;background:#e7e5e4;padding:16px;}
+      .doc{background:#fff;margin:0 auto;box-shadow:0 6px 24px rgba(0,0,0,.18);}
+      h1,h2,h3{font-family:'Kanit',sans-serif;}
+      table{border-collapse:collapse;width:100%;}
+      ${pageCss}
+      @media print{body{background:#fff;padding:0;}.doc{box-shadow:none;margin:0;}}
+    </style></head><body>${inner}
+    <script>window.onload=function(){setTimeout(function(){window.print();},450);};</script>
+    </body></html>`);
+  w.document.close();
+}
+
+// พิมพ์สลิปเงินเดือนรายคน (มาตรฐาน: บาทอักษร + ช่องลงนาม + หมายเหตุ)
+function printPayslip({ employee, payroll, items, business, position, year, month }) {
+  const c = computePayroll(payroll, items || []);
+  const m = fmtMoney;
+  const period = `${MONTH_NAMES[month - 1]} ${year + 543}`;
+  const income = [
+    ['เงินเดือนพื้นฐาน', Number(payroll.baseSalary) || 0],
+    ['ค่าคอมมิชชั่น', Number(payroll.commission) || 0],
+    [`ค่าทำงานวันหยุด (${Number(payroll.holidayWorkDays) || 0} วัน)`, c.holidayWorkPay],
+    ...(items || []).filter((i) => i.kind === 'bonus_task').map((i) => [i.label || 'โบนัส/งานพิเศษ', Number(i.amount) || 0]),
+  ].filter((r, idx) => idx === 0 || Number(r[1]) > 0);
+  const deduct = [
+    [`ขาดวันหยุดเกินสิทธิ (${c.excessDays} วัน)`, c.excessHolidayDeduction],
+    ['มาสาย', Number(payroll.lateDeduction) || 0],
+    ['ประกันสังคม', Number(payroll.socialSecurity) || 0],
+    ['ค่าหอพัก', Number(payroll.roomFee) || 0],
+    ['จ่ายผ่านบริษัท', Number(payroll.paidViaCompany) || 0],
+    ...(items || []).filter((i) => i.kind === 'advance').map((i) => [i.label || 'เบิกล่วงหน้า', Number(i.amount) || 0]),
+    ...(items || []).filter((i) => i.kind === 'other_deduction').map((i) => [i.label || 'หักอื่นๆ', Number(i.amount) || 0]),
+  ].filter((r) => Number(r[1]) > 0);
+  const rowsHtml = (arr, color) => arr.map(([label, amt]) =>
+    `<tr><td style="padding:6px 10px;border-bottom:1px solid #f0eeec;">${esc(label)}</td><td style="padding:6px 10px;border-bottom:1px solid #f0eeec;text-align:right;color:${color};">${m(amt)}</td></tr>`).join('');
+  const maxLen = Math.max(income.length, deduct.length);
+  const display = dispName(employee);
+
+  const inner = `<div class="doc" style="width:200mm;padding:16mm 14mm;">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #065f46;padding-bottom:12px;">
+      ${slipHeaderHtml(business)}
+      <div style="text-align:right;">
+        <div style="font-family:'Kanit';font-size:22px;font-weight:700;color:#065f46;">สลิปเงินเดือน</div>
+        <div style="font-size:14px;color:#57534e;">PAY SLIP</div>
+        <div style="font-size:13px;margin-top:4px;">งวดเดือน <b>${esc(period)}</b></div>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 24px;margin:14px 0 16px;font-size:14px;">
+      <div><span style="color:#78716c;">ชื่อพนักงาน:</span> <b>${esc(display)}</b>${employee.nickname && employee.nickname !== employee.name ? ` (${esc(employee.name || '')})` : ''}</div>
+      <div><span style="color:#78716c;">รหัสพนักงาน:</span> <b>#${esc(employee.employeeNumber || '—')}</b></div>
+      <div><span style="color:#78716c;">ตำแหน่ง:</span> ${esc(position?.name || '—')}</div>
+      <div><span style="color:#78716c;">วันที่จ่าย:</span> ${new Date().toLocaleDateString('th-TH', { day: '2-digit', month: 'long', year: 'numeric' })}</div>
+    </div>
+    <table style="font-size:13.5px;border:1px solid #e7e5e4;">
+      <thead><tr style="background:#065f46;color:#fff;font-family:'Kanit';">
+        <th style="padding:8px 10px;text-align:left;width:50%;">รายได้</th><th style="padding:8px 10px;text-align:right;">จำนวน (บาท)</th>
+        <th style="padding:8px 10px;text-align:left;width:50%;border-left:2px solid #fff;">รายการหัก</th><th style="padding:8px 10px;text-align:right;">จำนวน (บาท)</th>
+      </tr></thead>
+      <tbody>${Array.from({ length: maxLen }).map((_, i) => {
+        const inc = income[i], ded = deduct[i];
+        return `<tr>
+          <td style="padding:6px 10px;border-bottom:1px solid #f0eeec;">${inc ? esc(inc[0]) : ''}</td>
+          <td style="padding:6px 10px;border-bottom:1px solid #f0eeec;text-align:right;color:#047857;">${inc ? m(inc[1]) : ''}</td>
+          <td style="padding:6px 10px;border-bottom:1px solid #f0eeec;border-left:1px solid #e7e5e4;">${ded ? esc(ded[0]) : ''}</td>
+          <td style="padding:6px 10px;border-bottom:1px solid #f0eeec;text-align:right;color:#b91c1c;">${ded ? m(ded[1]) : ''}</td>
+        </tr>`;
+      }).join('')}
+      <tr style="background:#f5f5f4;font-weight:700;">
+        <td style="padding:8px 10px;">รวมรายได้</td><td style="padding:8px 10px;text-align:right;color:#047857;">${m(c.totalIncome)}</td>
+        <td style="padding:8px 10px;border-left:1px solid #e7e5e4;">รวมรายการหัก</td><td style="padding:8px 10px;text-align:right;color:#b91c1c;">${m(c.totalDeduction)}</td>
+      </tr>
+      </tbody>
+    </table>
+    <div style="margin-top:14px;display:flex;justify-content:space-between;align-items:center;background:#065f46;color:#fff;border-radius:10px;padding:12px 18px;">
+      <div style="font-family:'Kanit';font-size:17px;font-weight:600;">เงินสุทธิที่ได้รับ</div>
+      <div style="font-family:'Kanit';font-size:24px;font-weight:700;">${m(c.net)} บาท</div>
+    </div>
+    <div style="text-align:right;font-size:13px;color:#57534e;margin-top:6px;">(${esc(bahtText(c.net))})</div>
+    ${payroll.note ? `<div style="margin-top:12px;font-size:13px;"><span style="color:#78716c;">หมายเหตุ:</span> ${esc(payroll.note)}</div>` : ''}
+    <div style="display:flex;justify-content:space-around;margin-top:42px;gap:40px;">
+      <div style="text-align:center;font-size:13px;flex:1;"><div style="border-top:1px dotted #78716c;padding-top:6px;">ลงชื่อ ............................................. ผู้จ่ายเงิน</div></div>
+      <div style="text-align:center;font-size:13px;flex:1;"><div style="border-top:1px dotted #78716c;padding-top:6px;">ลงชื่อ ............................................. ผู้รับเงิน</div></div>
+    </div>
+  </div>`;
+  openPrintHtml(`สลิปเงินเดือน ${display} ${period}`, inner, `@page{size:A4;margin:0;}`);
+}
+
+// พิมพ์รายงานรวมหน้าเดียว (ทุกคนในธุรกิจ — คนที่ยังไม่ทำเงินเดือนขึ้นว่าง)
+function printPayrollRegister({ business, rows, year, month }) {
+  const m = fmtMoney;
+  const period = `${MONTH_NAMES[month - 1]} ${year + 543}`;
+  const cols = ['ฐาน', 'คอมฯ', 'ค่าวันหยุด', 'โบนัส', 'รวมรับ', 'ปกส.', 'ขาด/สาย', 'ค่าหอ', 'เบิก', 'หักอื่น', 'ผ่านบริษัท', 'สุทธิ'];
+  const tot = { base: 0, com: 0, hol: 0, bonus: 0, inc: 0, ss: 0, lateAbsent: 0, room: 0, adv: 0, other: 0, viaco: 0, net: 0 };
+  const body = rows.map((r, idx) => {
+    const e = r.emp;
+    if (!r.payroll) {
+      return `<tr><td style="padding:5px 6px;border:1px solid #e7e5e4;">${idx + 1}</td>
+        <td style="padding:5px 6px;border:1px solid #e7e5e4;">#${esc(e.employeeNumber || '—')}</td>
+        <td style="padding:5px 6px;border:1px solid #e7e5e4;">${esc(dispName(e))}</td>
+        <td style="padding:5px 6px;border:1px solid #e7e5e4;">${esc(r.position?.name || '—')}</td>
+        <td colspan="12" style="padding:5px 6px;border:1px solid #e7e5e4;text-align:center;color:#a8a29e;font-style:italic;">ยังไม่ได้ทำเงินเดือน</td></tr>`;
+    }
+    const p = r.payroll, c = r.calc;
+    const lateAbsent = (Number(p.lateDeduction) || 0) + c.excessHolidayDeduction;
+    tot.base += Number(p.baseSalary) || 0; tot.com += Number(p.commission) || 0; tot.hol += c.holidayWorkPay; tot.bonus += c.bonusTasks;
+    tot.inc += c.totalIncome; tot.ss += Number(p.socialSecurity) || 0; tot.lateAbsent += lateAbsent; tot.room += Number(p.roomFee) || 0;
+    tot.adv += c.advances; tot.other += c.otherDeductions; tot.viaco += Number(p.paidViaCompany) || 0; tot.net += c.net;
+    const cell = (v, extra = '') => `<td style="padding:5px 6px;border:1px solid #e7e5e4;text-align:right;${extra}">${m(v)}</td>`;
+    return `<tr>
+      <td style="padding:5px 6px;border:1px solid #e7e5e4;">${idx + 1}</td>
+      <td style="padding:5px 6px;border:1px solid #e7e5e4;">#${esc(e.employeeNumber || '—')}</td>
+      <td style="padding:5px 6px;border:1px solid #e7e5e4;white-space:nowrap;">${esc(dispName(e))}</td>
+      <td style="padding:5px 6px;border:1px solid #e7e5e4;">${esc(r.position?.name || '—')}</td>
+      ${cell(p.baseSalary)}${cell(p.commission)}${cell(c.holidayWorkPay)}${cell(c.bonusTasks)}
+      ${cell(c.totalIncome, 'font-weight:600;color:#047857;')}
+      ${cell(p.socialSecurity)}${cell(lateAbsent)}${cell(p.roomFee)}${cell(c.advances)}${cell(c.otherDeductions)}${cell(p.paidViaCompany)}
+      ${cell(c.net, 'font-weight:700;color:#065f46;')}
+    </tr>`;
+  }).join('');
+  const totCell = (v, extra = '') => `<td style="padding:7px 6px;border:1px solid #d6d3d1;text-align:right;font-weight:700;${extra}">${m(v)}</td>`;
+  const inner = `<div class="doc" style="width:287mm;padding:12mm 10mm;">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #065f46;padding-bottom:10px;margin-bottom:12px;">
+      ${slipHeaderHtml(business)}
+      <div style="text-align:right;">
+        <div style="font-family:'Kanit';font-size:20px;font-weight:700;color:#065f46;">รายงานสรุปเงินเดือน</div>
+        <div style="font-size:13px;margin-top:3px;">งวดเดือน <b>${esc(period)}</b> • พิมพ์ ${new Date().toLocaleDateString('th-TH', { day: '2-digit', month: 'short', year: 'numeric' })}</div>
+      </div>
+    </div>
+    <table style="font-size:11.5px;">
+      <thead><tr style="background:#065f46;color:#fff;font-family:'Kanit';">
+        <th style="padding:7px 6px;border:1px solid #0a7553;">ลำดับ</th>
+        <th style="padding:7px 6px;border:1px solid #0a7553;">รหัส</th>
+        <th style="padding:7px 6px;border:1px solid #0a7553;text-align:left;">ชื่อ</th>
+        <th style="padding:7px 6px;border:1px solid #0a7553;text-align:left;">ตำแหน่ง</th>
+        ${cols.map((c) => `<th style="padding:7px 6px;border:1px solid #0a7553;text-align:right;">${c}</th>`).join('')}
+      </tr></thead>
+      <tbody>${body}
+      <tr style="background:#f5f5f4;font-family:'Kanit';">
+        <td colspan="4" style="padding:7px 6px;border:1px solid #d6d3d1;font-weight:700;">รวมทั้งสิ้น (${rows.filter((r) => r.payroll).length} คน)</td>
+        ${totCell(tot.base)}${totCell(tot.com)}${totCell(tot.hol)}${totCell(tot.bonus)}${totCell(tot.inc, 'color:#047857;')}
+        ${totCell(tot.ss)}${totCell(tot.lateAbsent)}${totCell(tot.room)}${totCell(tot.adv)}${totCell(tot.other)}${totCell(tot.viaco)}${totCell(tot.net, 'color:#065f46;')}
+      </tr>
+      </tbody>
+    </table>
+    <div style="margin-top:14px;font-size:13px;text-align:right;">รวมจ่ายสุทธิทั้งสิ้น: <b style="font-family:'Kanit';font-size:16px;color:#065f46;">${m(tot.net)} บาท</b></div>
+    <div style="font-size:12px;color:#57534e;text-align:right;">(${esc(bahtText(tot.net))})</div>
+    <div style="display:flex;justify-content:flex-end;gap:60px;margin-top:36px;font-size:12.5px;">
+      <div style="text-align:center;">ลงชื่อ ............................................. ผู้จัดทำ</div>
+      <div style="text-align:center;">ลงชื่อ ............................................. ผู้อนุมัติ</div>
+    </div>
+  </div>`;
+  openPrintHtml(`รายงานเงินเดือน ${business?.name || ''} ${period}`, inner, `@page{size:A4 landscape;margin:0;}`);
+}
+
 // detect หน้าจอมือถือ
 function useIsMobile() {
   const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 768);
@@ -193,6 +405,8 @@ export default function App() {
   const [expiryWarnMonths, setExpiryWarnMonths] = useState(2); // เตือนก่อนเอกสารหมดอายุกี่เดือน (ตั้งค่าทั้งระบบ)
   const [birthdayNotify, setBirthdayNotify] = useState(true);  // เปิด/ปิด แจ้งเตือนวันเกิด
   const [birthdayWarnDays, setBirthdayWarnDays] = useState(7); // เตือนวันเกิดล่วงหน้ากี่วัน
+  const [contractors, setContractors] = useState([]);
+  const [contractorVisits, setContractorVisits] = useState([]);
 
   const [activeBusinessId, setActiveBusinessId] = useState(null);
   const [activeZoneId, setActiveZoneId] = useState(null);
@@ -257,7 +471,7 @@ export default function App() {
     let cancelled = false;
     setDataLoading(true);
     (async () => {
-      const [b, z, p, e, up, noti, reads, settingsRow] = await Promise.all([
+      const [b, z, p, e, up, noti, reads, settingsRow, contractorsRes, visitsRes] = await Promise.all([
         supabase.from('businesses').select('*').order('created_at'),
         supabase.from('zones').select('*').order('created_at'),
         supabase.from('positions').select('*').order('created_at'),
@@ -268,11 +482,15 @@ export default function App() {
         supabase.from('notifications').select('*').order('created_at', { ascending: false }),
         supabase.from('notification_reads').select('*'),
         supabase.from('app_settings').select('expiry_warn_months, birthday_notify_enabled, birthday_warn_days').eq('id', 1).maybeSingle(),
+        profile.isOwner ? supabase.from('contractors').select('*').order('created_at', { ascending: false }) : Promise.resolve({ data: [] }),
+        profile.isOwner ? supabase.from('contractor_visits').select('*').order('visit_date', { ascending: false }) : Promise.resolve({ data: [] }),
       ]);
       if (cancelled) return;
       if (settingsRow?.data?.expiry_warn_months != null) setExpiryWarnMonths(settingsRow.data.expiry_warn_months);
       if (settingsRow?.data?.birthday_notify_enabled != null) setBirthdayNotify(settingsRow.data.birthday_notify_enabled);
       if (settingsRow?.data?.birthday_warn_days != null) setBirthdayWarnDays(settingsRow.data.birthday_warn_days);
+      setContractors(fromDB(contractorsRes?.data) || []);
+      setContractorVisits(fromDB(visitsRes?.data) || []);
       setBusinesses(fromDB(b.data || []));
       setZones(fromDB(z.data || []));
       const posRows = fromDB(p.data || []);
@@ -608,6 +826,30 @@ export default function App() {
         return true;
       },
     },
+    contractor: {
+      add: (d) => insertRow('contractors', d),
+      update: (id, d) => updateRow('contractors', id, d),
+      del: async (id) => {
+        // ลบไฟล์เอกสารของทุก visit ที่ผูกกับช่างคนนี้ก่อน
+        const myVisits = contractorVisits.filter((v) => v.contractorId === id);
+        const allDocs = myVisits.flatMap((v) => v.docs || []);
+        await Promise.all(allDocs.map((p) => deleteDocument(p)));
+        const { error } = await supabase.from('contractors').delete().eq('id', id);
+        if (error) { alert('ลบไม่สำเร็จ: ' + error.message); return false; }
+        return true;
+      },
+    },
+    contractorVisit: {
+      add: (d) => insertRow('contractor_visits', d),
+      update: (id, d) => updateRow('contractor_visits', id, d),
+      del: async (id) => {
+        const v = contractorVisits.find((x) => x.id === id);
+        await Promise.all((v?.docs || []).map((p) => deleteDocument(p)));
+        const { error } = await supabase.from('contractor_visits').delete().eq('id', id);
+        if (error) { alert('ลบไม่สำเร็จ: ' + error.message); return false; }
+        return true;
+      },
+    },
   };
 
   if (authLoading) return <LoadingScreen />;
@@ -727,6 +969,14 @@ export default function App() {
             zones={zones}
             ops={ops}
             currentUserId={session.user.id}
+          />
+        )}
+        {view === 'contractors' && profile.isOwner && (
+          <ContractorsPage
+            contractors={contractors}
+            visits={contractorVisits}
+            businesses={businesses}
+            ops={ops}
           />
         )}
         {view === 'settings' && profile.isOwner && (
@@ -1012,6 +1262,7 @@ function Sidebar({ view, setView, profile, businesses, zones, activeBusinessId, 
     { id: 'orgchart', label: 'แผนผังองค์กร', icon: Network },
     { id: 'payroll', label: 'เงินเดือน', icon: Wallet, show: profile.canManagePayroll },
     { id: 'users', label: 'ผู้ใช้ระบบ', icon: Shield, show: isOwner },
+    { id: 'contractors', label: 'ช่าง/ผู้รับเหมา', icon: Wrench, show: isOwner },
     { id: 'settings', label: 'ตั้งค่า', icon: Settings, show: isOwner },
   ];
 
@@ -1512,6 +1763,10 @@ function BusinessForm({ initial, onSave, onCancel }) {
   const [name, setName] = useState(initial?.name || '');
   const [description, setDescription] = useState(initial?.description || '');
   const [logo, setLogo] = useState(initial?.logo || '');
+  const [companyName, setCompanyName] = useState(initial?.companyName || '');
+  const [companyAddress, setCompanyAddress] = useState(initial?.companyAddress || '');
+  const [taxId, setTaxId] = useState(initial?.taxId || '');
+  const [slipUseCompanyHeader, setSlipUseCompanyHeader] = useState(initial?.slipUseCompanyHeader ?? false);
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef(null);
   const handleLogo = async (e) => {
@@ -1519,7 +1774,14 @@ function BusinessForm({ initial, onSave, onCancel }) {
     setUploading(true);
     try { setLogo(await resizeImage(f, 400)); } finally { setUploading(false); }
   };
-  const submit = () => { if (!name.trim()) return alert('กรุณากรอกชื่อธุรกิจ'); onSave({ name: name.trim(), description: description.trim(), logo: logo || null }); };
+  const submit = () => {
+    if (!name.trim()) return alert('กรุณากรอกชื่อธุรกิจ');
+    onSave({
+      name: name.trim(), description: description.trim(), logo: logo || null,
+      companyName: companyName.trim() || null, companyAddress: companyAddress.trim() || null,
+      taxId: taxId.trim() || null, slipUseCompanyHeader,
+    });
+  };
   return (
     <div className="space-y-4">
       <FormField label="โลโก้ธุรกิจ">
@@ -1536,8 +1798,29 @@ function BusinessForm({ initial, onSave, onCancel }) {
           </div>
         </div>
       </FormField>
-      <FormField label="ชื่อธุรกิจ" required><input autoFocus value={name} onChange={(e) => setName(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600" placeholder="เช่น ร้านอาหาร ABC" /></FormField>
-      <FormField label="รายละเอียด"><textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600 resize-none" /></FormField>
+      <FormField label="ชื่อธุรกิจ / ชื่อตลาด" required><input autoFocus value={name} onChange={(e) => setName(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600" placeholder="เช่น ตลาดมารวยปิ่นเกล้า" /></FormField>
+      <FormField label="รายละเอียด"><textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600 resize-none" /></FormField>
+
+      <div className="bg-stone-50 border border-stone-200 rounded-xl p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <FileText className="w-4 h-4 text-stone-600" />
+            <h3 className="text-sm font-medium text-stone-800">ข้อมูลบริษัท (สำหรับหัวสลิป/รายงานเงินเดือน)</h3>
+          </div>
+          <button type="button" onClick={() => setSlipUseCompanyHeader((v) => !v)} className={`relative w-12 h-7 rounded-full transition-colors flex-shrink-0 ${slipUseCompanyHeader ? 'bg-emerald-600' : 'bg-stone-300'}`} aria-label="ใช้ข้อมูลบริษัทบนหัวสลิป">
+            <span className={`absolute top-1 left-1 w-5 h-5 bg-white rounded-full shadow transition-transform ${slipUseCompanyHeader ? 'translate-x-5' : ''}`} />
+          </button>
+        </div>
+        <p className="text-xs text-stone-500 -mt-1">{slipUseCompanyHeader ? 'หัวสลิป/รายงานจะขึ้น ชื่อบริษัท + ที่อยู่ + เลขผู้เสียภาษี' : `หัวสลิป/รายงานจะขึ้นเฉพาะชื่อ "${name.trim() || 'ชื่อตลาด'}" เท่านั้น`}</p>
+        {slipUseCompanyHeader && (
+          <div className="space-y-3 pt-1">
+            <FormField label="ชื่อบริษัท (ตามทะเบียน)"><input value={companyName} onChange={(e) => setCompanyName(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600" placeholder="เช่น บริษัท มารวย จำกัด" /></FormField>
+            <FormField label="ที่อยู่บริษัท"><textarea value={companyAddress} onChange={(e) => setCompanyAddress(e.target.value)} rows={2} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600 resize-none" placeholder="เลขที่ ถนน แขวง/ตำบล เขต/อำเภอ จังหวัด รหัสไปรษณีย์" /></FormField>
+            <FormField label="เลขประจำตัวผู้เสียภาษี"><input value={taxId} onChange={(e) => setTaxId(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600 font-mono" placeholder="0-0000-00000-00-0" /></FormField>
+          </div>
+        )}
+      </div>
+
       <FormActions onCancel={onCancel} onSubmit={submit} />
     </div>
   );
@@ -2984,11 +3267,30 @@ function PayrollPage({ businesses, zones, positions, employees, activeBusinessId
   );
 
   const bizName = businesses.find((b) => b.id === activeBusinessId)?.name;
+  const business = businesses.find((b) => b.id === activeBusinessId);
   const yearOptions = [now.getFullYear(), now.getFullYear() - 1, now.getFullYear() - 2];
+
+  // พิมพ์รายงานรวม: ทุกคนในธุรกิจ (คนยังไม่ทำขึ้นว่าง)
+  const printReport = () => {
+    const rows = bizEmployees.map((emp) => {
+      const p = payrollByEmp[emp.id];
+      return {
+        emp,
+        position: positions.find((x) => x.id === emp.positionId),
+        payroll: p || null,
+        calc: p ? computePayroll(p, itemsByPayroll[p.id] || []) : null,
+      };
+    });
+    printPayrollRegister({ business, rows, year, month });
+  };
 
   return (
     <div className="h-full overflow-auto">
-      <PageHeader title="เงินเดือน" subtitle={`${bizName} — ${MONTH_NAMES[month - 1]} ${year + 543}`} />
+      <PageHeader title="เงินเดือน" subtitle={`${bizName} — ${MONTH_NAMES[month - 1]} ${year + 543}`}>
+        <button onClick={printReport} disabled={bizEmployees.length === 0} className="flex items-center gap-2 px-4 py-2 bg-white border border-stone-300 hover:bg-stone-50 disabled:opacity-50 disabled:cursor-not-allowed text-stone-700 rounded-lg text-sm font-medium">
+          <FileText className="w-4 h-4" /> พิมพ์รายงานรวม
+        </button>
+      </PageHeader>
       <div className="p-4 md:p-8">
         {/* ตัวเลือกเดือน + สรุป */}
         <div className="flex flex-wrap items-center gap-3 mb-4">
@@ -3061,6 +3363,11 @@ function PayrollPage({ businesses, zones, positions, employees, activeBusinessId
                   <button onClick={() => setEditingEmp(emp)} disabled={noSalary} className="px-3 py-2 bg-emerald-900 hover:bg-emerald-800 disabled:bg-stone-200 disabled:cursor-not-allowed text-white rounded-lg text-sm font-medium flex items-center gap-1.5">
                     <Calculator className="w-4 h-4" />{p ? 'แก้ไข' : 'ทำ'}
                   </button>
+                  {p && (
+                    <button onClick={() => printPayslip({ employee: emp, payroll: p, items: itemsByPayroll[p.id] || [], business: businesses.find((b) => b.id === activeBusinessId), position: positions.find((x) => x.id === emp.positionId), year, month })} title="พิมพ์สลิปเงินเดือน" className="px-3 py-2 bg-white border border-stone-300 hover:bg-stone-50 text-stone-700 rounded-lg text-sm font-medium flex items-center gap-1.5">
+                      <FileText className="w-4 h-4" /><span className="hidden sm:inline">สลิป</span>
+                    </button>
+                  )}
                 </div>
               );
             })}
@@ -3812,6 +4119,219 @@ function ProfileEditForm({ initial, businesses, zones, onSave, onCancel, isSelf 
         </>
       )}
 
+      <FormActions onCancel={onCancel} onSubmit={submit} />
+    </div>
+  );
+}
+
+// ============ CONTRACTORS PAGE ============
+function ContractorsPage({ contractors, visits, businesses, ops }) {
+  const [showForm, setShowForm] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [openContractor, setOpenContractor] = useState(null);
+  const [search, setSearch] = useState('');
+
+  const enriched = useMemo(() => contractors.map((c) => {
+    const my = visits.filter((v) => v.contractorId === c.id);
+    return { ...c, visitCount: my.length, lastVisit: my.map((v) => v.visitDate).sort().slice(-1)[0] || null, totalCost: my.reduce((s, v) => s + (Number(v.cost) || 0), 0) };
+  }), [contractors, visits]);
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return enriched;
+    return enriched.filter((c) => `${c.name} ${c.specialty || ''} ${c.phone || ''}`.toLowerCase().includes(q));
+  }, [enriched, search]);
+
+  const saveContractor = async (data) => {
+    if (editing?.id) await ops.contractor.update(editing.id, data);
+    else await ops.contractor.add(data);
+    setShowForm(false); setEditing(null);
+  };
+  const delContractor = async (c) => {
+    if (!window.confirm(`ลบ "${c.name}" และประวัติทั้งหมด (${c.visitCount} ครั้ง)?\nไฟล์แนบทั้งหมดจะถูกลบและไม่สามารถกู้คืนได้`)) return;
+    await ops.contractor.del(c.id);
+  };
+
+  return (
+    <div className="h-full overflow-auto">
+      <PageHeader title="ช่าง/ผู้รับเหมา" subtitle={`${contractors.length} คน • ${visits.length} ครั้งที่เคยมาทำงาน`}>
+        <button onClick={() => { setEditing({}); setShowForm(true); }} className="flex items-center gap-2 px-4 py-2 bg-emerald-900 hover:bg-emerald-800 text-white rounded-lg text-sm font-medium"><Plus className="w-4 h-4" />เพิ่มช่าง</button>
+      </PageHeader>
+      <div className="p-4 md:p-8">
+        <div className="mb-4 relative max-w-md">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-stone-400" />
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="ค้นหา ชื่อ/ประเภทช่าง/เบอร์" className="w-full pl-9 pr-3 py-2 border border-stone-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500/40" />
+        </div>
+        {filtered.length === 0 ? (
+          <EmptyState icon={Wrench} title={search ? 'ไม่พบรายการ' : 'ยังไม่มีช่าง'} description={search ? 'ลองเปลี่ยนคำค้น' : 'เพิ่มช่าง/ผู้รับเหมาที่เคยติดต่อทำงาน เช่น ช่างแอร์ ช่างประตูม้วน ช่างกระจก'} action={!search ? <button onClick={() => { setEditing({}); setShowForm(true); }} className="px-4 py-2 bg-emerald-900 text-white rounded-lg text-sm font-medium">เพิ่มช่างคนแรก</button> : null} />
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {filtered.map((c) => (
+              <div key={c.id} className="bg-white border border-stone-200 rounded-xl p-4 hover:border-stone-300 transition-colors">
+                <div className="flex items-start justify-between gap-2 mb-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="font-semibold text-stone-800 truncate">{c.name}</div>
+                    {c.specialty && <div className="inline-block mt-0.5 px-2 py-0.5 bg-emerald-50 text-emerald-700 text-xs rounded">{c.specialty}</div>}
+                  </div>
+                  <div className="flex items-center gap-1 flex-shrink-0">
+                    <button onClick={() => { setEditing(c); setShowForm(true); }} className="p-1.5 hover:bg-stone-100 rounded text-stone-500" title="แก้ไข"><Edit2 className="w-3.5 h-3.5" /></button>
+                    <button onClick={() => delContractor(c)} className="p-1.5 hover:bg-red-50 rounded text-red-500" title="ลบ"><Trash2 className="w-3.5 h-3.5" /></button>
+                  </div>
+                </div>
+                {c.phone && <div className="flex items-center gap-1.5 text-xs text-stone-500 mt-1"><Phone className="w-3 h-3" />{c.phone}</div>}
+                <div className="mt-3 pt-3 border-t border-stone-100 grid grid-cols-3 gap-2 text-center">
+                  <div><div className="text-[10px] text-stone-400 uppercase">มา</div><div className="font-semibold text-stone-800 text-sm">{c.visitCount} ครั้ง</div></div>
+                  <div><div className="text-[10px] text-stone-400 uppercase">รวมจ่าย</div><div className="font-semibold text-stone-800 text-sm">{fmtMoney(c.totalCost)}</div></div>
+                  <div><div className="text-[10px] text-stone-400 uppercase">ล่าสุด</div><div className="font-semibold text-stone-800 text-sm">{c.lastVisit ? fmt(c.lastVisit) : '—'}</div></div>
+                </div>
+                <button onClick={() => setOpenContractor(c)} className="mt-3 w-full px-3 py-2 bg-stone-50 hover:bg-stone-100 text-stone-700 rounded-lg text-xs font-medium flex items-center justify-center gap-1.5"><FileText className="w-3.5 h-3.5" />ดู/เพิ่มประวัติการมา</button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      {showForm && (
+        <Modal title={editing?.id ? 'แก้ไขข้อมูลช่าง' : 'เพิ่มช่างใหม่'} onClose={() => { setShowForm(false); setEditing(null); }}>
+          <ContractorForm initial={editing} onSave={saveContractor} onCancel={() => { setShowForm(false); setEditing(null); }} />
+        </Modal>
+      )}
+      {openContractor && (
+        <ContractorDetailModal contractor={openContractor} allVisits={visits} businesses={businesses} ops={ops} onClose={() => setOpenContractor(null)} />
+      )}
+    </div>
+  );
+}
+
+function ContractorForm({ initial, onSave, onCancel }) {
+  const [name, setName] = useState(initial?.name || '');
+  const [specialty, setSpecialty] = useState(initial?.specialty || '');
+  const [phone, setPhone] = useState(initial?.phone || '');
+  const [address, setAddress] = useState(initial?.address || '');
+  const [notes, setNotes] = useState(initial?.notes || '');
+  const presets = ['ช่างแอร์', 'ช่างประตูม้วน', 'ช่างกระจก', 'ช่างไฟฟ้า', 'ช่างประปา', 'ช่างซ่อมทั่วไป', 'ทำความสะอาด', 'ขนย้าย'];
+  const submit = () => {
+    if (!name.trim()) return alert('กรุณากรอกชื่อช่าง/ร้าน');
+    onSave({ name: name.trim(), specialty: specialty.trim() || null, phone: phone.trim() || null, address: address.trim() || null, notes: notes.trim() || null });
+  };
+  return (
+    <div className="space-y-4">
+      <FormField label="ชื่อช่าง/ร้าน" required><input autoFocus value={name} onChange={(e) => setName(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600" placeholder="เช่น นายสมชาย / ร้านแอร์เย็นเย็น" /></FormField>
+      <FormField label="ประเภท/ความเชี่ยวชาญ">
+        <input value={specialty} onChange={(e) => setSpecialty(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600 mb-2" placeholder="เช่น ช่างแอร์, ช่างประตูม้วน" />
+        <div className="flex flex-wrap gap-1.5">
+          {presets.map((p) => <button key={p} type="button" onClick={() => setSpecialty(p)} className={`px-2.5 py-1 text-xs rounded transition-colors ${specialty === p ? 'bg-emerald-600 text-white' : 'bg-stone-100 hover:bg-stone-200 text-stone-700'}`}>{p}</button>)}
+        </div>
+      </FormField>
+      <FormField label="เบอร์โทร"><input value={phone} onChange={(e) => setPhone(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600" placeholder="0xx-xxx-xxxx" /></FormField>
+      <FormField label="ที่อยู่/ที่ตั้ง"><textarea value={address} onChange={(e) => setAddress(e.target.value)} rows={2} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600 resize-none" /></FormField>
+      <FormField label="หมายเหตุ"><textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600 resize-none" placeholder="เช่น ค่าแรงมาตรฐาน, ข้อจำกัด, เวลาว่าง" /></FormField>
+      <FormActions onCancel={onCancel} onSubmit={submit} />
+    </div>
+  );
+}
+
+function ContractorDetailModal({ contractor, allVisits, businesses, ops, onClose }) {
+  const myVisits = useMemo(() =>
+    allVisits.filter((v) => v.contractorId === contractor.id)
+      .sort((a, b) => String(b.visitDate || '').localeCompare(String(a.visitDate || ''))),
+    [allVisits, contractor.id]);
+  const [editingVisit, setEditingVisit] = useState(null);
+  const [showVisitForm, setShowVisitForm] = useState(false);
+
+  const saveVisit = async (data) => {
+    const payload = { ...data, contractorId: contractor.id };
+    if (editingVisit?.id) await ops.contractorVisit.update(editingVisit.id, payload);
+    else await ops.contractorVisit.add(payload);
+    setShowVisitForm(false); setEditingVisit(null);
+  };
+  const delVisit = async (v) => {
+    if (!window.confirm(`ลบประวัติวันที่ ${fmt(v.visitDate)}?\nไฟล์แนบทั้งหมดจะถูกลบและไม่สามารถกู้คืนได้`)) return;
+    await ops.contractorVisit.del(v.id);
+  };
+  const totalCost = myVisits.reduce((s, v) => s + (Number(v.cost) || 0), 0);
+
+  return (
+    <Modal title={`ประวัติ — ${contractor.name}`} onClose={onClose} wide>
+      <div className="space-y-4">
+        <div className="grid grid-cols-3 gap-3">
+          <div className="bg-stone-50 rounded-lg p-3 text-center"><div className="text-xs text-stone-500">จำนวนครั้ง</div><div className="font-semibold text-stone-800 text-lg">{myVisits.length}</div></div>
+          <div className="bg-stone-50 rounded-lg p-3 text-center"><div className="text-xs text-stone-500">รวมจ่าย</div><div className="font-semibold text-stone-800 text-lg">{fmtMoney(totalCost)}</div></div>
+          <div className="bg-stone-50 rounded-lg p-3 text-center"><div className="text-xs text-stone-500">มาล่าสุด</div><div className="font-semibold text-stone-800 text-lg">{myVisits[0]?.visitDate ? fmt(myVisits[0].visitDate) : '—'}</div></div>
+        </div>
+        <div className="flex justify-end">
+          <button onClick={() => { setEditingVisit({}); setShowVisitForm(true); }} className="flex items-center gap-2 px-3 py-2 bg-emerald-900 hover:bg-emerald-800 text-white rounded-lg text-sm font-medium"><Plus className="w-4 h-4" />บันทึกการมาทำงาน</button>
+        </div>
+        {myVisits.length === 0 ? (
+          <EmptyState icon={Calendar} title="ยังไม่มีประวัติ" description="กดปุ่ม 'บันทึกการมาทำงาน' เพื่อบันทึกครั้งแรก" />
+        ) : (
+          <div className="space-y-2 max-h-[55vh] overflow-y-auto pr-1">
+            {myVisits.map((v) => {
+              const biz = businesses.find((b) => b.id === v.businessId);
+              return (
+                <div key={v.id} className="bg-white border border-stone-200 rounded-lg p-3 hover:border-stone-300">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-1.5 mb-1.5">
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-emerald-50 text-emerald-800 text-xs font-medium rounded"><Calendar className="w-3 h-3" />{fmt(v.visitDate)}</span>
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-sky-50 text-sky-800 text-xs font-medium rounded"><Building2 className="w-3 h-3" />{biz?.name || '— ไม่พบตึก —'}</span>
+                        {Number(v.cost) > 0 && <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-50 text-amber-800 text-xs font-medium rounded">{fmtMoney(v.cost)} ฿</span>}
+                      </div>
+                      <div className="text-sm text-stone-700 whitespace-pre-line">{v.workDescription}</div>
+                      {v.notes && <div className="text-xs text-stone-500 mt-1 italic whitespace-pre-line">หมายเหตุ: {v.notes}</div>}
+                      {v.docs?.length > 0 && <div className="mt-2"><DocList paths={v.docs} /></div>}
+                    </div>
+                    <div className="flex items-center gap-1 flex-shrink-0">
+                      <button onClick={() => { setEditingVisit(v); setShowVisitForm(true); }} className="p-1.5 hover:bg-stone-100 rounded text-stone-500" title="แก้ไข"><Edit2 className="w-3.5 h-3.5" /></button>
+                      <button onClick={() => delVisit(v)} className="p-1.5 hover:bg-red-50 rounded text-red-500" title="ลบ"><Trash2 className="w-3.5 h-3.5" /></button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+      {showVisitForm && (
+        <Modal title={editingVisit?.id ? 'แก้ไขประวัติการมาทำงาน' : 'บันทึกการมาทำงาน'} onClose={() => { setShowVisitForm(false); setEditingVisit(null); }}>
+          <VisitForm initial={editingVisit} businesses={businesses} onSave={saveVisit} onCancel={() => { setShowVisitForm(false); setEditingVisit(null); }} />
+        </Modal>
+      )}
+    </Modal>
+  );
+}
+
+function VisitForm({ initial, businesses, onSave, onCancel }) {
+  const [businessId, setBusinessId] = useState(initial?.businessId || businesses[0]?.id || '');
+  const [visitDate, setVisitDate] = useState(initial?.visitDate || new Date().toISOString().slice(0, 10));
+  const [workDescription, setWorkDescription] = useState(initial?.workDescription || '');
+  const [cost, setCost] = useState(initial?.cost ?? '');
+  const [notes, setNotes] = useState(initial?.notes || '');
+  const [docs, setDocs] = useState(initial?.docs || []);
+  const submit = () => {
+    if (!businessId) return alert('กรุณาเลือกตึก/ธุรกิจ');
+    if (!visitDate) return alert('กรุณาระบุวันที่');
+    if (!workDescription.trim()) return alert('กรุณากรอกรายละเอียดงาน');
+    onSave({ businessId, visitDate, workDescription: workDescription.trim(), cost: Number(cost) || 0, notes: notes.trim() || null, docs });
+  };
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <FormField label="ตึก/ธุรกิจ" required>
+          <select value={businessId} onChange={(e) => setBusinessId(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600">
+            <option value="">— เลือกตึก —</option>
+            {businesses.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+          </select>
+        </FormField>
+        <FormField label="วันที่มา" required><input type="date" value={visitDate} onChange={(e) => setVisitDate(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600" /></FormField>
+      </div>
+      <FormField label="รายละเอียดงาน" required><textarea autoFocus value={workDescription} onChange={(e) => setWorkDescription(e.target.value)} rows={3} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600 resize-none" placeholder="เช่น ล้างแอร์ห้อง 101, เปลี่ยนคอมเพรสเซอร์ห้อง 203" /></FormField>
+      <FormField label="ค่าใช้จ่าย (บาท)"><input type="number" min={0} step="0.01" value={cost} onChange={(e) => setCost(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600" placeholder="0" /></FormField>
+      <FormField label="หมายเหตุ"><textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600 resize-none" /></FormField>
+      {businessId ? (
+        <MultiDocUpload label="บิล/ใบเสร็จ/รูปงาน" paths={docs} businessId={businessId} docType="contractor" onChange={setDocs} />
+      ) : (
+        <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2">เลือกตึก/ธุรกิจก่อน จึงจะอัปโหลดเอกสารได้</p>
+      )}
       <FormActions onCancel={onCancel} onSubmit={submit} />
     </div>
   );
