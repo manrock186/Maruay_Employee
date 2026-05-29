@@ -4139,7 +4139,7 @@ function ContractorsPage({ contractors, visits, businesses, ops }) {
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return enriched;
-    return enriched.filter((c) => `${c.name} ${c.specialty || ''} ${c.phone || ''}`.toLowerCase().includes(q));
+    return enriched.filter((c) => `${c.name} ${(Array.isArray(c.specialty) ? c.specialty.join(' ') : (c.specialty || ''))} ${c.phone || ''}`.toLowerCase().includes(q));
   }, [enriched, search]);
 
   const saveContractor = async (data) => {
@@ -4169,9 +4169,16 @@ function ContractorsPage({ contractors, visits, businesses, ops }) {
             {filtered.map((c) => (
               <div key={c.id} className="bg-white border border-stone-200 rounded-xl p-4 hover:border-stone-300 transition-colors">
                 <div className="flex items-start justify-between gap-2 mb-2">
-                  <div className="min-w-0 flex-1">
-                    <div className="font-semibold text-stone-800 truncate">{c.name}</div>
-                    {c.specialty && <div className="inline-block mt-0.5 px-2 py-0.5 bg-emerald-50 text-emerald-700 text-xs rounded">{c.specialty}</div>}
+                  <div className="flex items-start gap-3 min-w-0 flex-1">
+                    <Avatar photo={c.photo} name={c.name} size={44} />
+                    <div className="min-w-0 flex-1">
+                      <div className="font-semibold text-stone-800 truncate">{c.name}</div>
+                      {Array.isArray(c.specialty) && c.specialty.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {c.specialty.map((s) => <span key={s} className="px-1.5 py-0.5 bg-emerald-50 text-emerald-700 text-[11px] rounded">{s}</span>)}
+                        </div>
+                      )}
+                    </div>
                   </div>
                   <div className="flex items-center gap-1 flex-shrink-0">
                     <button onClick={() => { setEditing(c); setShowForm(true); }} className="p-1.5 hover:bg-stone-100 rounded text-stone-500" title="แก้ไข"><Edit2 className="w-3.5 h-3.5" /></button>
@@ -4204,22 +4211,59 @@ function ContractorsPage({ contractors, visits, businesses, ops }) {
 
 function ContractorForm({ initial, onSave, onCancel }) {
   const [name, setName] = useState(initial?.name || '');
-  const [specialty, setSpecialty] = useState(initial?.specialty || '');
+  const [specialties, setSpecialties] = useState(Array.isArray(initial?.specialty) ? initial.specialty : (initial?.specialty ? [initial.specialty] : []));
+  const [customSpec, setCustomSpec] = useState('');
   const [phone, setPhone] = useState(initial?.phone || '');
   const [address, setAddress] = useState(initial?.address || '');
   const [notes, setNotes] = useState(initial?.notes || '');
+  const [photo, setPhoto] = useState(initial?.photo || '');
+  const [uploading, setUploading] = useState(false);
+  const fileRef = useRef(null);
   const presets = ['ช่างแอร์', 'ช่างประตูม้วน', 'ช่างกระจก', 'ช่างไฟฟ้า', 'ช่างประปา', 'ช่างซ่อมทั่วไป', 'ทำความสะอาด', 'ขนย้าย'];
+  const toggleSpec = (s) => setSpecialties((arr) => arr.includes(s) ? arr.filter((x) => x !== s) : [...arr, s]);
+  const addCustom = () => { const s = customSpec.trim(); if (s && !specialties.includes(s)) setSpecialties((arr) => [...arr, s]); setCustomSpec(''); };
+  const handlePhoto = async (e) => {
+    const f = e.target.files?.[0]; if (!f) return;
+    setUploading(true);
+    try { setPhoto(await resizeImage(f, 400)); } finally { setUploading(false); }
+  };
   const submit = () => {
     if (!name.trim()) return alert('กรุณากรอกชื่อช่าง/ร้าน');
-    onSave({ name: name.trim(), specialty: specialty.trim() || null, phone: phone.trim() || null, address: address.trim() || null, notes: notes.trim() || null });
+    onSave({ name: name.trim(), specialty: specialties, phone: phone.trim() || null, address: address.trim() || null, notes: notes.trim() || null, photo: photo || null });
   };
   return (
     <div className="space-y-4">
+      <FormField label="รูปช่าง">
+        <div className="flex items-center gap-4">
+          <Avatar photo={photo} name={name || '?'} size={72} />
+          <div className="flex flex-col gap-2">
+            <input ref={fileRef} type="file" accept="image/*" onChange={handlePhoto} className="hidden" />
+            <button type="button" onClick={() => fileRef.current?.click()} disabled={uploading} className="flex items-center gap-2 px-3 py-2 border border-stone-300 rounded-lg text-sm text-stone-700 hover:bg-stone-50 disabled:opacity-50">
+              <Camera className="w-4 h-4" />{uploading ? 'กำลังอัปโหลด...' : (photo ? 'เปลี่ยนรูป' : 'อัปโหลดรูป')}
+            </button>
+            {photo && <button type="button" onClick={() => setPhoto('')} className="text-xs text-red-600 hover:underline text-left">ลบรูป</button>}
+          </div>
+        </div>
+      </FormField>
       <FormField label="ชื่อช่าง/ร้าน" required><input autoFocus value={name} onChange={(e) => setName(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600" placeholder="เช่น นายสมชาย / ร้านแอร์เย็นเย็น" /></FormField>
-      <FormField label="ประเภท/ความเชี่ยวชาญ">
-        <input value={specialty} onChange={(e) => setSpecialty(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600 mb-2" placeholder="เช่น ช่างแอร์, ช่างประตูม้วน" />
-        <div className="flex flex-wrap gap-1.5">
-          {presets.map((p) => <button key={p} type="button" onClick={() => setSpecialty(p)} className={`px-2.5 py-1 text-xs rounded transition-colors ${specialty === p ? 'bg-emerald-600 text-white' : 'bg-stone-100 hover:bg-stone-200 text-stone-700'}`}>{p}</button>)}
+      <FormField label="ประเภท/ความเชี่ยวชาญ (เลือกได้หลายอย่าง)">
+        {specialties.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 mb-2">
+            {specialties.map((s) => (
+              <span key={s} className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-600 text-white text-xs font-medium rounded-full">
+                {s}<button type="button" onClick={() => toggleSpec(s)} className="hover:bg-emerald-700 rounded-full"><X className="w-3 h-3" /></button>
+              </span>
+            ))}
+          </div>
+        )}
+        <div className="flex flex-wrap gap-1.5 mb-2">
+          {presets.filter((p) => !specialties.includes(p)).map((p) => (
+            <button key={p} type="button" onClick={() => toggleSpec(p)} className="px-2.5 py-1 text-xs rounded bg-stone-100 hover:bg-emerald-100 text-stone-700">+ {p}</button>
+          ))}
+        </div>
+        <div className="flex gap-2">
+          <input value={customSpec} onChange={(e) => setCustomSpec(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addCustom(); } }} className="flex-1 px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600" placeholder="พิมพ์ประเภทอื่นแล้วกด เพิ่ม" />
+          <button type="button" onClick={addCustom} className="px-3 py-2 bg-stone-200 hover:bg-stone-300 text-stone-700 rounded-lg text-sm font-medium">เพิ่ม</button>
         </div>
       </FormField>
       <FormField label="เบอร์โทร"><input value={phone} onChange={(e) => setPhone(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600" placeholder="0xx-xxx-xxxx" /></FormField>
@@ -4253,6 +4297,16 @@ function ContractorDetailModal({ contractor, allVisits, businesses, ops, onClose
   return (
     <Modal title={`ประวัติ — ${contractor.name}`} onClose={onClose} wide>
       <div className="space-y-4">
+        <div className="flex items-center gap-3 pb-3 border-b border-stone-100">
+          <Avatar photo={contractor.photo} name={contractor.name} size={52} />
+          <div className="min-w-0">
+            <div className="font-semibold text-stone-800">{contractor.name}</div>
+            <div className="flex flex-wrap gap-1 mt-1">
+              {(Array.isArray(contractor.specialty) ? contractor.specialty : []).map((s) => <span key={s} className="px-1.5 py-0.5 bg-emerald-50 text-emerald-700 text-[11px] rounded">{s}</span>)}
+              {contractor.phone && <span className="inline-flex items-center gap-1 text-xs text-stone-500"><Phone className="w-3 h-3" />{contractor.phone}</span>}
+            </div>
+          </div>
+        </div>
         <div className="grid grid-cols-3 gap-3">
           <div className="bg-stone-50 rounded-lg p-3 text-center"><div className="text-xs text-stone-500">จำนวนครั้ง</div><div className="font-semibold text-stone-800 text-lg">{myVisits.length}</div></div>
           <div className="bg-stone-50 rounded-lg p-3 text-center"><div className="text-xs text-stone-500">รวมจ่าย</div><div className="font-semibold text-stone-800 text-lg">{fmtMoney(totalCost)}</div></div>
