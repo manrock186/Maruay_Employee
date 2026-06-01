@@ -147,6 +147,27 @@ function commissionForEmployee(pool, employeeId) {
   return e ? (Number(e.amount) || 0) : 0;
 }
 
+// ============ ROOM RENT (ค่าห้องพนักงานจากมิเตอร์) ============
+// ยอดรวมต่อห้อง = เหมาน้ำ + ค่าคงที่ + (มิเตอร์ใหม่ − เก่า) × เรต
+function roomTotal(room) {
+  const units = Math.max(0, (Number(room.meterCurr) || 0) - (Number(room.meterPrev) || 0));
+  const elec = units * (Number(room.elecRate) || 0);
+  return (Number(room.waterFlat) || 0) + (Number(room.fixedExtra) || 0) + elec;
+}
+function roomUnits(room) { return Math.max(0, (Number(room.meterCurr) || 0) - (Number(room.meterPrev) || 0)); }
+// map employeeId -> ค่าห้องที่ต้องหัก (หารเท่าตามจำนวนคนในห้อง)
+function roomRentMapFromPool(pool) {
+  const m = {};
+  (pool?.rooms || []).forEach((r) => {
+    const occ = (r.occupantIds || []).filter(Boolean);
+    if (!occ.length) return;
+    const share = roomTotal(r) / occ.length;
+    occ.forEach((id) => { m[id] = (m[id] || 0) + share; });
+  });
+  Object.keys(m).forEach((k) => { m[k] = Math.round(m[k] * 100) / 100; });
+  return m;
+}
+
 // สร้าง draft ตั้งต้นสำหรับ payroll (จาก payroll เดิม หรือ default จากโปรไฟล์พนักงาน)
 function buildPayrollDraft(emp, payroll, items, year, month) {
   if (payroll) {
@@ -871,6 +892,21 @@ export default function App() {
         return fromDB(data);
       },
     },
+    roomRent: {
+      getByPeriod: async (businessId, year, month) => {
+        const { data, error } = await supabase.from('room_rent_pools').select('*')
+          .eq('business_id', businessId).eq('period_year', year).eq('period_month', month).maybeSingle();
+        if (error) { console.error(error); return null; }
+        return data ? fromDB(data) : null;
+      },
+      upsert: async (d) => {
+        const { data, error } = await supabase.from('room_rent_pools')
+          .upsert({ ...toDB(d), updated_at: new Date().toISOString() }, { onConflict: 'business_id,period_year,period_month' })
+          .select().single();
+        if (error) { alert('บันทึกค่าห้องไม่สำเร็จ: ' + error.message); return null; }
+        return fromDB(data);
+      },
+    },
     salaryChange: {
       listByEmployee: async (employeeId) => {
         const { data, error } = await supabase.from('salary_changes').select('*')
@@ -1046,6 +1082,14 @@ export default function App() {
             businesses={businesses}
             employees={employees}
             positions={positions}
+            activeBusinessId={activeBusinessId}
+            ops={ops}
+          />
+        )}
+        {view === 'roomrent' && profile.canManagePayroll && (
+          <RoomRentPage
+            businesses={businesses}
+            employees={employees}
             activeBusinessId={activeBusinessId}
             ops={ops}
           />
@@ -1350,6 +1394,7 @@ function Sidebar({ view, setView, profile, businesses, zones, activeBusinessId, 
     { id: 'orgchart', label: 'แผนผังองค์กร', icon: Network },
     { id: 'payroll', label: 'เงินเดือน', icon: Wallet, show: profile.canManagePayroll },
     { id: 'commission', label: 'คอมมิชชั่น', icon: Percent, show: profile.canManagePayroll },
+    { id: 'roomrent', label: 'ค่าห้องพนักงาน', icon: KeyRound, show: profile.canManagePayroll },
     { id: 'users', label: 'ผู้ใช้ระบบ', icon: Shield, show: isOwner },
     { id: 'contractors', label: 'ช่าง/ผู้รับเหมา', icon: Wrench, show: isOwner },
     { id: 'settings', label: 'ตั้งค่า', icon: Settings, show: isOwner },
@@ -3363,6 +3408,179 @@ function EmployeeTree({ employees, allEmployees, zones, positions, businesses, a
 }
 
 // ============ PAYROLL PAGE ============
+// ============ ROOM RENT PAGE (ค่าห้องพนักงานจากมิเตอร์) ============
+function RoomRentPage({ businesses, employees, activeBusinessId, ops }) {
+  const now = new Date();
+  const [year, setYear] = useState(now.getFullYear());
+  const [month, setMonth] = useState(now.getMonth() + 1);
+  const [rooms, setRooms] = useState([]);
+  const [note, setNote] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [savedAt, setSavedAt] = useState(null);
+  const [carried, setCarried] = useState(false);
+
+  const business = businesses.find((b) => b.id === activeBusinessId);
+  const bizEmployees = useMemo(() => employees.filter((e) => isActive(e) && (e.businessId === activeBusinessId || (e.additionalBusinessIds || []).includes(activeBusinessId))), [employees, activeBusinessId]);
+  const empName = (id) => { const e = employees.find((x) => x.id === id); return e ? dispName(e) : '— ไม่พบ —'; };
+  const newRoom = () => ({ id: `r${Date.now()}${Math.floor(Math.random() * 1000)}`, label: '', occupantIds: [], waterFlat: '', fixedExtra: '', elecRate: 7, meterPrev: '', meterCurr: '' });
+
+  useEffect(() => {
+    if (!activeBusinessId) return;
+    let cancelled = false;
+    setLoading(true); setCarried(false);
+    (async () => {
+      const pool = await ops.roomRent.getByPeriod(activeBusinessId, year, month);
+      if (cancelled) return;
+      if (pool) {
+        setRooms((pool.rooms || []).map((r) => ({ ...newRoom(), ...r })));
+        setNote(pool.note || '');
+        setSavedAt(pool.updatedAt || pool.createdAt || null);
+        setLoading(false);
+        return;
+      }
+      // ยังไม่มีของงวดนี้ → ดึงโครงห้อง+เลขมิเตอร์จากเดือนก่อนมาตั้งต้น
+      const prev = month === 1 ? { y: year - 1, m: 12 } : { y: year, m: month - 1 };
+      const prevPool = await ops.roomRent.getByPeriod(activeBusinessId, prev.y, prev.m);
+      if (cancelled) return;
+      if (prevPool && (prevPool.rooms || []).length) {
+        setRooms(prevPool.rooms.map((r) => ({ ...newRoom(), label: r.label, occupantIds: r.occupantIds || [], waterFlat: r.waterFlat, fixedExtra: r.fixedExtra, elecRate: r.elecRate ?? 7, meterPrev: r.meterCurr ?? '', meterCurr: '' })));
+        setCarried(true);
+      } else {
+        setRooms([]);
+      }
+      setNote(''); setSavedAt(null); setLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [activeBusinessId, year, month]);
+
+  const setRoom = (id, patch) => setRooms((rs) => rs.map((r) => r.id === id ? { ...r, ...patch } : r));
+  const addRoom = () => setRooms((rs) => [...rs, newRoom()]);
+  const rmRoom = (id) => setRooms((rs) => rs.filter((r) => r.id !== id));
+  const addOccupant = (roomId, empId) => { if (!empId) return; setRooms((rs) => rs.map((r) => r.id === roomId && !r.occupantIds.includes(empId) ? { ...r, occupantIds: [...r.occupantIds, empId] } : r)); };
+  const rmOccupant = (roomId, empId) => setRooms((rs) => rs.map((r) => r.id === roomId ? { ...r, occupantIds: r.occupantIds.filter((x) => x !== empId) } : r));
+
+  const grandTotal = rooms.reduce((s, r) => s + roomTotal(r), 0);
+  const perEmp = roomRentMapFromPool({ rooms });
+
+  const save = async () => {
+    setSaving(true);
+    const clean = rooms.map((r) => ({
+      id: r.id, label: r.label || '', occupantIds: r.occupantIds || [],
+      waterFlat: Number(r.waterFlat) || 0, fixedExtra: Number(r.fixedExtra) || 0,
+      elecRate: Number(r.elecRate) || 0, meterPrev: Number(r.meterPrev) || 0, meterCurr: Number(r.meterCurr) || 0,
+    }));
+    const ok = await ops.roomRent.upsert({ businessId: activeBusinessId, periodYear: year, periodMonth: month, rooms: clean, note: note.trim() || null });
+    setSaving(false);
+    if (ok) { setSavedAt(new Date().toISOString()); setCarried(false); alert('บันทึกค่าห้องแล้ว — ยอดจะไปขึ้นช่องค่าห้องในหน้าเงินเดือนงวดเดียวกันอัตโนมัติ'); }
+  };
+
+  const yearOptions = [now.getFullYear(), now.getFullYear() - 1, now.getFullYear() - 2];
+
+  if (!activeBusinessId) return (
+    <div className="h-full overflow-auto"><PageHeader title="ค่าห้องพนักงาน" /><div className="p-8"><EmptyState icon={KeyRound} title="เลือกธุรกิจที่ sidebar" description="ค่าห้องคิดแยกตามธุรกิจ/ตึก — เลือกธุรกิจก่อน" /></div></div>
+  );
+
+  return (
+    <div className="h-full overflow-auto">
+      <PageHeader title="ค่าห้องพนักงาน" subtitle={`${business?.name || ''} — งวด ${MONTH_NAMES[month - 1]} ${year + 543} (จ่าย ${payMonthLabel(year, month)})`}>
+        <button onClick={save} disabled={saving} className="flex items-center gap-2 px-4 py-2 bg-emerald-900 hover:bg-emerald-800 disabled:opacity-50 text-white rounded-lg text-sm font-medium"><Check className="w-4 h-4" />{saving ? 'กำลังบันทึก...' : 'บันทึกค่าห้อง'}</button>
+      </PageHeader>
+      <div className="p-4 md:p-8 space-y-5 max-w-4xl">
+        <div className="flex flex-wrap items-center gap-3">
+          <select value={month} onChange={(e) => setMonth(Number(e.target.value))} className="px-3 py-2 border border-stone-300 rounded-lg bg-white">
+            {MONTH_NAMES.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
+          </select>
+          <select value={year} onChange={(e) => setYear(Number(e.target.value))} className="px-3 py-2 border border-stone-300 rounded-lg bg-white">
+            {yearOptions.map((y) => <option key={y} value={y}>{y + 543}</option>)}
+          </select>
+          {savedAt && <span className="text-xs text-stone-400">บันทึกล่าสุด {fmt(savedAt)}</span>}
+        </div>
+
+        {carried && (
+          <div className="flex items-start gap-2 p-2.5 bg-sky-50 border border-sky-200 rounded-lg text-xs text-sky-800">
+            <Calendar className="w-4 h-4 flex-shrink-0 mt-0.5" />
+            <span>ดึงโครงห้อง + เลขมิเตอร์เดือนก่อนมาให้แล้ว — <b>เลขมิเตอร์ครั้งก่อน</b> เติมจากครั้งล่าสุดอัตโนมัติ ใส่แค่เลขมิเตอร์ปัจจุบัน แล้วกดบันทึก</span>
+          </div>
+        )}
+
+        {rooms.length === 0 ? (
+          <EmptyState icon={KeyRound} title="ยังไม่มีห้อง" description="เพิ่มห้องพนักงาน ใส่ผู้พัก + เลขมิเตอร์ ระบบคิดค่าไฟ (หน่วย×เรต) + เหมาน้ำให้" action={<button onClick={addRoom} className="px-4 py-2 bg-emerald-900 text-white rounded-lg text-sm font-medium">เพิ่มห้องแรก</button>} />
+        ) : (
+          <div className="space-y-3">
+            {rooms.map((r) => {
+              const units = roomUnits(r);
+              const elec = units * (Number(r.elecRate) || 0);
+              const total = roomTotal(r);
+              const occ = (r.occupantIds || []).filter(Boolean);
+              const share = occ.length ? total / occ.length : 0;
+              const available = bizEmployees.filter((e) => !occ.includes(e.id));
+              return (
+                <div key={r.id} className="bg-white border border-stone-200 rounded-xl p-4 space-y-3">
+                  <div className="flex items-center gap-2">
+                    <input value={r.label} onChange={(e) => setRoom(r.id, { label: e.target.value })} className="flex-1 px-3 py-2 border border-stone-300 rounded-lg font-medium" placeholder="ชื่อ/เลขห้อง เช่น ห้อง 403" />
+                    <button onClick={() => rmRoom(r.id)} className="p-2 hover:bg-red-50 rounded-lg text-red-500"><Trash2 className="w-4 h-4" /></button>
+                  </div>
+
+                  {/* ผู้พัก */}
+                  <div>
+                    <div className="text-xs text-stone-500 mb-1">ผู้พัก (หารค่าห้องเท่ากัน {occ.length || 0} คน)</div>
+                    <div className="flex flex-wrap gap-1.5 mb-2">
+                      {occ.map((id) => (
+                        <span key={id} className="inline-flex items-center gap-1 px-2 py-1 bg-emerald-600 text-white text-xs rounded-full">{empName(id)}<button onClick={() => rmOccupant(r.id, id)}><X className="w-3 h-3" /></button></span>
+                      ))}
+                      {occ.length === 0 && <span className="text-xs text-amber-600">ยังไม่มีผู้พัก — เพิ่มอย่างน้อย 1 คน</span>}
+                    </div>
+                    {available.length > 0 && (
+                      <select value="" onChange={(e) => { addOccupant(r.id, e.target.value); e.target.value = ''; }} className="px-3 py-1.5 border border-stone-300 rounded-lg bg-white text-sm">
+                        <option value="">+ เพิ่มผู้พัก...</option>
+                        {available.map((e) => <option key={e.id} value={e.id}>{dispName(e)}</option>)}
+                      </select>
+                    )}
+                  </div>
+
+                  {/* ค่าใช้จ่าย + มิเตอร์ */}
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                    <div><label className="text-xs text-stone-500">เหมาน้ำ/เดือน</label><input type="number" step="0.01" value={r.waterFlat} onChange={(e) => setRoom(r.id, { waterFlat: e.target.value })} className="w-full px-3 py-1.5 border border-stone-300 rounded-lg text-right" placeholder="เช่น 200" /></div>
+                    <div><label className="text-xs text-stone-500">ค่าคงที่เพิ่ม</label><input type="number" step="0.01" value={r.fixedExtra} onChange={(e) => setRoom(r.id, { fixedExtra: e.target.value })} className="w-full px-3 py-1.5 border border-stone-300 rounded-lg text-right" placeholder="0" /></div>
+                    <div><label className="text-xs text-stone-500">เรตไฟ/หน่วย</label><input type="number" step="0.01" value={r.elecRate} onChange={(e) => setRoom(r.id, { elecRate: e.target.value })} className="w-full px-3 py-1.5 border border-stone-300 rounded-lg text-right" placeholder="7" /></div>
+                    <div><label className="text-xs text-stone-500">มิเตอร์ครั้งก่อน</label><input type="number" step="0.01" value={r.meterPrev} onChange={(e) => setRoom(r.id, { meterPrev: e.target.value })} className="w-full px-3 py-1.5 border border-stone-300 rounded-lg text-right" placeholder="0" /></div>
+                    <div><label className="text-xs text-stone-500">มิเตอร์ปัจจุบัน</label><input type="number" step="0.01" value={r.meterCurr} onChange={(e) => setRoom(r.id, { meterCurr: e.target.value })} className="w-full px-3 py-1.5 border border-stone-300 rounded-lg text-right" placeholder="0" /></div>
+                    <div><label className="text-xs text-stone-500">หน่วยที่ใช้</label><div className="px-3 py-1.5 bg-stone-50 rounded-lg text-right text-stone-700">{units} หน่วย</div></div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-stone-100 text-sm">
+                    <span className="text-stone-500">ค่าไฟ {fmtMoney(elec)} + เหมาน้ำ {fmtMoney(Number(r.waterFlat) || 0)}{Number(r.fixedExtra) ? ` + คงที่ ${fmtMoney(Number(r.fixedExtra))}` : ''}</span>
+                    <span className="font-medium text-stone-800">รวม {fmtMoney(total)} ฿{occ.length > 1 ? ` → คนละ ${fmtMoney(share)} ฿` : ''}</span>
+                  </div>
+                </div>
+              );
+            })}
+            <button onClick={addRoom} className="w-full py-2.5 border-2 border-dashed border-stone-300 rounded-xl text-sm text-stone-500 hover:border-emerald-400 hover:text-emerald-700 flex items-center justify-center gap-1.5"><Plus className="w-4 h-4" />เพิ่มห้อง</button>
+          </div>
+        )}
+
+        {rooms.length > 0 && (
+          <div className="bg-white border border-stone-200 rounded-xl p-4">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-sm font-medium text-stone-700">รวมค่าห้องทั้งหมด</span>
+              <span className="text-lg font-semibold text-emerald-800">{fmtMoney(grandTotal)} ฿</span>
+            </div>
+            <div className="text-xs text-stone-500 space-y-0.5">
+              {Object.keys(perEmp).length > 0 ? Object.entries(perEmp).map(([id, amt]) => (
+                <div key={id} className="flex justify-between"><span>{empName(id)}</span><span>{fmtMoney(amt)} ฿</span></div>
+              )) : <span>ยังไม่มีผู้พักในห้องใด</span>}
+            </div>
+            <p className="text-xs text-stone-500 mt-3">ยอดรายคนนี้จะไปขึ้นช่อง "ค่าห้องพัก" ในหน้าเงินเดือนงวดเดียวกันอัตโนมัติ (เฉพาะงวดที่ยังไม่ได้ทำ)</p>
+          </div>
+        )}
+
+        <FormField label="หมายเหตุงวดนี้"><textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} className="w-full px-3 py-2 border border-stone-300 rounded-lg resize-none" /></FormField>
+      </div>
+    </div>
+  );
+}
+
 // ============ COMMISSION PAGE (คอมมิชชั่น) ============
 function CommissionPage({ businesses, employees, positions, activeBusinessId, ops }) {
   const now = new Date();
@@ -3548,6 +3766,7 @@ function PayrollPage({ businesses, zones, positions, employees, activeBusinessId
   const [reload, setReload] = useState(0);
   const [mode, setMode] = useState('list'); // 'list' | 'quick'
   const [commissionPool, setCommissionPool] = useState(null);
+  const [roomRentPool, setRoomRentPool] = useState(null);
 
   // พนักงานในธุรกิจนี้ — คนทำงานอยู่ + คนลาออกที่ยังมีงวดค้างจ่ายในเดือนนี้
   const payrollEmpIds = useMemo(() => new Set(payrolls.map((p) => p.employeeId)), [payrolls]);
@@ -3575,7 +3794,9 @@ function PayrollPage({ businesses, zones, positions, employees, activeBusinessId
       if (cancelled) return;
       const pool = await ops.commission.getByPeriod(activeBusinessId, year, month);
       if (cancelled) return;
-      setPayrolls(ps); setItems(its); setCommissionPool(pool); setLoading(false);
+      const rrPool = await ops.roomRent.getByPeriod(activeBusinessId, year, month);
+      if (cancelled) return;
+      setPayrolls(ps); setItems(its); setCommissionPool(pool); setRoomRentPool(rrPool); setLoading(false);
     })();
     return () => { cancelled = true; };
   }, [activeBusinessId, year, month, reload]);
@@ -3589,6 +3810,7 @@ function PayrollPage({ businesses, zones, positions, employees, activeBusinessId
   const commissionMap = useMemo(() => {
     const m = {}; (commissionPool?.entries || []).forEach((e) => { m[e.employeeId] = Number(e.amount) || 0; }); return m;
   }, [commissionPool]);
+  const roomRentMap = useMemo(() => roomRentMapFromPool(roomRentPool), [roomRentPool]);
 
   const totalNet = useMemo(() => {
     return bizEmployees.reduce((sum, emp) => {
@@ -3663,7 +3885,7 @@ function PayrollPage({ businesses, zones, positions, employees, activeBusinessId
         ) : mode === 'quick' ? (
           <PayrollQuickEntry
             bizEmployees={bizEmployees} positions={positions}
-            payrollByEmp={payrollByEmp} itemsByPayroll={itemsByPayroll} commissionMap={commissionMap}
+            payrollByEmp={payrollByEmp} itemsByPayroll={itemsByPayroll} commissionMap={commissionMap} roomRentMap={roomRentMap}
             year={year} month={month} businessId={activeBusinessId} ops={ops}
             onSaved={() => setReload((r) => r + 1)}
             onOpenDetail={(emp) => setEditingEmp(emp)}
@@ -3720,6 +3942,7 @@ function PayrollPage({ businesses, zones, positions, employees, activeBusinessId
           existingItems={payrollByEmp[editingEmp.id] ? (itemsByPayroll[payrollByEmp[editingEmp.id].id] || []) : []}
           year={year} month={month} businessId={activeBusinessId}
           commissionPrefill={commissionMap[editingEmp.id] || 0}
+          roomFeePrefill={roomRentMap[editingEmp.id]}
           ops={ops}
           onClose={() => setEditingEmp(null)}
           onSaved={() => { setEditingEmp(null); setReload((r) => r + 1); }}
@@ -3730,7 +3953,7 @@ function PayrollPage({ businesses, zones, positions, employees, activeBusinessId
 }
 
 // ============ PAYROLL EDITOR MODAL ============
-function PayrollEditor({ employee, existing, existingItems, year, month, businessId, commissionPrefill, ops, onClose, onSaved }) {
+function PayrollEditor({ employee, existing, existingItems, year, month, businessId, commissionPrefill, roomFeePrefill, ops, onClose, onSaved }) {
   const isFinalized = existing?.status === 'finalized';
   // ค่าตั้งต้น: ถ้ามี payroll แล้วใช้ค่าเดิม ถ้าไม่มีดึงจากข้อมูลพนักงาน
   const [f, setF] = useState(() => ({
@@ -3741,7 +3964,7 @@ function PayrollEditor({ employee, existing, existingItems, year, month, busines
     holidayDaysTaken: existing?.holidayDaysTaken ?? 0,
     lateDeduction: existing?.lateDeduction ?? 0,
     socialSecurity: existing?.socialSecurity ?? (employee.hasSocialSecurity ? calcSocialSecurity(payrollBaseSalary(employee, year, month)) : 0),
-    roomFee: existing?.roomFee ?? employee.roomFee ?? 0,
+    roomFee: existing?.roomFee ?? (roomFeePrefill != null ? roomFeePrefill : (employee.roomFee ?? 0)),
     paidViaCompany: existing?.paidViaCompany ?? 0,
     note: existing?.note ?? '',
   }));
@@ -3856,7 +4079,7 @@ function PayrollEditor({ employee, existing, existingItems, year, month, busines
             )}
             <div className="flex items-center gap-1.5 text-sm font-semibold text-emerald-800 mb-2"><TrendingUp className="w-4 h-4" />รายรับ</div>
             <Row label="เงินเดือนฐาน" hint={`ค่าแรง/วัน = ${fmtMoney(calc.daily)} ฿`}>{numInput('baseSalary')}</Row>
-            <Row label="คอมมิชชั่น">{numInput('commission')}</Row>
+            <Row label="คอมมิชชั่น" hint={!existing && commissionPrefill ? 'จากหน้าคอมมิชชั่นงวดนี้' : undefined}>{numInput('commission')}</Row>
             <Row label="ทำงานวันหยุด (วัน)" hint={`+${fmtMoney(calc.holidayWorkPay)} ฿`}>{numInput('holidayWorkDays')}</Row>
             <div className="mt-2 pt-2 border-t border-emerald-100"><ItemList title="งานเสริม (ล้างห้องน้ำ, ลอกท่อ ฯลฯ)" list={bonusTasks} setList={setBonusTasks} color="text-emerald-700" addLabel="เพิ่มงานเสริม" /></div>
           </div>
@@ -3874,7 +4097,7 @@ function PayrollEditor({ employee, existing, existingItems, year, month, busines
             {calc.excessHolidayDeduction > 0 && <Row label="หักหยุดเกิน (อัตโนมัติ)"><div className="text-right text-sm text-red-600 py-1.5">−{fmtMoney(calc.excessHolidayDeduction)}</div></Row>}
             <Row label="หักมาสาย">{numInput('lateDeduction')}</Row>
             <Row label="ประกันสังคม" hint={employee.hasSocialSecurity ? '5% ของฐาน สูงสุด 750' : 'พนักงานนี้ไม่มี ปกส.'}>{numInput('socialSecurity')}</Row>
-            <Row label="ค่าห้องพัก">{numInput('roomFee')}</Row>
+            <Row label="ค่าห้องพัก" hint={!existing && roomFeePrefill != null ? 'จากหน้าค่าห้อง (มิเตอร์) งวดนี้' : undefined}>{numInput('roomFee')}</Row>
             <Row label="รับผ่านบัญชี บ.วีเอสจง แล้ว" hint="เงินที่จ่ายไปแล้ว">{numInput('paidViaCompany')}</Row>
             <div className="mt-2 pt-2 border-t border-red-100 space-y-3">
               <ItemList title="เบิกล่วงหน้า" list={advances} setList={setAdvances} color="text-red-600" addLabel="เพิ่มการเบิก" />
@@ -3911,7 +4134,7 @@ function PayrollEditor({ employee, existing, existingItems, year, month, busines
 }
 
 // ============ PAYROLL QUICK ENTRY (Spreadsheet / Cards) ============
-function PayrollQuickEntry({ bizEmployees, positions, payrollByEmp, itemsByPayroll, commissionMap, year, month, businessId, ops, onSaved, onOpenDetail }) {
+function PayrollQuickEntry({ bizEmployees, positions, payrollByEmp, itemsByPayroll, commissionMap, roomRentMap, year, month, businessId, ops, onSaved, onOpenDetail }) {
   const isMobile = useIsMobile();
   const [drafts, setDrafts] = useState({});
   const [touched, setTouched] = useState(() => new Set());
@@ -3926,10 +4149,11 @@ function PayrollQuickEntry({ bizEmployees, positions, payrollByEmp, itemsByPayro
       const its = p ? (itemsByPayroll[p.id] || []) : [];
       d[emp.id] = buildPayrollDraft(emp, p, its, year, month);
       if (!p && commissionMap && commissionMap[emp.id]) d[emp.id].commission = commissionMap[emp.id];
+      if (!p && roomRentMap && roomRentMap[emp.id] != null) d[emp.id].roomFee = roomRentMap[emp.id];
     });
     setDrafts(d);
     setTouched(new Set());
-  }, [bizEmployees, payrollByEmp, itemsByPayroll, commissionMap]);
+  }, [bizEmployees, payrollByEmp, itemsByPayroll, commissionMap, roomRentMap]);
 
   const upd = (empId, field, value) => {
     setDrafts((prev) => ({ ...prev, [empId]: { ...prev[empId], [field]: value } }));
