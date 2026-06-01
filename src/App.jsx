@@ -85,8 +85,33 @@ function computePayroll(p, items = []) {
   return { daily, holidayWorkPay, bonusTasks, totalIncome, excessDays, excessHolidayDeduction, advances, otherDeductions, totalDeduction, net };
 }
 
+// ============ PROBATION (ทดลองงาน) ============
+// อยู่ในช่วงทดลองงานของงวด (year, month) ไหม — นับเป็นจำนวนรอบบิลจากเดือนเริ่มงาน
+function isProbationPeriod(emp, year, month) {
+  if (!emp?.onProbation || !emp.startDate || !Number(emp.probationMonths)) return false;
+  const start = new Date(emp.startDate);
+  if (isNaN(start)) return false;
+  const startYM = start.getFullYear() * 12 + start.getMonth();
+  const payYM = Number(year) * 12 + (Number(month) - 1);
+  const diff = payYM - startYM; // 0 = เดือนเริ่มงาน (รอบบิลแรก)
+  return diff >= 0 && diff < Number(emp.probationMonths);
+}
+// รอบบิลปัจจุบันของช่วงทดลอง (เช่น 1/2) — ใช้แสดงผล
+function probationCycle(emp, year, month) {
+  if (!emp?.startDate) return null;
+  const start = new Date(emp.startDate);
+  const startYM = start.getFullYear() * 12 + start.getMonth();
+  const diff = Number(year) * 12 + (Number(month) - 1) - startYM;
+  return diff + 1; // รอบบิลที่เท่าไหร่นับจากเริ่มงาน
+}
+// เงินเดือนฐานที่ใช้จริงสำหรับงวดนั้น (ทดลองงาน vs เต็ม)
+function effectiveBaseSalary(emp, year, month) {
+  if (isProbationPeriod(emp, year, month) && Number(emp.probationSalary) > 0) return Number(emp.probationSalary);
+  return Number(emp.baseSalary) || 0;
+}
+
 // สร้าง draft ตั้งต้นสำหรับ payroll (จาก payroll เดิม หรือ default จากโปรไฟล์พนักงาน)
-function buildPayrollDraft(emp, payroll, items) {
+function buildPayrollDraft(emp, payroll, items, year, month) {
   if (payroll) {
     return {
       baseSalary: payroll.baseSalary ?? 0,
@@ -103,11 +128,12 @@ function buildPayrollDraft(emp, payroll, items) {
       items: (items || []).map((i) => ({ kind: i.kind, label: i.label, amount: i.amount })),
     };
   }
+  const base = (year && month) ? effectiveBaseSalary(emp, year, month) : (emp.baseSalary ?? 0);
   return {
-    baseSalary: emp.baseSalary ?? 0,
+    baseSalary: base,
     holidayQuota: emp.holidayQuota ?? 4,
     commission: 0, holidayWorkDays: 0, holidayDaysTaken: 0, lateDeduction: 0,
-    socialSecurity: emp.hasSocialSecurity ? calcSocialSecurity(emp.baseSalary) : 0,
+    socialSecurity: emp.hasSocialSecurity ? calcSocialSecurity(base) : 0,
     roomFee: emp.roomFee ?? 0,
     paidViaCompany: 0, note: '', status: 'draft', items: [],
   };
@@ -2551,7 +2577,7 @@ function EmployeeDetailModal({ employee, zones, positions, employees, businesses
           {canRaise && (
             <div className="px-6 pb-6">
               <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-2"><Wallet className="w-4 h-4 text-stone-500" /><h3 className="font-medium text-stone-700">เงินเดือนปัจจุบัน {fmtMoney(employee.baseSalary)} ฿</h3></div>
+                <div className="flex items-center gap-2 flex-wrap"><Wallet className="w-4 h-4 text-stone-500" /><h3 className="font-medium text-stone-700">เงินเดือนปัจจุบัน {fmtMoney(employee.baseSalary)} ฿</h3>{employee.onProbation && Number(employee.probationSalary) > 0 && <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-100 text-amber-800 text-xs font-medium rounded"><Clock className="w-3 h-3" />ทดลองงาน {fmtMoney(employee.probationSalary)} ฿ • {employee.probationMonths || 0} รอบบิล</span>}</div>
                 {!resigned && <button onClick={onRaise} className="flex items-center gap-1.5 px-3 py-1.5 text-emerald-700 hover:bg-emerald-50 border border-emerald-300 rounded-lg text-sm font-medium"><TrendingUp className="w-3.5 h-3.5" /> ปรับเงินเดือน</button>}
               </div>
               {salaryHistory === null ? (
@@ -2815,6 +2841,9 @@ function EmployeeForm({ initial, zones, positions, employees, businesses, onSave
   const [passportDocs, setPassportDocs] = useState(initial?.passportDocs || []);
   const [applicationDocs, setApplicationDocs] = useState(initial?.applicationDocs || []);
   const [baseSalary, setBaseSalary] = useState(initial?.baseSalary ?? '');
+  const [onProbation, setOnProbation] = useState(initial?.onProbation ?? false);
+  const [probationSalary, setProbationSalary] = useState(initial?.probationSalary ?? '');
+  const [probationMonths, setProbationMonths] = useState(initial?.probationMonths ?? '');
   const [holidayQuota, setHolidayQuota] = useState(initial?.holidayQuota ?? 4);
   const [hasSocialSecurity, setHasSocialSecurity] = useState(initial?.hasSocialSecurity ?? false);
   const [roomFee, setRoomFee] = useState(initial?.roomFee ?? '');
@@ -2853,6 +2882,9 @@ function EmployeeForm({ initial, zones, positions, employees, businesses, onSave
       applicationDocs,
       ...(canEditPay ? {
         baseSalary: Number(baseSalary) || 0,
+        onProbation,
+        probationSalary: onProbation ? (Number(probationSalary) || 0) : null,
+        probationMonths: onProbation ? (Number(probationMonths) || null) : null,
         holidayQuota: Number(holidayQuota) || 0,
         hasSocialSecurity: !!hasSocialSecurity,
         roomFee: Number(roomFee) || 0,
@@ -2958,6 +2990,24 @@ function EmployeeForm({ initial, zones, positions, employees, businesses, onSave
                 <span className="text-sm text-stone-700">มีประกันสังคม (หัก 5% สูงสุด 750)</span>
               </label>
             </FormField>
+          </div>
+          <div className="pt-3 border-t border-emerald-100">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" checked={onProbation} onChange={(e) => setOnProbation(e.target.checked)} className="w-4 h-4 rounded text-emerald-700" />
+              <span className="text-sm font-medium text-stone-700">อยู่ระหว่างทดลองงาน (เงินเดือนช่วงทดลองต่ำกว่าปกติ)</span>
+            </label>
+            {onProbation && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-3">
+                <FormField label="เงินเดือนช่วงทดลองงาน (บาท)">
+                  <input type="number" min="0" step="0.01" value={probationSalary} onChange={(e) => setProbationSalary(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600" placeholder="เช่น 9000" />
+                  <p className="text-xs text-stone-500 mt-1">เงินเดือนเต็มหลังผ่านทดลอง = {fmtMoney(Number(baseSalary) || 0)} บาท</p>
+                </FormField>
+                <FormField label="ทดลองงานกี่รอบบิล (เดือน)">
+                  <input type="number" min="1" max="12" value={probationMonths} onChange={(e) => setProbationMonths(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600" placeholder="เช่น 2" />
+                  <p className={`text-xs mt-1 ${startDate ? 'text-stone-500' : 'text-amber-600'}`}>{startDate ? `นับจากเดือนเริ่มงาน (${fmt(startDate)}) — ครบ ${Number(probationMonths) || 0} รอบบิลแล้วใช้เงินเดือนเต็มอัตโนมัติ` : 'ต้องระบุ "วันเริ่มงาน" ด้วย ระบบจึงนับรอบบิลได้'}</p>
+                </FormField>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -3395,13 +3445,13 @@ function PayrollEditor({ employee, existing, existingItems, year, month, busines
   const isFinalized = existing?.status === 'finalized';
   // ค่าตั้งต้น: ถ้ามี payroll แล้วใช้ค่าเดิม ถ้าไม่มีดึงจากข้อมูลพนักงาน
   const [f, setF] = useState(() => ({
-    baseSalary: existing?.baseSalary ?? employee.baseSalary ?? 0,
+    baseSalary: existing?.baseSalary ?? effectiveBaseSalary(employee, year, month),
     holidayQuota: existing?.holidayQuota ?? employee.holidayQuota ?? 4,
     commission: existing?.commission ?? 0,
     holidayWorkDays: existing?.holidayWorkDays ?? 0,
     holidayDaysTaken: existing?.holidayDaysTaken ?? 0,
     lateDeduction: existing?.lateDeduction ?? 0,
-    socialSecurity: existing?.socialSecurity ?? (employee.hasSocialSecurity ? calcSocialSecurity(employee.baseSalary) : 0),
+    socialSecurity: existing?.socialSecurity ?? (employee.hasSocialSecurity ? calcSocialSecurity(effectiveBaseSalary(employee, year, month)) : 0),
     roomFee: existing?.roomFee ?? employee.roomFee ?? 0,
     paidViaCompany: existing?.paidViaCompany ?? 0,
     note: existing?.note ?? '',
@@ -3503,6 +3553,12 @@ function PayrollEditor({ employee, existing, existingItems, year, month, busines
 
           {/* รายรับ */}
           <div className="bg-emerald-50/40 rounded-xl p-4">
+            {isProbationPeriod(employee, year, month) && (
+              <div className="flex items-start gap-2 mb-3 p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800">
+                <Clock className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                <span>อยู่ช่วง<b>ทดลองงาน</b> (รอบบิลที่ {probationCycle(employee, year, month)}/{employee.probationMonths}) — ตั้งต้นด้วยเงินเดือนทดลอง <b>{fmtMoney(employee.probationSalary)} ฿</b> (เงินเดือนเต็มหลังผ่าน: {fmtMoney(employee.baseSalary)} ฿) ปรับตัวเลขด้านล่างได้</span>
+              </div>
+            )}
             <div className="flex items-center gap-1.5 text-sm font-semibold text-emerald-800 mb-2"><TrendingUp className="w-4 h-4" />รายรับ</div>
             <Row label="เงินเดือนฐาน" hint={`ค่าแรง/วัน = ${fmtMoney(calc.daily)} ฿`}>{numInput('baseSalary')}</Row>
             <Row label="คอมมิชชั่น">{numInput('commission')}</Row>
@@ -3573,7 +3629,7 @@ function PayrollQuickEntry({ bizEmployees, positions, payrollByEmp, itemsByPayro
     bizEmployees.forEach((emp) => {
       const p = payrollByEmp[emp.id];
       const its = p ? (itemsByPayroll[p.id] || []) : [];
-      d[emp.id] = buildPayrollDraft(emp, p, its);
+      d[emp.id] = buildPayrollDraft(emp, p, its, year, month);
     });
     setDrafts(d);
     setTouched(new Set());
