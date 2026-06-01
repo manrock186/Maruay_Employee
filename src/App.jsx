@@ -1844,7 +1844,8 @@ function BusinessesPage({ businesses, zones, employees, positions, profile, ops,
                         return (
                           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                             {bizZones.map((zone) => {
-                              const count = employees.filter((e) => e.zoneId === zone.id).length;
+                              const zoneEmps = employees.filter((e) => e.zoneId === zone.id);
+                              const count = zoneEmps.length;
                               return (
                                 <div key={zone.id} onClick={() => onOpenZone(biz.id, zone.id)} className="bg-white rounded-lg border border-stone-200 p-4 hover:border-amber-400 hover:shadow-md hover:-translate-y-0.5 transition-all group/zone cursor-pointer">
                                   <div className="flex items-start justify-between">
@@ -1857,6 +1858,18 @@ function BusinessesPage({ businesses, zones, employees, positions, profile, ops,
                                       <button onClick={(e) => { e.stopPropagation(); delZone(zone.id); }} className="p-1 hover:bg-red-50 rounded text-red-600"><Trash2 className="w-3.5 h-3.5" /></button>
                                     </div>
                                   </div>
+                                  {zoneEmps.length > 0 && (
+                                    <div className="mt-3 flex items-center">
+                                      <div className="flex -space-x-2">
+                                        {zoneEmps.slice(0, 6).map((e) => (
+                                          <div key={e.id} className="ring-2 ring-white rounded-full" title={dispName(e)}>
+                                            <Avatar photo={e.photo} name={dispName(e)} size={26} />
+                                          </div>
+                                        ))}
+                                      </div>
+                                      {zoneEmps.length > 6 && <span className="ml-1.5 text-xs text-stone-500">+{zoneEmps.length - 6}</span>}
+                                    </div>
+                                  )}
                                   {zone.description && <p className="text-xs text-stone-500 mt-2 line-clamp-2">{zone.description}</p>}
                                   <div className="mt-2 pt-2 border-t border-stone-100 flex items-center justify-between text-xs text-amber-700 opacity-0 group-hover/zone:opacity-100 transition-opacity"><span>ดูพนักงาน</span><ChevronRight className="w-3.5 h-3.5" /></div>
                                 </div>
@@ -1865,6 +1878,16 @@ function BusinessesPage({ businesses, zones, employees, positions, profile, ops,
                             {crossZoneEmps.length > 0 && (
                               <div onClick={() => onOpenZone(biz.id, '__nozone__')} className="bg-amber-50/60 rounded-lg border-2 border-dashed border-amber-300 p-4 hover:bg-amber-50 hover:border-amber-400 hover:shadow-md hover:-translate-y-0.5 transition-all group/nz cursor-pointer">
                                 <div className="flex items-center gap-2"><div className="w-8 h-8 rounded-lg bg-amber-200 flex items-center justify-center"><MapPin className="w-4 h-4 text-amber-800" /></div><div><div className="font-medium text-amber-900">ไม่จำกัดโซน</div><div className="text-xs text-amber-700">{crossZoneEmps.length} คน</div></div></div>
+                                <div className="mt-3 flex items-center">
+                                  <div className="flex -space-x-2">
+                                    {crossZoneEmps.slice(0, 6).map((e) => (
+                                      <div key={e.id} className="ring-2 ring-white rounded-full" title={dispName(e)}>
+                                        <Avatar photo={e.photo} name={dispName(e)} size={26} />
+                                      </div>
+                                    ))}
+                                  </div>
+                                  {crossZoneEmps.length > 6 && <span className="ml-1.5 text-xs text-amber-700">+{crossZoneEmps.length - 6}</span>}
+                                </div>
                                 <p className="text-xs text-amber-700/80 mt-2">พนักงานที่ดูแลข้ามโซน เช่น ผู้จัดการ</p>
                                 <div className="mt-2 pt-2 border-t border-amber-200 flex items-center justify-between text-xs text-amber-800 opacity-0 group-hover/nz:opacity-100 transition-opacity"><span>ดูพนักงาน</span><ChevronRight className="w-3.5 h-3.5" /></div>
                               </div>
