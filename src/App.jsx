@@ -62,6 +62,11 @@ const applyTheme = (theme) => {
 
 // ============ PAYROLL HELPERS ============
 const MONTH_NAMES = ['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน', 'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
+// ป้ายเดือนที่จ่ายเงิน (งวดทำงานเดือน month → จ่ายต้นเดือนถัดไป)
+function payMonthLabel(year, month) {
+  const d = new Date(Number(year), Number(month), 1);
+  return `${MONTH_NAMES[d.getMonth()]} ${d.getFullYear() + 543}`;
+}
 const fmtMoney = (n) => (Number(n) || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 // คำนวณประกันสังคม: 5% ของฐาน สูงสุด 750
@@ -109,6 +114,24 @@ function effectiveBaseSalary(emp, year, month) {
   if (isProbationPeriod(emp, year, month) && Number(emp.probationSalary) > 0) return Number(emp.probationSalary);
   return Number(emp.baseSalary) || 0;
 }
+// จำนวนวันในเดือน
+function daysInMonth(year, month) { return new Date(Number(year), Number(month), 0).getDate(); }
+// สัดส่วนเฉลี่ยเงินเดือนตามวันเริ่มงาน — เฉพาะเดือนที่เริ่มงาน (เข้ากลางเดือนได้สัดส่วน)
+function prorationFactor(emp, year, month) {
+  if (!emp?.startDate) return 1;
+  const s = new Date(emp.startDate);
+  if (isNaN(s)) return 1;
+  if (s.getFullYear() === Number(year) && s.getMonth() === Number(month) - 1) {
+    const dim = daysInMonth(year, month);
+    const startDay = s.getDate();
+    return (dim - startDay + 1) / dim;
+  }
+  return 1; // เดือนอื่น = เต็มเดือน
+}
+// เงินเดือนฐานที่ควรใช้ตั้งต้นใน payroll งวดนั้น (ทดลองงาน + เฉลี่ยวันเริ่มงาน)
+function payrollBaseSalary(emp, year, month) {
+  return Math.round(effectiveBaseSalary(emp, year, month) * prorationFactor(emp, year, month));
+}
 
 // สร้าง draft ตั้งต้นสำหรับ payroll (จาก payroll เดิม หรือ default จากโปรไฟล์พนักงาน)
 function buildPayrollDraft(emp, payroll, items, year, month) {
@@ -128,7 +151,7 @@ function buildPayrollDraft(emp, payroll, items, year, month) {
       items: (items || []).map((i) => ({ kind: i.kind, label: i.label, amount: i.amount })),
     };
   }
-  const base = (year && month) ? effectiveBaseSalary(emp, year, month) : (emp.baseSalary ?? 0);
+  const base = (year && month) ? payrollBaseSalary(emp, year, month) : (emp.baseSalary ?? 0);
   return {
     baseSalary: base,
     holidayQuota: emp.holidayQuota ?? 4,
@@ -242,6 +265,7 @@ function printPayslip({ employee, payroll, items, business, position, year, mont
         <div style="font-family:'Kanit';font-size:22px;font-weight:700;color:#065f46;">สลิปเงินเดือน</div>
         <div style="font-size:14px;color:#57534e;">PAY SLIP</div>
         <div style="font-size:13px;margin-top:4px;">งวดเดือน <b>${esc(period)}</b></div>
+        <div style="font-size:12px;color:#57534e;">(จ่าย ${esc(payMonthLabel(year, month))})</div>
       </div>
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 24px;margin:14px 0 16px;font-size:14px;">
@@ -2841,6 +2865,8 @@ function EmployeeForm({ initial, zones, positions, employees, businesses, onSave
   const [passportDocs, setPassportDocs] = useState(initial?.passportDocs || []);
   const [applicationDocs, setApplicationDocs] = useState(initial?.applicationDocs || []);
   const [baseSalary, setBaseSalary] = useState(initial?.baseSalary ?? '');
+  const [salarySplitEnabled, setSalarySplitEnabled] = useState(!!(initial?.salarySplit && Object.keys(initial.salarySplit).length));
+  const [salarySplit, setSalarySplit] = useState(initial?.salarySplit || {});
   const [onProbation, setOnProbation] = useState(initial?.onProbation ?? false);
   const [probationSalary, setProbationSalary] = useState(initial?.probationSalary ?? '');
   const [probationMonths, setProbationMonths] = useState(initial?.probationMonths ?? '');
@@ -2849,6 +2875,20 @@ function EmployeeForm({ initial, zones, positions, employees, businesses, onSave
   const [roomFee, setRoomFee] = useState(initial?.roomFee ?? '');
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef(null);
+
+  // แยกเงินเดือนตามธุรกิจ: ธุรกิจหลัก + ธุรกิจเพิ่มเติม
+  const mainBizId = initial?.businessId || businessId;
+  const splitBizIds = [mainBizId, ...additionalBusinessIds].filter((v, i, a) => v && a.indexOf(v) === i);
+  const splitTotal = splitBizIds.reduce((s, id) => s + (Number(salarySplit[id]) || 0), 0);
+  const canSplit = splitBizIds.length > 1;
+  const setSplitAmount = (id, val) => setSalarySplit((prev) => ({ ...prev, [id]: val }));
+  const toggleSplit = () => {
+    if (!salarySplitEnabled) {
+      setSalarySplit((prev) => (Object.keys(prev).length ? prev : { [mainBizId]: Number(baseSalary) || 0 }));
+      setSalarySplitEnabled(true);
+    } else { setSalarySplitEnabled(false); }
+  };
+  const bizName = (id) => businesses?.find((b) => b.id === id)?.name || '—';
 
   const handlePhoto = async (e) => {
     const f = e.target.files?.[0]; if (!f) return;
@@ -2881,7 +2921,8 @@ function EmployeeForm({ initial, zones, positions, employees, businesses, onSave
       passportDocs: foreign ? passportDocs : [],
       applicationDocs,
       ...(canEditPay ? {
-        baseSalary: Number(baseSalary) || 0,
+        baseSalary: salarySplitEnabled ? splitTotal : (Number(baseSalary) || 0),
+        salarySplit: salarySplitEnabled ? splitBizIds.reduce((o, id) => { o[id] = Number(salarySplit[id]) || 0; return o; }, {}) : null,
         onProbation,
         probationSalary: onProbation ? (Number(probationSalary) || 0) : null,
         probationMonths: onProbation ? (Number(probationMonths) || null) : null,
@@ -2974,8 +3015,30 @@ function EmployeeForm({ initial, zones, positions, employees, businesses, onSave
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <FormField label="เงินเดือนฐาน (บาท)">
-              <input type="number" min="0" step="0.01" value={baseSalary} onChange={(e) => setBaseSalary(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600" placeholder="เช่น 12000" />
-              {Number(baseSalary) > 0 && <p className="text-xs text-stone-500 mt-1">ค่าแรง/วัน = {fmtMoney(Number(baseSalary) / 30)} บาท</p>}
+              {!salarySplitEnabled ? (
+                <>
+                  <input type="number" min="0" step="0.01" value={baseSalary} onChange={(e) => setBaseSalary(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600" placeholder="เช่น 12000" />
+                  {Number(baseSalary) > 0 && <p className="text-xs text-stone-500 mt-1">ค่าแรง/วัน = {fmtMoney(Number(baseSalary) / 30)} บาท</p>}
+                </>
+              ) : (
+                <div className="space-y-2">
+                  {splitBizIds.map((id) => (
+                    <div key={id} className="flex items-center gap-2">
+                      <span className="text-xs text-stone-600 w-32 truncate flex-shrink-0" title={bizName(id)}>{bizName(id)}{id === mainBizId ? ' (หลัก)' : ''}</span>
+                      <input type="number" min="0" step="0.01" value={salarySplit[id] ?? ''} onChange={(e) => setSplitAmount(id, e.target.value)} className="flex-1 px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600" placeholder="0" />
+                    </div>
+                  ))}
+                  <div className="flex items-center justify-between text-sm pt-1 border-t border-emerald-100">
+                    <span className="text-stone-600">รวมเงินเดือน</span>
+                    <span className="font-semibold text-emerald-800">{fmtMoney(splitTotal)} ฿</span>
+                  </div>
+                </div>
+              )}
+              {canSplit && (
+                <button type="button" onClick={toggleSplit} className="mt-2 text-xs text-emerald-700 hover:underline">
+                  {salarySplitEnabled ? '↩ กลับไปใส่เงินเดือนก้อนเดียว' : '⊞ แยกเงินเดือนตามธุรกิจ (ทำงานหลายที่)'}
+                </button>
+              )}
             </FormField>
             <FormField label="โควต้าวันหยุด/เดือน">
               <input type="number" min="0" value={holidayQuota} onChange={(e) => setHolidayQuota(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600" placeholder="เช่น 4" />
@@ -3336,7 +3399,7 @@ function PayrollPage({ businesses, zones, positions, employees, activeBusinessId
 
   return (
     <div className="h-full overflow-auto">
-      <PageHeader title="เงินเดือน" subtitle={`${bizName} — ${MONTH_NAMES[month - 1]} ${year + 543}`}>
+      <PageHeader title="เงินเดือน" subtitle={`${bizName} — งวด ${MONTH_NAMES[month - 1]} ${year + 543} (จ่าย ${payMonthLabel(year, month)})`}>
         <button onClick={printReport} disabled={bizEmployees.length === 0} className="flex items-center gap-2 px-4 py-2 bg-white border border-stone-300 hover:bg-stone-50 disabled:opacity-50 disabled:cursor-not-allowed text-stone-700 rounded-lg text-sm font-medium">
           <FileText className="w-4 h-4" /> พิมพ์รายงานรวม
         </button>
@@ -3445,13 +3508,13 @@ function PayrollEditor({ employee, existing, existingItems, year, month, busines
   const isFinalized = existing?.status === 'finalized';
   // ค่าตั้งต้น: ถ้ามี payroll แล้วใช้ค่าเดิม ถ้าไม่มีดึงจากข้อมูลพนักงาน
   const [f, setF] = useState(() => ({
-    baseSalary: existing?.baseSalary ?? effectiveBaseSalary(employee, year, month),
+    baseSalary: existing?.baseSalary ?? payrollBaseSalary(employee, year, month),
     holidayQuota: existing?.holidayQuota ?? employee.holidayQuota ?? 4,
     commission: existing?.commission ?? 0,
     holidayWorkDays: existing?.holidayWorkDays ?? 0,
     holidayDaysTaken: existing?.holidayDaysTaken ?? 0,
     lateDeduction: existing?.lateDeduction ?? 0,
-    socialSecurity: existing?.socialSecurity ?? (employee.hasSocialSecurity ? calcSocialSecurity(effectiveBaseSalary(employee, year, month)) : 0),
+    socialSecurity: existing?.socialSecurity ?? (employee.hasSocialSecurity ? calcSocialSecurity(payrollBaseSalary(employee, year, month)) : 0),
     roomFee: existing?.roomFee ?? employee.roomFee ?? 0,
     paidViaCompany: existing?.paidViaCompany ?? 0,
     note: existing?.note ?? '',
@@ -3557,6 +3620,12 @@ function PayrollEditor({ employee, existing, existingItems, year, month, busines
               <div className="flex items-start gap-2 mb-3 p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800">
                 <Clock className="w-4 h-4 flex-shrink-0 mt-0.5" />
                 <span>อยู่ช่วง<b>ทดลองงาน</b> (รอบบิลที่ {probationCycle(employee, year, month)}/{employee.probationMonths}) — ตั้งต้นด้วยเงินเดือนทดลอง <b>{fmtMoney(employee.probationSalary)} ฿</b> (เงินเดือนเต็มหลังผ่าน: {fmtMoney(employee.baseSalary)} ฿) ปรับตัวเลขด้านล่างได้</span>
+              </div>
+            )}
+            {prorationFactor(employee, year, month) < 1 && (
+              <div className="flex items-start gap-2 mb-3 p-2.5 bg-sky-50 border border-sky-200 rounded-lg text-xs text-sky-800">
+                <Calendar className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                <span>เริ่มงานกลางเดือน ({fmt(employee.startDate)}) — <b>เฉลี่ยเงินเดือน</b>ตามวันที่ทำจริง {daysInMonth(year, month) - new Date(employee.startDate).getDate() + 1}/{daysInMonth(year, month)} วัน = ตั้งต้น <b>{fmtMoney(payrollBaseSalary(employee, year, month))} ฿</b> (เต็มเดือน {fmtMoney(effectiveBaseSalary(employee, year, month))} ฿) ปรับได้</span>
               </div>
             )}
             <div className="flex items-center gap-1.5 text-sm font-semibold text-emerald-800 mb-2"><TrendingUp className="w-4 h-4" />รายรับ</div>
