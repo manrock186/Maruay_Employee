@@ -6,7 +6,7 @@ import {
   Eye, EyeOff, Network, Save, ChevronDown, ChevronUp, User,
   KeyRound, AlertCircle, CheckCircle2, Crown, Award, MapPinned, Clock,
   Globe, CreditCard, BookOpen, FileText, ExternalLink, Paperclip,
-  Wallet, Banknote, Calculator, Receipt, Minus, TrendingUp, TrendingDown, Bell, BellRing, Check, CheckCheck, Hash, Menu, Wrench
+  Wallet, Banknote, Calculator, Receipt, Minus, TrendingUp, TrendingDown, Bell, BellRing, Check, CheckCheck, Hash, Menu, Wrench, Percent
 } from 'lucide-react';
 import { supabase, fromDB, toDB } from './supabase.js';
 
@@ -131,6 +131,20 @@ function prorationFactor(emp, year, month) {
 // เงินเดือนฐานที่ควรใช้ตั้งต้นใน payroll งวดนั้น (ทดลองงาน + เฉลี่ยวันเริ่มงาน)
 function payrollBaseSalary(emp, year, month) {
   return Math.round(effectiveBaseSalary(emp, year, month) * prorationFactor(emp, year, month));
+}
+
+// ============ COMMISSION (คอมมิชชั่น) ============
+// กองกลางคอม = กำไร POS − ผลรวมรายการหัก
+function commissionPoolValue(pool) {
+  if (!pool) return 0;
+  const ded = (pool.deductions || []).reduce((s, d) => s + (Number(d.amount) || 0), 0);
+  return (Number(pool.posProfit) || 0) - ded;
+}
+// ยอดคอมของพนักงานคนหนึ่งในงวด (จาก entries ที่บันทึกไว้)
+function commissionForEmployee(pool, employeeId) {
+  if (!pool) return 0;
+  const e = (pool.entries || []).find((x) => x.employeeId === employeeId);
+  return e ? (Number(e.amount) || 0) : 0;
 }
 
 // สร้าง draft ตั้งต้นสำหรับ payroll (จาก payroll เดิม หรือ default จากโปรไฟล์พนักงาน)
@@ -842,6 +856,21 @@ export default function App() {
       add: (d) => insertRow('payroll_items', d),
       delete: (id) => deleteRow('payroll_items', id),
     },
+    commission: {
+      getByPeriod: async (businessId, year, month) => {
+        const { data, error } = await supabase.from('commission_pools').select('*')
+          .eq('business_id', businessId).eq('period_year', year).eq('period_month', month).maybeSingle();
+        if (error) { console.error(error); return null; }
+        return data ? fromDB(data) : null;
+      },
+      upsert: async (d) => {
+        const { data, error } = await supabase.from('commission_pools')
+          .upsert({ ...toDB(d), updated_at: new Date().toISOString() }, { onConflict: 'business_id,period_year,period_month' })
+          .select().single();
+        if (error) { alert('บันทึกคอมไม่สำเร็จ: ' + error.message); return null; }
+        return fromDB(data);
+      },
+    },
     salaryChange: {
       listByEmployee: async (employeeId) => {
         const { data, error } = await supabase.from('salary_changes').select('*')
@@ -1008,6 +1037,15 @@ export default function App() {
             zones={zones}
             positions={positions}
             employees={employees}
+            activeBusinessId={activeBusinessId}
+            ops={ops}
+          />
+        )}
+        {view === 'commission' && profile.canManagePayroll && (
+          <CommissionPage
+            businesses={businesses}
+            employees={employees}
+            positions={positions}
             activeBusinessId={activeBusinessId}
             ops={ops}
           />
@@ -1311,6 +1349,7 @@ function Sidebar({ view, setView, profile, businesses, zones, activeBusinessId, 
     { id: 'employees', label: 'พนักงาน', icon: Users },
     { id: 'orgchart', label: 'แผนผังองค์กร', icon: Network },
     { id: 'payroll', label: 'เงินเดือน', icon: Wallet, show: profile.canManagePayroll },
+    { id: 'commission', label: 'คอมมิชชั่น', icon: Percent, show: profile.canManagePayroll },
     { id: 'users', label: 'ผู้ใช้ระบบ', icon: Shield, show: isOwner },
     { id: 'contractors', label: 'ช่าง/ผู้รับเหมา', icon: Wrench, show: isOwner },
     { id: 'settings', label: 'ตั้งค่า', icon: Settings, show: isOwner },
@@ -2871,6 +2910,7 @@ function EmployeeForm({ initial, zones, positions, employees, businesses, onSave
   const [probationSalary, setProbationSalary] = useState(initial?.probationSalary ?? '');
   const [probationMonths, setProbationMonths] = useState(initial?.probationMonths ?? '');
   const [holidayQuota, setHolidayQuota] = useState(initial?.holidayQuota ?? 4);
+  const [commissionPct, setCommissionPct] = useState(initial?.commissionPct ?? '');
   const [hasSocialSecurity, setHasSocialSecurity] = useState(initial?.hasSocialSecurity ?? false);
   const [roomFee, setRoomFee] = useState(initial?.roomFee ?? '');
   const [uploading, setUploading] = useState(false);
@@ -2923,6 +2963,7 @@ function EmployeeForm({ initial, zones, positions, employees, businesses, onSave
       ...(canEditPay ? {
         baseSalary: salarySplitEnabled ? splitTotal : (Number(baseSalary) || 0),
         salarySplit: salarySplitEnabled ? splitBizIds.reduce((o, id) => { o[id] = Number(salarySplit[id]) || 0; return o; }, {}) : null,
+        commissionPct: commissionPct === '' ? null : Number(commissionPct),
         onProbation,
         probationSalary: onProbation ? (Number(probationSalary) || 0) : null,
         probationMonths: onProbation ? (Number(probationMonths) || null) : null,
@@ -3043,6 +3084,10 @@ function EmployeeForm({ initial, zones, positions, employees, businesses, onSave
             <FormField label="โควต้าวันหยุด/เดือน">
               <input type="number" min="0" value={holidayQuota} onChange={(e) => setHolidayQuota(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600" placeholder="เช่น 4" />
               <p className="text-xs text-stone-500 mt-1">หยุดเกินจากนี้จะถูกหักเป็นรายวัน</p>
+            </FormField>
+            <FormField label="% คอมมิชชั่น (ตั้งต้นในหน้าคอม)">
+              <input type="number" min="0" step="0.001" value={commissionPct} onChange={(e) => setCommissionPct(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600" placeholder="เช่น 4.3 (= 4.3%)" />
+              <p className="text-xs text-stone-500 mt-1">เว้นว่างได้ถ้าไม่ได้คอมตาม % — ใส่คอมเป็นจำนวนเงินในหน้าคอมได้</p>
             </FormField>
             <FormField label="ค่าห้องพัก/เดือน (บาท)">
               <input type="number" min="0" step="0.01" value={roomFee} onChange={(e) => setRoomFee(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600" placeholder="0 = ไม่พักห้องตลาด" />
@@ -3318,6 +3363,180 @@ function EmployeeTree({ employees, allEmployees, zones, positions, businesses, a
 }
 
 // ============ PAYROLL PAGE ============
+// ============ COMMISSION PAGE (คอมมิชชั่น) ============
+function CommissionPage({ businesses, employees, positions, activeBusinessId, ops }) {
+  const now = new Date();
+  const [year, setYear] = useState(now.getFullYear());
+  const [month, setMonth] = useState(now.getMonth() + 1);
+  const [posProfit, setPosProfit] = useState('');
+  const [deductions, setDeductions] = useState([]);
+  const [entries, setEntries] = useState({});
+  const [note, setNote] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [savedAt, setSavedAt] = useState(null);
+
+  const business = businesses.find((b) => b.id === activeBusinessId);
+  const bizEmployees = useMemo(() => employees.filter((e) => isActive(e) && (e.businessId === activeBusinessId || (e.additionalBusinessIds || []).includes(activeBusinessId))), [employees, activeBusinessId]);
+
+  useEffect(() => {
+    if (!activeBusinessId) return;
+    let cancelled = false;
+    setLoading(true);
+    (async () => {
+      const pool = await ops.commission.getByPeriod(activeBusinessId, year, month);
+      if (cancelled) return;
+      if (pool) {
+        setPosProfit(pool.posProfit ?? '');
+        setDeductions(pool.deductions || []);
+        setNote(pool.note || '');
+        const em = {};
+        (pool.entries || []).forEach((e) => { em[e.employeeId] = { pct: e.pct ?? '', amount: e.amount ?? '' }; });
+        // เติม pct ตั้งต้นให้คนที่ยังไม่มี entry
+        bizEmployees.forEach((e) => { if (!em[e.id] && e.commissionPct != null) em[e.id] = { pct: e.commissionPct, amount: '' }; });
+        setEntries(em);
+        setSavedAt(pool.updatedAt || pool.createdAt || null);
+      } else {
+        setPosProfit(''); setDeductions([]); setNote(''); setSavedAt(null);
+        const em = {};
+        bizEmployees.forEach((e) => { if (e.commissionPct != null) em[e.id] = { pct: e.commissionPct, amount: '' }; });
+        setEntries(em);
+      }
+      setLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [activeBusinessId, year, month]);
+
+  const poolValue = (Number(posProfit) || 0) - deductions.reduce((s, d) => s + (Number(d.amount) || 0), 0);
+  const computedFor = (empId) => {
+    const pct = Number(entries[empId]?.pct) || 0;
+    return Math.round(poolValue * pct / 100 * 100) / 100;
+  };
+  const setEntry = (empId, patch) => setEntries((prev) => ({ ...prev, [empId]: { ...prev[empId], ...patch } }));
+  const fillFromPct = () => setEntries((prev) => {
+    const next = { ...prev };
+    bizEmployees.forEach((e) => { const pct = Number(next[e.id]?.pct) || 0; next[e.id] = { ...next[e.id], amount: Math.round(poolValue * pct / 100 * 100) / 100 }; });
+    return next;
+  });
+  const totalCommission = bizEmployees.reduce((s, e) => s + (Number(entries[e.id]?.amount) || 0), 0);
+  const totalPct = bizEmployees.reduce((s, e) => s + (Number(entries[e.id]?.pct) || 0), 0);
+
+  const addDeduction = () => setDeductions((d) => [...d, { label: '', amount: '' }]);
+  const setDed = (i, patch) => setDeductions((d) => d.map((x, idx) => idx === i ? { ...x, ...patch } : x));
+  const rmDed = (i) => setDeductions((d) => d.filter((_, idx) => idx !== i));
+
+  const save = async () => {
+    setSaving(true);
+    const entryList = bizEmployees
+      .map((e) => ({ employeeId: e.id, pct: Number(entries[e.id]?.pct) || 0, amount: Number(entries[e.id]?.amount) || 0 }))
+      .filter((x) => x.amount !== 0 || x.pct !== 0);
+    const ok = await ops.commission.upsert({
+      businessId: activeBusinessId, periodYear: year, periodMonth: month,
+      posProfit: Number(posProfit) || 0,
+      deductions: deductions.map((d) => ({ label: d.label || '', amount: Number(d.amount) || 0 })),
+      entries: entryList, note: note.trim() || null,
+    });
+    setSaving(false);
+    if (ok) { setSavedAt(new Date().toISOString()); alert('บันทึกคอมมิชชั่นแล้ว — ยอดจะไปขึ้นช่องคอมฯ ในหน้าเงินเดือนของงวดนี้อัตโนมัติ'); }
+  };
+
+  const yearOptions = [now.getFullYear(), now.getFullYear() - 1, now.getFullYear() - 2];
+
+  if (!activeBusinessId) return (
+    <div className="h-full overflow-auto"><PageHeader title="คอมมิชชั่น" /><div className="p-8"><EmptyState icon={Percent} title="เลือกธุรกิจที่ sidebar" description="คอมมิชชั่นคิดแยกตามธุรกิจ — เลือกธุรกิจก่อน" /></div></div>
+  );
+
+  return (
+    <div className="h-full overflow-auto">
+      <PageHeader title="คอมมิชชั่น" subtitle={`${business?.name || ''} — งวด ${MONTH_NAMES[month - 1]} ${year + 543} (จ่าย ${payMonthLabel(year, month)})`}>
+        <button onClick={save} disabled={saving} className="flex items-center gap-2 px-4 py-2 bg-emerald-900 hover:bg-emerald-800 disabled:opacity-50 text-white rounded-lg text-sm font-medium"><Check className="w-4 h-4" />{saving ? 'กำลังบันทึก...' : 'บันทึกคอม'}</button>
+      </PageHeader>
+      <div className="p-4 md:p-8 space-y-5 max-w-5xl">
+        <div className="flex flex-wrap items-center gap-3">
+          <select value={month} onChange={(e) => setMonth(Number(e.target.value))} className="px-3 py-2 border border-stone-300 rounded-lg bg-white">
+            {MONTH_NAMES.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
+          </select>
+          <select value={year} onChange={(e) => setYear(Number(e.target.value))} className="px-3 py-2 border border-stone-300 rounded-lg bg-white">
+            {yearOptions.map((y) => <option key={y} value={y}>{y + 543}</option>)}
+          </select>
+          {savedAt && <span className="text-xs text-stone-400">บันทึกล่าสุด {fmt(savedAt)}</span>}
+        </div>
+
+        {/* กองกลางคอม */}
+        <div className="bg-white border border-stone-200 rounded-xl p-4 space-y-3">
+          <div className="flex items-center gap-2"><Banknote className="w-4 h-4 text-emerald-700" /><h3 className="text-sm font-medium text-stone-800">กองกลางคอมมิชชั่น</h3>
+            <span className="text-xs text-stone-400">(ตอนนี้กรอกเอง — อนาคตดึงจาก POS อัตโนมัติ)</span></div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <FormField label="กำไรรวมจาก POS (บาท)">
+              <input type="number" step="0.01" value={posProfit} onChange={(e) => setPosProfit(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40" placeholder="เช่น 282359" />
+            </FormField>
+          </div>
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-xs font-medium text-stone-600">รายการหัก (น้ำไฟ, อื่นๆ)</span>
+              <button onClick={addDeduction} className="text-xs text-emerald-700 hover:underline flex items-center gap-1"><Plus className="w-3 h-3" />เพิ่มรายการหัก</button>
+            </div>
+            <div className="space-y-2">
+              {deductions.length === 0 && <p className="text-xs text-stone-400">ยังไม่มีรายการหัก</p>}
+              {deductions.map((d, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <input value={d.label} onChange={(e) => setDed(i, { label: e.target.value })} className="flex-1 px-3 py-1.5 border border-stone-300 rounded-lg text-sm" placeholder="เช่น ค่าน้ำไฟ" />
+                  <input type="number" step="0.01" value={d.amount} onChange={(e) => setDed(i, { amount: e.target.value })} className="w-32 px-3 py-1.5 border border-stone-300 rounded-lg text-sm text-right" placeholder="0" />
+                  <button onClick={() => rmDed(i)} className="p-1.5 hover:bg-red-50 rounded text-red-500"><Trash2 className="w-3.5 h-3.5" /></button>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="flex items-center justify-between pt-2 border-t border-stone-100">
+            <span className="text-sm font-medium text-stone-700">กองกลางคอม (กำไร − หัก)</span>
+            <span className="text-lg font-semibold text-emerald-800">{fmtMoney(poolValue)} ฿</span>
+          </div>
+        </div>
+
+        {/* แบ่งให้พนักงาน */}
+        <div className="bg-white border border-stone-200 rounded-xl p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2"><Users className="w-4 h-4 text-emerald-700" /><h3 className="text-sm font-medium text-stone-800">แบ่งคอมให้พนักงาน</h3></div>
+            <button onClick={fillFromPct} className="text-xs px-2.5 py-1.5 bg-stone-100 hover:bg-stone-200 rounded-lg text-stone-700 font-medium">เติมยอดจาก % (กองกลาง × %)</button>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead><tr className="text-xs text-stone-500 border-b border-stone-200">
+                <th className="text-left py-2 px-2">พนักงาน</th>
+                <th className="text-right py-2 px-2 w-24">%</th>
+                <th className="text-right py-2 px-2 w-32">คิดจาก %</th>
+                <th className="text-right py-2 px-2 w-36">คอมที่จ่าย (บาท)</th>
+              </tr></thead>
+              <tbody>
+                {bizEmployees.length === 0 && <tr><td colSpan={4} className="text-center text-stone-400 py-6">ไม่มีพนักงานในธุรกิจนี้</td></tr>}
+                {bizEmployees.map((e) => (
+                  <tr key={e.id} className="border-b border-stone-50">
+                    <td className="py-1.5 px-2">{dispName(e)}</td>
+                    <td className="py-1.5 px-2"><input type="number" step="0.001" value={entries[e.id]?.pct ?? ''} onChange={(ev) => setEntry(e.id, { pct: ev.target.value })} className="w-full px-2 py-1.5 border border-stone-300 rounded text-right" placeholder="0" /></td>
+                    <td className="py-1.5 px-2 text-right text-stone-400">{fmtMoney(computedFor(e.id))}</td>
+                    <td className="py-1.5 px-2"><input type="number" step="0.01" value={entries[e.id]?.amount ?? ''} onChange={(ev) => setEntry(e.id, { amount: ev.target.value })} className="w-full px-2 py-1.5 border border-stone-300 rounded text-right font-medium text-emerald-800" placeholder="0" /></td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot><tr className="font-semibold text-stone-800 border-t-2 border-stone-200">
+                <td className="py-2 px-2">รวม</td>
+                <td className="py-2 px-2 text-right">{(Math.round(totalPct * 1000) / 1000)}%</td>
+                <td className="py-2 px-2"></td>
+                <td className="py-2 px-2 text-right text-emerald-800">{fmtMoney(totalCommission)} ฿</td>
+              </tr></tfoot>
+            </table>
+          </div>
+          <p className="text-xs text-stone-500 mt-3">หมายเหตุ: ช่อง "คอมที่จ่าย" แก้เองได้เสมอ (เช่น บวกคอมค่าเช่าห้องเข้าไป) — ยอดนี้จะไปขึ้นช่องคอมฯ ในหน้าเงินเดือนงวดเดียวกันให้อัตโนมัติ</p>
+        </div>
+
+        <FormField label="หมายเหตุงวดนี้">
+          <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} className="w-full px-3 py-2 border border-stone-300 rounded-lg resize-none" />
+        </FormField>
+      </div>
+    </div>
+  );
+}
+
 function PayrollPage({ businesses, zones, positions, employees, activeBusinessId, ops }) {
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
@@ -3328,6 +3547,7 @@ function PayrollPage({ businesses, zones, positions, employees, activeBusinessId
   const [editingEmp, setEditingEmp] = useState(null);
   const [reload, setReload] = useState(0);
   const [mode, setMode] = useState('list'); // 'list' | 'quick'
+  const [commissionPool, setCommissionPool] = useState(null);
 
   // พนักงานในธุรกิจนี้ — คนทำงานอยู่ + คนลาออกที่ยังมีงวดค้างจ่ายในเดือนนี้
   const payrollEmpIds = useMemo(() => new Set(payrolls.map((p) => p.employeeId)), [payrolls]);
@@ -3353,7 +3573,9 @@ function PayrollPage({ businesses, zones, positions, employees, activeBusinessId
       if (cancelled) return;
       const its = await ops.payrollItem.listByPayrolls(ps.map((p) => p.id));
       if (cancelled) return;
-      setPayrolls(ps); setItems(its); setLoading(false);
+      const pool = await ops.commission.getByPeriod(activeBusinessId, year, month);
+      if (cancelled) return;
+      setPayrolls(ps); setItems(its); setCommissionPool(pool); setLoading(false);
     })();
     return () => { cancelled = true; };
   }, [activeBusinessId, year, month, reload]);
@@ -3364,6 +3586,9 @@ function PayrollPage({ businesses, zones, positions, employees, activeBusinessId
   const itemsByPayroll = useMemo(() => {
     const m = {}; items.forEach((i) => { (m[i.payrollId] ||= []).push(i); }); return m;
   }, [items]);
+  const commissionMap = useMemo(() => {
+    const m = {}; (commissionPool?.entries || []).forEach((e) => { m[e.employeeId] = Number(e.amount) || 0; }); return m;
+  }, [commissionPool]);
 
   const totalNet = useMemo(() => {
     return bizEmployees.reduce((sum, emp) => {
@@ -3438,7 +3663,7 @@ function PayrollPage({ businesses, zones, positions, employees, activeBusinessId
         ) : mode === 'quick' ? (
           <PayrollQuickEntry
             bizEmployees={bizEmployees} positions={positions}
-            payrollByEmp={payrollByEmp} itemsByPayroll={itemsByPayroll}
+            payrollByEmp={payrollByEmp} itemsByPayroll={itemsByPayroll} commissionMap={commissionMap}
             year={year} month={month} businessId={activeBusinessId} ops={ops}
             onSaved={() => setReload((r) => r + 1)}
             onOpenDetail={(emp) => setEditingEmp(emp)}
@@ -3494,6 +3719,7 @@ function PayrollPage({ businesses, zones, positions, employees, activeBusinessId
           existing={payrollByEmp[editingEmp.id]}
           existingItems={payrollByEmp[editingEmp.id] ? (itemsByPayroll[payrollByEmp[editingEmp.id].id] || []) : []}
           year={year} month={month} businessId={activeBusinessId}
+          commissionPrefill={commissionMap[editingEmp.id] || 0}
           ops={ops}
           onClose={() => setEditingEmp(null)}
           onSaved={() => { setEditingEmp(null); setReload((r) => r + 1); }}
@@ -3504,13 +3730,13 @@ function PayrollPage({ businesses, zones, positions, employees, activeBusinessId
 }
 
 // ============ PAYROLL EDITOR MODAL ============
-function PayrollEditor({ employee, existing, existingItems, year, month, businessId, ops, onClose, onSaved }) {
+function PayrollEditor({ employee, existing, existingItems, year, month, businessId, commissionPrefill, ops, onClose, onSaved }) {
   const isFinalized = existing?.status === 'finalized';
   // ค่าตั้งต้น: ถ้ามี payroll แล้วใช้ค่าเดิม ถ้าไม่มีดึงจากข้อมูลพนักงาน
   const [f, setF] = useState(() => ({
     baseSalary: existing?.baseSalary ?? payrollBaseSalary(employee, year, month),
     holidayQuota: existing?.holidayQuota ?? employee.holidayQuota ?? 4,
-    commission: existing?.commission ?? 0,
+    commission: existing?.commission ?? commissionPrefill ?? 0,
     holidayWorkDays: existing?.holidayWorkDays ?? 0,
     holidayDaysTaken: existing?.holidayDaysTaken ?? 0,
     lateDeduction: existing?.lateDeduction ?? 0,
@@ -3685,7 +3911,7 @@ function PayrollEditor({ employee, existing, existingItems, year, month, busines
 }
 
 // ============ PAYROLL QUICK ENTRY (Spreadsheet / Cards) ============
-function PayrollQuickEntry({ bizEmployees, positions, payrollByEmp, itemsByPayroll, year, month, businessId, ops, onSaved, onOpenDetail }) {
+function PayrollQuickEntry({ bizEmployees, positions, payrollByEmp, itemsByPayroll, commissionMap, year, month, businessId, ops, onSaved, onOpenDetail }) {
   const isMobile = useIsMobile();
   const [drafts, setDrafts] = useState({});
   const [touched, setTouched] = useState(() => new Set());
@@ -3699,10 +3925,11 @@ function PayrollQuickEntry({ bizEmployees, positions, payrollByEmp, itemsByPayro
       const p = payrollByEmp[emp.id];
       const its = p ? (itemsByPayroll[p.id] || []) : [];
       d[emp.id] = buildPayrollDraft(emp, p, its, year, month);
+      if (!p && commissionMap && commissionMap[emp.id]) d[emp.id].commission = commissionMap[emp.id];
     });
     setDrafts(d);
     setTouched(new Set());
-  }, [bizEmployees, payrollByEmp, itemsByPayroll]);
+  }, [bizEmployees, payrollByEmp, itemsByPayroll, commissionMap]);
 
   const upd = (empId, field, value) => {
     setDrafts((prev) => ({ ...prev, [empId]: { ...prev[empId], [field]: value } }));
