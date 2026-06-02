@@ -140,6 +140,34 @@ function payrollBaseSalary(emp, year, month) {
   return Math.round(effectiveBaseSalary(emp, year, month) * prorationFactor(emp, year, month));
 }
 
+// ============ MULTI-BUSINESS (1 คน หลายสังกัด) ============
+// มีการแยกเงินเดือนตามธุรกิจไหม
+function hasSalarySplit(emp) { return !!(emp?.salarySplit && Object.keys(emp.salarySplit).length); }
+// ธุรกิจทั้งหมดที่พนักงานสังกัด (หลัก + เพิ่มเติม)
+function employeeBusinessIds(emp) {
+  return [emp?.businessId, ...((emp?.additionalBusinessIds) || [])].filter((v, i, a) => v && a.indexOf(v) === i);
+}
+// ตำแหน่งของพนักงานในธุรกิจหนึ่ง (per-business role) — ไม่มีก็ fallback ตำแหน่งหลัก
+function businessPositionId(emp, businessId) {
+  const bp = emp?.businessPositions || {};
+  if (bp[businessId]) return bp[businessId];
+  if (businessId === emp?.businessId) return emp?.positionId || null;
+  return null;
+}
+// เงินเดือนฐานของพนักงานในธุรกิจหนึ่ง — จากการแยกเงินเดือน หรือธุรกิจหลักใช้ base_salary
+function businessBaseSalary(emp, businessId) {
+  if (hasSalarySplit(emp) && emp.salarySplit[businessId] != null) return Number(emp.salarySplit[businessId]) || 0;
+  if (businessId === emp?.businessId) return Number(emp?.baseSalary) || 0;
+  return 0;
+}
+// เงินเดือนฐานตั้งต้นใน payroll ของธุรกิจหนึ่ง (รวมทดลองงาน+เฉลี่ยวันเริ่มงาน)
+function payrollBaseSalaryForBiz(emp, businessId, year, month) {
+  // ทดลองงาน: ใช้เงินทดลองเฉพาะกรณีไม่ได้แยกเงินเดือน (ธุรกิจหลัก)
+  const probation = isProbationPeriod(emp, year, month) && Number(emp.probationSalary) > 0 && !hasSalarySplit(emp) && businessId === emp.businessId;
+  const eff = probation ? Number(emp.probationSalary) : businessBaseSalary(emp, businessId);
+  return Math.round(eff * prorationFactor(emp, year, month));
+}
+
 // ============ COMMISSION (คอมมิชชั่น) ============
 // กองกลางคอม = กำไร POS − ผลรวมรายการหัก
 function commissionPoolValue(pool) {
@@ -177,7 +205,7 @@ function roomRentMapFromPool(pool) {
 }
 
 // สร้าง draft ตั้งต้นสำหรับ payroll (จาก payroll เดิม หรือ default จากโปรไฟล์พนักงาน)
-function buildPayrollDraft(emp, payroll, items, year, month) {
+function buildPayrollDraft(emp, payroll, items, year, month, businessId) {
   if (payroll) {
     return {
       baseSalary: payroll.baseSalary ?? 0,
@@ -194,7 +222,9 @@ function buildPayrollDraft(emp, payroll, items, year, month) {
       items: (items || []).map((i) => ({ kind: i.kind, label: i.label, amount: i.amount })),
     };
   }
-  const base = (year && month) ? payrollBaseSalary(emp, year, month) : (emp.baseSalary ?? 0);
+  const base = (year && month)
+    ? (businessId ? payrollBaseSalaryForBiz(emp, businessId, year, month) : payrollBaseSalary(emp, year, month))
+    : (emp.baseSalary ?? 0);
   return {
     baseSalary: base,
     holidayQuota: emp.holidayQuota ?? 4,
@@ -867,7 +897,7 @@ export default function App() {
       },
       upsert: async (d) => {
         const { data, error } = await supabase.from('payrolls')
-          .upsert(toDB(d), { onConflict: 'employee_id,period_year,period_month' })
+          .upsert(toDB(d), { onConflict: 'employee_id,business_id,period_year,period_month' })
           .select().single();
         if (error) { alert('บันทึกไม่สำเร็จ: ' + error.message); return null; }
         return fromDB(data);
@@ -2036,7 +2066,7 @@ function PositionsPage({ businesses, positions, employees, profile, activeBusine
   );
   const roots = bizPositions.filter((p) => !p.parentId);
   const shortages = bizPositions
-    .map((p) => { const count = employees.filter((e) => e.positionId === p.id && isActive(e)).length; const target = p.targetHeadcount || 0; return { p, count, target, short: target > 0 ? Math.max(0, target - count) : 0 }; })
+    .map((p) => { const count = employees.filter((e) => businessPositionId(e, activeBusinessId) === p.id && isActive(e)).length; const target = p.targetHeadcount || 0; return { p, count, target, short: target > 0 ? Math.max(0, target - count) : 0 }; })
     .filter((x) => x.short > 0)
     .sort((a, b) => b.short - a.short);
   const totalShort = shortages.reduce((s, x) => s + x.short, 0);
@@ -2072,7 +2102,7 @@ function PositionsPage({ businesses, positions, employees, profile, activeBusine
               </div>
             )}
             <div className="bg-white rounded-xl border border-stone-200 p-6">
-              <PositionTree positions={roots} allPositions={bizPositions} employees={employees} onEdit={(p) => { setEditing(p); setShowModal(true); }} onDelete={del} isOwner={canManageBiz} canManagePayroll={canManagePayroll} level={0} />
+              <PositionTree positions={roots} allPositions={bizPositions} employees={employees} activeBusinessId={activeBusinessId} onEdit={(p) => { setEditing(p); setShowModal(true); }} onDelete={del} isOwner={canManageBiz} canManagePayroll={canManagePayroll} level={0} />
             </div>
           </>
         )}
@@ -2086,12 +2116,12 @@ function PositionsPage({ businesses, positions, employees, profile, activeBusine
   );
 }
 
-function PositionTree({ positions, allPositions, employees, onEdit, onDelete, isOwner, canManagePayroll, level }) {
+function PositionTree({ positions, allPositions, employees, activeBusinessId, onEdit, onDelete, isOwner, canManagePayroll, level }) {
   return (
     <div className={level === 0 ? 'space-y-2' : 'mt-2 ml-6 pl-4 border-l-2 border-stone-200 space-y-2'}>
       {positions.map((pos) => {
         const children = allPositions.filter((p) => p.parentId === pos.id);
-        const count = employees.filter((e) => e.positionId === pos.id && isActive(e)).length;
+        const count = employees.filter((e) => businessPositionId(e, activeBusinessId) === pos.id && isActive(e)).length;
         const target = pos.targetHeadcount || 0;
         const shortage = target > 0 ? Math.max(0, target - count) : 0;
         const over = target > 0 ? Math.max(0, count - target) : 0;
@@ -2131,7 +2161,7 @@ function PositionTree({ positions, allPositions, employees, onEdit, onDelete, is
                 </div>
               )}
             </div>
-            {children.length > 0 && <PositionTree positions={children} allPositions={allPositions} employees={employees} onEdit={onEdit} onDelete={onDelete} isOwner={isOwner} canManagePayroll={canManagePayroll} level={level + 1} />}
+            {children.length > 0 && <PositionTree positions={children} allPositions={allPositions} employees={employees} activeBusinessId={activeBusinessId} onEdit={onEdit} onDelete={onDelete} isOwner={isOwner} canManagePayroll={canManagePayroll} level={level + 1} />}
           </div>
         );
       })}
@@ -2346,7 +2376,7 @@ function EmployeesPage({ businesses, zones, positions, employees, profile, activ
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
             {visibleEmployees.map((emp) => {
               const zone = zones.find((z) => z.id === emp.zoneId);
-              const pos = positions.find((p) => p.id === emp.positionId);
+              const pos = positions.find((p) => p.id === (activeBusinessId ? businessPositionId(emp, activeBusinessId) : emp.positionId));
               const empBiz = businesses.find((b) => b.id === emp.businessId);
               const display = dispName(emp);
               const initials = display.split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase() || '?';
@@ -2407,7 +2437,7 @@ function EmployeesPage({ businesses, zones, positions, employees, profile, activ
       </div>
       {showModal && (
         <Modal title={editing?.id ? 'แก้ไขข้อมูลพนักงาน' : 'เพิ่มพนักงานใหม่'} onClose={() => { setShowModal(false); setEditing(null); }} wide>
-          <EmployeeForm initial={editing} zones={visibleZones} positions={positions.filter((p) => p.businessId === targetBusinessId)} employees={employees.filter((e) => e.businessId === targetBusinessId && e.id !== editing?.id)} businesses={businesses} onSave={save} onCancel={() => { setShowModal(false); setEditing(null); }} lockedZoneId={isZM && (profile.zoneIds || []).length === 1 ? profile.zoneIds[0] : null} allowedZoneIds={isZM ? (profile.zoneIds || []) : null} businessId={targetBusinessId} isOwner={isOwner || isBM} canEditPay={profile.canManagePayroll} />
+          <EmployeeForm initial={editing} zones={visibleZones} positions={positions.filter((p) => p.businessId === targetBusinessId)} allPositions={positions} employees={employees.filter((e) => e.businessId === targetBusinessId && e.id !== editing?.id)} businesses={businesses} onSave={save} onCancel={() => { setShowModal(false); setEditing(null); }} lockedZoneId={isZM && (profile.zoneIds || []).length === 1 ? profile.zoneIds[0] : null} allowedZoneIds={isZM ? (profile.zoneIds || []) : null} businessId={targetBusinessId} isOwner={isOwner || isBM} canEditPay={profile.canManagePayroll} />
         </Modal>
       )}
       {viewing && (() => {
@@ -2658,10 +2688,23 @@ function EmployeeDetailModal({ employee, salaryReload, zones, positions, employe
                   <div className="flex items-center gap-1.5 text-xs font-medium text-sky-900 mb-1.5">
                     <Building2 className="w-3.5 h-3.5" />ดูแลธุรกิจ ({1 + additionalBizs.length} ที่)
                   </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {primaryBiz && <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-white border border-emerald-300 text-emerald-800 text-xs font-medium rounded">{primaryBiz.name}<span className="text-[9px] text-emerald-600">หลัก</span></span>}
-                    {additionalBizs.map((b) => <span key={b.id} className="inline-flex items-center px-2 py-0.5 bg-white border border-stone-300 text-stone-700 text-xs rounded">{b.name}</span>)}
+                  <div className="space-y-1">
+                    {[primaryBiz, ...additionalBizs].filter(Boolean).map((b, i) => {
+                      const bp = positions.find((p) => p.id === businessPositionId(employee, b.id));
+                      const bsal = businessBaseSalary(employee, b.id);
+                      return (
+                        <div key={b.id} className="flex items-center justify-between gap-2 px-2 py-1 bg-white border border-stone-200 rounded text-xs">
+                          <span className="flex items-center gap-1.5">
+                            <span className="font-medium text-stone-800">{b.name}</span>
+                            {i === 0 && <span className="text-[9px] text-emerald-600">หลัก</span>}
+                            {bp && <span className="text-stone-500">• {bp.name}</span>}
+                          </span>
+                          {canRaise && bsal > 0 && <span className="text-stone-600">{fmtMoney(bsal)} ฿</span>}
+                        </div>
+                      );
+                    })}
                   </div>
+                  {canRaise && hasSalarySplit(employee) && <p className="text-[11px] text-sky-700 mt-1.5">แยกเงินเดือน + ทำสลิปแยกต่อธุรกิจ</p>}
                 </div>
               )}
               {resigned && (
@@ -2990,13 +3033,14 @@ function DetailBlock({ icon: Icon, label, value, mono }) {
   );
 }
 
-function EmployeeForm({ initial, zones, positions, employees, businesses, onSave, onCancel, lockedZoneId, allowedZoneIds, businessId, isOwner, canEditPay }) {
+function EmployeeForm({ initial, zones, positions, allPositions, employees, businesses, onSave, onCancel, lockedZoneId, allowedZoneIds, businessId, isOwner, canEditPay }) {
   const [name, setName] = useState(initial?.name || '');
   const [nickname, setNickname] = useState(initial?.nickname || '');
   const [employeeNumber, setEmployeeNumber] = useState(initial?.employeeNumber || '');
   const [photo, setPhoto] = useState(initial?.photo || '');
   const [zoneId, setZoneId] = useState(initial?.zoneId || lockedZoneId || '');
   const [positionId, setPositionId] = useState(initial?.positionId || '');
+  const [businessPositions, setBusinessPositions] = useState(initial?.businessPositions || {});
   const [managerId, setManagerId] = useState(initial?.managerId || '');
   const [additionalBusinessIds, setAdditionalBusinessIds] = useState(initial?.additionalBusinessIds || []);
   const [phone, setPhone] = useState(initial?.phone || '');
@@ -3061,6 +3105,7 @@ function EmployeeForm({ initial, zones, positions, employees, businesses, onSave
       employeeNumber: employeeNumber.trim() || null,
       zoneId: zoneId || null, positionId: positionId || null, managerId: managerId || null,
       additionalBusinessIds: additionalBusinessIds.filter((id) => id !== businessId),
+      businessPositions: (() => { const m = {}; additionalBusinessIds.forEach((bid) => { if (businessPositions[bid]) m[bid] = businessPositions[bid]; }); return Object.keys(m).length ? m : null; })(),
       phone: phone.trim(), email: email.trim(), address: address.trim(),
       startDate: startDate || null, birthDate: birthDate || null, nationalId: nationalId.trim(),
       idCardExpiry: idCardExpiry || null,
@@ -3157,6 +3202,30 @@ function EmployeeForm({ initial, zones, positions, employees, businesses, onSave
                 );
               })}
             </div>
+          </div>
+        </FormField>
+      )}
+
+      {isOwner && additionalBusinessIds.length > 0 && (
+        <FormField label="ตำแหน่งในธุรกิจอื่น (รับหน้าที่ต่างกันได้)">
+          <div className="space-y-2">
+            <p className="text-xs text-stone-500 -mt-1">ตำแหน่งหลักด้านบนใช้กับ "{businesses?.find((b) => b.id === businessId)?.name || 'ธุรกิจหลัก'}" — ตั้งตำแหน่งของธุรกิจอื่นที่นี่ (เว้นว่าง = ใช้ตำแหน่งหลัก)</p>
+            {additionalBusinessIds.map((bid) => {
+              const b = businesses?.find((x) => x.id === bid);
+              const opts = (allPositions || []).filter((p) => p.businessId === bid);
+              return (
+                <div key={bid} className="flex items-center gap-2">
+                  <span className="text-xs text-stone-600 w-32 truncate flex-shrink-0" title={b?.name}>{b?.name || bid}</span>
+                  <select value={businessPositions[bid] || ''} onChange={(e) => setBusinessPositions((prev) => { const n = { ...prev }; if (e.target.value) n[bid] = e.target.value; else delete n[bid]; return n; })} className="flex-1 px-3 py-2 border border-stone-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500/40">
+                    <option value="">— ใช้ตำแหน่งหลัก —</option>
+                    {opts.map((p) => <option key={p.id} value={p.id}>{p.name}{p.crossZone ? ' (ไม่จำกัดโซน)' : ''}</option>)}
+                  </select>
+                </div>
+              );
+            })}
+            {(allPositions || []).filter((p) => additionalBusinessIds.includes(p.businessId)).length === 0 && (
+              <p className="text-xs text-amber-600">ธุรกิจที่เลือกยังไม่มีตำแหน่ง — ไปสร้างตำแหน่งในธุรกิจนั้นที่หน้า "ตำแหน่ง" ก่อน</p>
+            )}
           </div>
         </FormField>
       )}
@@ -3446,7 +3515,7 @@ function EmployeeTree({ employees, allEmployees, zones, positions, businesses, a
       {employees.map((emp) => {
         const reports = allEmployees.filter((e) => e.managerId === emp.id);
         const zone = zones.find((z) => z.id === emp.zoneId);
-        const pos = positions.find((p) => p.id === emp.positionId);
+        const pos = positions.find((p) => p.id === businessPositionId(emp, activeBusinessId));
         // พนักงานข้ามธุรกิจ: ธุรกิจหลักไม่ใช่ธุรกิจที่กำลังดูอยู่
         const isGuest = activeBusinessId && emp.businessId !== activeBusinessId;
         const homeBiz = isGuest ? (businesses || []).find((b) => b.id === emp.businessId) : null;
@@ -3861,9 +3930,8 @@ function PayrollPage({ businesses, zones, positions, employees, activeBusinessId
   const bizEmployees = useMemo(() => {
     if (!activeBusinessId) return [];
     return employees.filter((e) => {
-      // หน้าทำเงินเดือนจ่ายเฉพาะธุรกิจหลักเท่านั้น (ไม่รวม additionalBusinessIds)
-      // พนักงานข้ามธุรกิจจะถูกจ่ายเงินเดือนที่ธุรกิจหลักของตัวเองเพียงที่เดียว
-      const inBiz = e.businessId === activeBusinessId;
+      // รวมพนักงานที่สังกัดธุรกิจนี้ (หลัก หรือ ธุรกิจเพิ่มเติม) — จ่ายเงินเดือนแยกต่อธุรกิจ
+      const inBiz = e.businessId === activeBusinessId || (e.additionalBusinessIds || []).includes(activeBusinessId);
       if (!inBiz) return false;
       // ทำงานอยู่ → แสดงเสมอ / ลาออกแล้ว → แสดงเฉพาะถ้ามีงวด payroll ในเดือนนี้
       return isActive(e) || payrollEmpIds.has(e.id);
@@ -3924,7 +3992,7 @@ function PayrollPage({ businesses, zones, positions, employees, activeBusinessId
       const p = payrollByEmp[emp.id];
       return {
         emp,
-        position: positions.find((x) => x.id === emp.positionId),
+        position: positions.find((x) => x.id === businessPositionId(emp, activeBusinessId)),
         payroll: p || null,
         calc: p ? computePayroll(p, itemsByPayroll[p.id] || []) : null,
       };
@@ -3983,8 +4051,9 @@ function PayrollPage({ businesses, zones, positions, employees, activeBusinessId
             {bizEmployees.map((emp) => {
               const p = payrollByEmp[emp.id];
               const calc = p ? computePayroll(p, itemsByPayroll[p.id] || []) : null;
-              const pos = positions.find((x) => x.id === emp.positionId);
-              const noSalary = !emp.baseSalary || emp.baseSalary <= 0;
+              const pos = positions.find((x) => x.id === businessPositionId(emp, activeBusinessId));
+              const bizBase = businessBaseSalary(emp, activeBusinessId);
+              const noSalary = !bizBase || bizBase <= 0;
               return (
                 <div key={emp.id} className={`bg-white rounded-xl border-2 ${p?.status === 'finalized' ? 'border-emerald-300' : 'border-stone-200'} p-4 flex items-center gap-4 hover:shadow-sm transition-all`}>
                   <Avatar photo={emp.photo} name={dispName(emp)} size={44} />
@@ -3994,7 +4063,7 @@ function PayrollPage({ businesses, zones, positions, employees, activeBusinessId
                       <span className="font-medium text-stone-800 truncate">{dispName(emp)}</span>
                       {p?.status === 'finalized' && <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-emerald-100 text-emerald-700 text-[10px] font-medium rounded"><CheckCircle2 className="w-2.5 h-2.5" />ปิดงวดแล้ว</span>}
                     </div>
-                    <div className="text-sm text-stone-500 truncate">{pos?.name || 'ยังไม่กำหนดตำแหน่ง'} • ฐาน {fmtMoney(emp.baseSalary)} ฿</div>
+                    <div className="text-sm text-stone-500 truncate">{pos?.name || 'ยังไม่กำหนดตำแหน่ง'} • ฐาน {fmtMoney(bizBase)} ฿</div>
                   </div>
                   <div className="text-right">
                     {noSalary ? (
@@ -4012,7 +4081,7 @@ function PayrollPage({ businesses, zones, positions, employees, activeBusinessId
                     <Calculator className="w-4 h-4" />{p ? 'แก้ไข' : 'ทำ'}
                   </button>
                   {p && (
-                    <button onClick={() => printPayslip({ employee: emp, payroll: p, items: itemsByPayroll[p.id] || [], business: businesses.find((b) => b.id === activeBusinessId), position: positions.find((x) => x.id === emp.positionId), year, month })} title="พิมพ์สลิปเงินเดือน" className="px-3 py-2 bg-white border border-stone-300 hover:bg-stone-50 text-stone-700 rounded-lg text-sm font-medium flex items-center gap-1.5">
+                    <button onClick={() => printPayslip({ employee: emp, payroll: p, items: itemsByPayroll[p.id] || [], business: businesses.find((b) => b.id === activeBusinessId), position: positions.find((x) => x.id === businessPositionId(emp, activeBusinessId)), year, month })} title="พิมพ์สลิปเงินเดือน" className="px-3 py-2 bg-white border border-stone-300 hover:bg-stone-50 text-stone-700 rounded-lg text-sm font-medium flex items-center gap-1.5">
                       <FileText className="w-4 h-4" /><span className="hidden sm:inline">สลิป</span>
                     </button>
                   )}
@@ -4028,7 +4097,7 @@ function PayrollPage({ businesses, zones, positions, employees, activeBusinessId
           employee={editingEmp}
           existing={payrollByEmp[editingEmp.id]}
           existingItems={payrollByEmp[editingEmp.id] ? (itemsByPayroll[payrollByEmp[editingEmp.id].id] || []) : []}
-          year={year} month={month} businessId={activeBusinessId}
+          year={year} month={month} businessId={activeBusinessId} businessName={bizName}
           commissionPrefill={commissionMap[editingEmp.id] || 0}
           roomFeePrefill={roomRentMap[editingEmp.id]}
           ops={ops}
@@ -4041,17 +4110,17 @@ function PayrollPage({ businesses, zones, positions, employees, activeBusinessId
 }
 
 // ============ PAYROLL EDITOR MODAL ============
-function PayrollEditor({ employee, existing, existingItems, year, month, businessId, commissionPrefill, roomFeePrefill, ops, onClose, onSaved }) {
+function PayrollEditor({ employee, existing, existingItems, year, month, businessId, businessName, commissionPrefill, roomFeePrefill, ops, onClose, onSaved }) {
   const isFinalized = existing?.status === 'finalized';
   // ค่าตั้งต้น: ถ้ามี payroll แล้วใช้ค่าเดิม ถ้าไม่มีดึงจากข้อมูลพนักงาน
   const [f, setF] = useState(() => ({
-    baseSalary: existing?.baseSalary ?? payrollBaseSalary(employee, year, month),
+    baseSalary: existing?.baseSalary ?? payrollBaseSalaryForBiz(employee, businessId, year, month),
     holidayQuota: existing?.holidayQuota ?? employee.holidayQuota ?? 4,
     commission: existing?.commission ?? commissionPrefill ?? 0,
     holidayWorkDays: existing?.holidayWorkDays ?? 0,
     holidayDaysTaken: existing?.holidayDaysTaken ?? 0,
     lateDeduction: existing?.lateDeduction ?? 0,
-    socialSecurity: existing?.socialSecurity ?? (employee.hasSocialSecurity ? calcSocialSecurity(payrollBaseSalary(employee, year, month)) : 0),
+    socialSecurity: existing?.socialSecurity ?? (employee.hasSocialSecurity ? calcSocialSecurity(payrollBaseSalaryForBiz(employee, businessId, year, month)) : 0),
     roomFee: existing?.roomFee ?? (roomFeePrefill != null ? roomFeePrefill : (employee.roomFee ?? 0)),
     paidViaCompany: existing?.paidViaCompany ?? 0,
     note: existing?.note ?? '',
@@ -4138,7 +4207,7 @@ function PayrollEditor({ employee, existing, existingItems, year, month, busines
             <Avatar photo={employee.photo} name={dispName(employee)} size={40} />
             <div>
               <div className="font-semibold text-stone-800">{dispName(employee)} <span className="font-mono text-xs text-stone-400">#{employee.employeeNumber}</span></div>
-              <div className="text-xs text-stone-500">{MONTH_NAMES[month - 1]} {year + 543}{isFinalized && ' • ปิดงวดแล้ว'}</div>
+              <div className="text-xs text-stone-500">{businessName ? `${businessName} • ` : ''}{MONTH_NAMES[month - 1]} {year + 543}{isFinalized && ' • ปิดงวดแล้ว'}</div>
             </div>
           </div>
           <button onClick={onClose} className="p-1 hover:bg-stone-100 rounded text-stone-500"><X className="w-5 h-5" /></button>
@@ -4235,7 +4304,7 @@ function PayrollQuickEntry({ bizEmployees, positions, payrollByEmp, itemsByPayro
     bizEmployees.forEach((emp) => {
       const p = payrollByEmp[emp.id];
       const its = p ? (itemsByPayroll[p.id] || []) : [];
-      d[emp.id] = buildPayrollDraft(emp, p, its, year, month);
+      d[emp.id] = buildPayrollDraft(emp, p, its, year, month, businessId);
       if (!p && commissionMap && commissionMap[emp.id]) d[emp.id].commission = commissionMap[emp.id];
       if (!p && roomRentMap && roomRentMap[emp.id] != null) d[emp.id].roomFee = roomRentMap[emp.id];
     });
