@@ -2167,6 +2167,7 @@ function EmployeesPage({ businesses, zones, positions, employees, profile, activ
   const [statusFilter, setStatusFilter] = useState('active'); // active | resigned | all
   const [resigningEmp, setResigningEmp] = useState(null);
   const [raisingEmp, setRaisingEmp] = useState(null);
+  const [salaryReload, setSalaryReload] = useState(0);
   const isOwner = profile.isOwner;
   const isBM = profile.isBM;
   const isZM = profile.isZM;
@@ -2382,14 +2383,17 @@ function EmployeesPage({ businesses, zones, positions, employees, profile, activ
           <EmployeeForm initial={editing} zones={visibleZones} positions={positions.filter((p) => p.businessId === targetBusinessId)} employees={employees.filter((e) => e.businessId === targetBusinessId && e.id !== editing?.id)} businesses={businesses} onSave={save} onCancel={() => { setShowModal(false); setEditing(null); }} lockedZoneId={isZM && (profile.zoneIds || []).length === 1 ? profile.zoneIds[0] : null} allowedZoneIds={isZM ? (profile.zoneIds || []) : null} businessId={targetBusinessId} isOwner={isOwner || isBM} canEditPay={profile.canManagePayroll} />
         </Modal>
       )}
-      {viewing && (
-        <EmployeeDetailModal employee={viewing} zones={zones} positions={positions} employees={employees} businesses={businesses} canWrite={canWrite} canResign={canResign} canRaise={profile.canManagePayroll} ops={ops} onClose={() => setViewing(null)} onEdit={() => { setEditing(viewing); setShowModal(true); setViewing(null); }} onDelete={() => { del(viewing.id); setViewing(null); }} onResign={() => setResigningEmp(viewing)} onRehire={() => doRehire(viewing)} onRaise={() => setRaisingEmp(viewing)} />
-      )}
+      {viewing && (() => {
+        const v = employees.find((e) => e.id === viewing.id) || viewing;
+        return (
+        <EmployeeDetailModal employee={v} salaryReload={salaryReload} zones={zones} positions={positions} employees={employees} businesses={businesses} canWrite={canWrite} canResign={canResign} canRaise={profile.canManagePayroll} ops={ops} onClose={() => setViewing(null)} onEdit={() => { setEditing(v); setShowModal(true); setViewing(null); }} onDelete={() => { del(v.id); setViewing(null); }} onResign={() => setResigningEmp(v)} onRehire={() => doRehire(v)} onRaise={() => setRaisingEmp(v)} />
+        );
+      })()}
       {resigningEmp && (
         <ResignModal employee={resigningEmp} onClose={() => setResigningEmp(null)} onConfirm={doResign} />
       )}
       {raisingEmp && (
-        <SalaryRaiseModal employee={raisingEmp} ops={ops} onClose={() => setRaisingEmp(null)} onSaved={() => setRaisingEmp(null)} />
+        <SalaryRaiseModal employee={raisingEmp} ops={ops} onClose={() => setRaisingEmp(null)} onSaved={() => { setRaisingEmp(null); setSalaryReload((n) => n + 1); }} />
       )}
     </div>
   );
@@ -2554,7 +2558,7 @@ function SalaryRaiseModal({ employee, ops, onClose, onSaved }) {
   );
 }
 
-function EmployeeDetailModal({ employee, zones, positions, employees, businesses, canWrite, canResign, canRaise, ops, onClose, onEdit, onDelete, onResign, onRehire, onRaise }) {
+function EmployeeDetailModal({ employee, salaryReload, zones, positions, employees, businesses, canWrite, canResign, canRaise, ops, onClose, onEdit, onDelete, onResign, onRehire, onRaise }) {
   const zone = zones.find((z) => z.id === employee.zoneId);
   const pos = positions.find((p) => p.id === employee.positionId);
   const mgr = employees.find((e) => e.id === employee.managerId);
@@ -2571,7 +2575,7 @@ function EmployeeDetailModal({ employee, zones, positions, employees, businesses
       if (!cancelled) setSalaryHistory(h);
     })();
     return () => { cancelled = true; };
-  }, [employee.id, canRaise]);
+  }, [employee.id, canRaise, salaryReload]);
   const fmt = (d) => (d ? new Date(d).toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' }) : null);
   const yos = employee.startDate ? Math.floor((Date.now() - new Date(employee.startDate)) / (365.25 * 24 * 60 * 60 * 1000)) : null;
   const display = dispName(employee);
