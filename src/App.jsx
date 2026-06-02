@@ -1859,15 +1859,18 @@ function BusinessesPage({ businesses, zones, employees, positions, profile, ops,
                                     </div>
                                   </div>
                                   {zoneEmps.length > 0 && (
-                                    <div className="mt-3 flex items-center">
-                                      <div className="flex -space-x-2">
-                                        {zoneEmps.slice(0, 6).map((e) => (
-                                          <div key={e.id} className="ring-2 ring-white rounded-full" title={dispName(e)}>
-                                            <Avatar photo={e.photo} name={dispName(e)} size={26} />
+                                    <div className="mt-3 flex flex-wrap gap-2">
+                                      {zoneEmps.slice(0, 8).map((e) => (
+                                        <div key={e.id} className="flex flex-col items-center w-14" title={dispName(e)}>
+                                          <div className="w-12 h-12 rounded-lg overflow-hidden bg-emerald-100 border border-stone-200 flex items-center justify-center">
+                                            {e.photo ? <img src={e.photo} alt={dispName(e)} className="w-full h-full object-cover" /> : <span className="text-base font-semibold text-emerald-800">{(dispName(e) || '?').trim().charAt(0)}</span>}
                                           </div>
-                                        ))}
-                                      </div>
-                                      {zoneEmps.length > 6 && <span className="ml-1.5 text-xs text-stone-500">+{zoneEmps.length - 6}</span>}
+                                          <span className="text-[10px] text-stone-600 mt-1 text-center leading-tight w-full truncate">{dispName(e)}</span>
+                                        </div>
+                                      ))}
+                                      {zoneEmps.length > 8 && (
+                                        <div className="w-12 h-12 rounded-lg bg-stone-100 border border-stone-200 flex items-center justify-center text-xs text-stone-500 self-start">+{zoneEmps.length - 8}</div>
+                                      )}
                                     </div>
                                   )}
                                   {zone.description && <p className="text-xs text-stone-500 mt-2 line-clamp-2">{zone.description}</p>}
@@ -1878,15 +1881,18 @@ function BusinessesPage({ businesses, zones, employees, positions, profile, ops,
                             {crossZoneEmps.length > 0 && (
                               <div onClick={() => onOpenZone(biz.id, '__nozone__')} className="bg-amber-50/60 rounded-lg border-2 border-dashed border-amber-300 p-4 hover:bg-amber-50 hover:border-amber-400 hover:shadow-md hover:-translate-y-0.5 transition-all group/nz cursor-pointer">
                                 <div className="flex items-center gap-2"><div className="w-8 h-8 rounded-lg bg-amber-200 flex items-center justify-center"><MapPin className="w-4 h-4 text-amber-800" /></div><div><div className="font-medium text-amber-900">ไม่จำกัดโซน</div><div className="text-xs text-amber-700">{crossZoneEmps.length} คน</div></div></div>
-                                <div className="mt-3 flex items-center">
-                                  <div className="flex -space-x-2">
-                                    {crossZoneEmps.slice(0, 6).map((e) => (
-                                      <div key={e.id} className="ring-2 ring-white rounded-full" title={dispName(e)}>
-                                        <Avatar photo={e.photo} name={dispName(e)} size={26} />
+                                <div className="mt-3 flex flex-wrap gap-2">
+                                  {crossZoneEmps.slice(0, 8).map((e) => (
+                                    <div key={e.id} className="flex flex-col items-center w-14" title={dispName(e)}>
+                                      <div className="w-12 h-12 rounded-lg overflow-hidden bg-amber-100 border border-amber-200 flex items-center justify-center">
+                                        {e.photo ? <img src={e.photo} alt={dispName(e)} className="w-full h-full object-cover" /> : <span className="text-base font-semibold text-amber-800">{(dispName(e) || '?').trim().charAt(0)}</span>}
                                       </div>
-                                    ))}
-                                  </div>
-                                  {crossZoneEmps.length > 6 && <span className="ml-1.5 text-xs text-amber-700">+{crossZoneEmps.length - 6}</span>}
+                                      <span className="text-[10px] text-amber-800 mt-1 text-center leading-tight w-full truncate">{dispName(e)}</span>
+                                    </div>
+                                  ))}
+                                  {crossZoneEmps.length > 8 && (
+                                    <div className="w-12 h-12 rounded-lg bg-amber-100 border border-amber-200 flex items-center justify-center text-xs text-amber-700 self-start">+{crossZoneEmps.length - 8}</div>
+                                  )}
                                 </div>
                                 <p className="text-xs text-amber-700/80 mt-2">พนักงานที่ดูแลข้ามโซน เช่น ผู้จัดการ</p>
                                 <div className="mt-2 pt-2 border-t border-amber-200 flex items-center justify-between text-xs text-amber-800 opacity-0 group-hover/nz:opacity-100 transition-opacity"><span>ดูพนักงาน</span><ChevronRight className="w-3.5 h-3.5" /></div>
