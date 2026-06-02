@@ -2035,6 +2035,11 @@ function PositionsPage({ businesses, positions, employees, profile, activeBusine
     <div className="h-full overflow-auto"><PageHeader title="ตำแหน่ง" /><div className="p-8"><EmptyState icon={Award} title="เลือกธุรกิจที่ sidebar" description="ตำแหน่งเป็นข้อมูลเฉพาะของแต่ละธุรกิจ — ต้องเลือกธุรกิจที่ sidebar ก่อน" /></div></div>
   );
   const roots = bizPositions.filter((p) => !p.parentId);
+  const shortages = bizPositions
+    .map((p) => { const count = employees.filter((e) => e.positionId === p.id && isActive(e)).length; const target = p.targetHeadcount || 0; return { p, count, target, short: target > 0 ? Math.max(0, target - count) : 0 }; })
+    .filter((x) => x.short > 0)
+    .sort((a, b) => b.short - a.short);
+  const totalShort = shortages.reduce((s, x) => s + x.short, 0);
 
   return (
     <div className="h-full overflow-auto">
@@ -2045,9 +2050,31 @@ function PositionsPage({ businesses, positions, employees, profile, activeBusine
         {bizPositions.length === 0 ? (
           <EmptyState icon={Award} title="ยังไม่มีตำแหน่ง" description="เพิ่มตำแหน่งและกำหนดสายบังคับบัญชา (เช่น ผู้จัดการ → หัวหน้าโซน → พนักงาน)" />
         ) : (
-          <div className="bg-white rounded-xl border border-stone-200 p-6">
-            <PositionTree positions={roots} allPositions={bizPositions} employees={employees} onEdit={(p) => { setEditing(p); setShowModal(true); }} onDelete={del} isOwner={canManageBiz} canManagePayroll={canManagePayroll} level={0} />
-          </div>
+          <>
+            {shortages.length > 0 && (
+              <div className="mb-4 bg-amber-50 border-2 border-amber-300 rounded-xl p-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <div className="w-9 h-9 rounded-lg bg-amber-200 flex items-center justify-center"><AlertCircle className="w-5 h-5 text-amber-800" /></div>
+                  <div>
+                    <h3 className="font-semibold text-amber-900">ตำแหน่งที่พนักงานขาด</h3>
+                    <div className="text-xs text-amber-700">ขาดรวม <b>{totalShort} อัตรา</b> ใน {shortages.length} ตำแหน่ง</div>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {shortages.map(({ p, count, target, short }) => (
+                    <span key={p.id} className="inline-flex items-center gap-2 px-3 py-1.5 bg-white border border-amber-300 rounded-lg text-sm">
+                      <span className="font-medium text-stone-800">{p.name}</span>
+                      <span className="px-1.5 py-0.5 bg-red-100 text-red-700 rounded text-xs font-bold">ขาด {short}</span>
+                      <span className="text-xs text-stone-400">{count}/{target}</span>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div className="bg-white rounded-xl border border-stone-200 p-6">
+              <PositionTree positions={roots} allPositions={bizPositions} employees={employees} onEdit={(p) => { setEditing(p); setShowModal(true); }} onDelete={del} isOwner={canManageBiz} canManagePayroll={canManagePayroll} level={0} />
+            </div>
+          </>
         )}
       </div>
       {showModal && (
@@ -2071,9 +2098,9 @@ function PositionTree({ positions, allPositions, employees, onEdit, onDelete, is
         const full = target > 0 && count === target;
         return (
           <div key={pos.id}>
-            <div className="flex items-center justify-between p-3 bg-stone-50 hover:bg-stone-100 rounded-lg group">
+            <div className={`flex items-center justify-between p-3 rounded-lg group ${shortage > 0 ? 'bg-amber-50 hover:bg-amber-100 border-l-4 border-amber-400' : 'bg-stone-50 hover:bg-stone-100'}`}>
               <div className="flex items-center gap-3">
-                <Award className="w-4 h-4 text-emerald-700" />
+                <Award className={`w-4 h-4 ${shortage > 0 ? 'text-amber-700' : 'text-emerald-700'}`} />
                 <div>
                   <div className="flex items-center gap-2 flex-wrap"><div className="font-medium text-stone-800">{pos.name}</div>
                     {pos.crossZone && <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-100 text-amber-800 text-[10px] font-medium rounded-full"><MapPin className="w-2.5 h-2.5" />ไม่จำกัดโซน</span>}
@@ -2082,7 +2109,7 @@ function PositionTree({ positions, allPositions, employees, onEdit, onDelete, is
                         ? <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-emerald-100 text-emerald-800 text-[10px] font-medium rounded-full"><CheckCircle2 className="w-2.5 h-2.5" />ครบ {count}/{target}</span>
                         : over > 0
                           ? <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-sky-100 text-sky-800 text-[10px] font-medium rounded-full"><AlertCircle className="w-2.5 h-2.5" />เกิน {over} ({count}/{target})</span>
-                          : <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-100 text-amber-800 text-[10px] font-medium rounded-full"><AlertCircle className="w-2.5 h-2.5" />ขาด {shortage} ({count}/{target})</span>
+                          : <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-red-100 text-red-700 text-xs font-bold rounded-full"><AlertCircle className="w-3 h-3" />ขาด {shortage} คน ({count}/{target})</span>
                     )}
                   </div>
                   <div className="text-xs text-stone-500">{count} คน{target > 0 ? ` (ต้องการ ${target})` : ''}{pos.description ? ` • ${pos.description}` : ''}</div>
