@@ -68,6 +68,13 @@ function payMonthLabel(year, month) {
   return `${MONTH_NAMES[d.getMonth()]} ${d.getFullYear() + 543}`;
 }
 const fmtMoney = (n) => (Number(n) || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+// ฟอร์แมตวันที่ไทย (กันค่าว่าง/วันที่ไม่ถูกต้องไม่ให้แอปขาว)
+const fmt = (d) => {
+  if (!d) return null;
+  const dt = new Date(d);
+  if (isNaN(dt.getTime())) return null;
+  return dt.toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' });
+};
 
 // คำนวณประกันสังคม: 5% ของฐาน สูงสุด 750
 const calcSocialSecurity = (baseSalary) => Math.min(Math.round(Number(baseSalary) * 0.05 * 100) / 100, 750);
