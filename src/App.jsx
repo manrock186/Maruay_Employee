@@ -1063,15 +1063,16 @@ export default function App() {
       },
     },
     roomRent: {
-      getByPeriod: async (businessId, year, month) => {
+      // ค่าห้องเป็นส่วนกลางของทุกธุรกิจ → คีย์ด้วยงวด (ปี/เดือน) เท่านั้น (business_id = null)
+      getByPeriod: async (year, month) => {
         const { data, error } = await supabase.from('room_rent_pools').select('*')
-          .eq('business_id', businessId).eq('period_year', year).eq('period_month', month).maybeSingle();
+          .is('business_id', null).eq('period_year', year).eq('period_month', month).maybeSingle();
         if (error) { console.error(error); return null; }
         return data ? fromDB(data) : null;
       },
       upsert: async (d) => {
         const { data, error } = await supabase.from('room_rent_pools')
-          .upsert({ ...toDB(d), updated_at: new Date().toISOString() }, { onConflict: 'business_id,period_year,period_month' })
+          .upsert({ ...toDB(d), business_id: null, updated_at: new Date().toISOString() }, { onConflict: 'period_year,period_month' })
           .select().single();
         if (error) { alert('บันทึกค่าห้องไม่สำเร็จ: ' + error.message); return null; }
         return fromDB(data);
@@ -3831,18 +3832,18 @@ function RoomRentPage({ businesses, employees, activeBusinessId, ops }) {
   const [savedAt, setSavedAt] = useState(null);
   const [carried, setCarried] = useState(false);
 
-  const business = businesses.find((b) => b.id === activeBusinessId);
-  const bizEmployees = useMemo(() => employees.filter((e) => isActive(e) && (e.businessId === activeBusinessId || (e.additionalBusinessIds || []).includes(activeBusinessId))), [employees, activeBusinessId]);
+  // ค่าห้องเป็นส่วนกลางของทุกธุรกิจ — ผูกได้กับพนักงานทุกคนที่ยังทำงานอยู่ (ไม่ว่าสังกัดธุรกิจไหน)
+  const allEmployees = useMemo(() => employees.filter((e) => isActive(e)), [employees]);
+  const bizName = (e) => businesses.find((b) => b.id === e.businessId)?.name || '';
   const empName = (id) => { const e = employees.find((x) => x.id === id); return e ? dispName(e) : '— ไม่พบ —'; };
   const newRoom = () => ({ id: `r${Date.now()}${Math.floor(Math.random() * 1000)}`, floor: '', roomNo: '', occupantText: '', occupantIds: [], rent: '', waterFlat: '', elecRate: 7, meterPrev: '', meterCurr: '', note: '' });
   const mapRoom = (r) => ({ ...newRoom(), ...r, occupantText: r.occupantText ?? r.label ?? '', rent: r.rent != null ? r.rent : (r.fixedExtra ?? '') });
 
   useEffect(() => {
-    if (!activeBusinessId) return;
     let cancelled = false;
     setCarried(false);
     (async () => {
-      const pool = await ops.roomRent.getByPeriod(activeBusinessId, year, month);
+      const pool = await ops.roomRent.getByPeriod(year, month);
       if (cancelled) return;
       if (pool) {
         setRooms((pool.rooms || []).map(mapRoom));
@@ -3851,7 +3852,7 @@ function RoomRentPage({ businesses, employees, activeBusinessId, ops }) {
         return;
       }
       const prev = month === 1 ? { y: year - 1, m: 12 } : { y: year, m: month - 1 };
-      const prevPool = await ops.roomRent.getByPeriod(activeBusinessId, prev.y, prev.m);
+      const prevPool = await ops.roomRent.getByPeriod(prev.y, prev.m);
       if (cancelled) return;
       if (prevPool && (prevPool.rooms || []).length) {
         setRooms(prevPool.rooms.map((r) => ({ ...mapRoom(r), meterPrev: r.meterCurr ?? '', meterCurr: '' })));
@@ -3861,7 +3862,7 @@ function RoomRentPage({ businesses, employees, activeBusinessId, ops }) {
       setNote(''); setSavedAt(null);
     })();
     return () => { cancelled = true; };
-  }, [activeBusinessId, year, month]);
+  }, [year, month]);
 
   const setRoom = (id, patch) => setRooms((rs) => rs.map((r) => r.id === id ? { ...r, ...patch } : r));
   const addRoom = () => setRooms((rs) => [...rs, newRoom()]);
@@ -3879,7 +3880,7 @@ function RoomRentPage({ businesses, employees, activeBusinessId, ops }) {
       occupantIds: r.occupantIds || [], rent: Number(r.rent) || 0, waterFlat: Number(r.waterFlat) || 0,
       elecRate: Number(r.elecRate) || 0, meterPrev: Number(r.meterPrev) || 0, meterCurr: Number(r.meterCurr) || 0, note: r.note || '',
     }));
-    const ok = await ops.roomRent.upsert({ businessId: activeBusinessId, periodYear: year, periodMonth: month, rooms: clean, prevDate: prevDate || null, currDate: currDate || null, note: note.trim() || null });
+    const ok = await ops.roomRent.upsert({ periodYear: year, periodMonth: month, rooms: clean, prevDate: prevDate || null, currDate: currDate || null, note: note.trim() || null });
     setSaving(false);
     if (ok) { setSavedAt(new Date().toISOString()); setCarried(false); alert('บันทึกค่าห้องแล้ว — ยอดของผู้พักที่ผูกพนักงานไว้ จะไปขึ้นช่องค่าห้องในหน้าเงินเดือนงวดเดียวกันอัตโนมัติ'); }
   };
@@ -3887,13 +3888,9 @@ function RoomRentPage({ businesses, employees, activeBusinessId, ops }) {
   const yearOptions = [now.getFullYear(), now.getFullYear() - 1, now.getFullYear() - 2];
   const cellInput = "w-full px-2 py-1.5 border border-stone-200 rounded text-right focus:outline-none focus:ring-1 focus:ring-emerald-500/40";
 
-  if (!activeBusinessId) return (
-    <div className="h-full overflow-auto"><PageHeader title="ค่าห้องพนักงาน" /><div className="p-4 md:p-8"><EmptyState icon={KeyRound} title="เลือกธุรกิจที่ sidebar" description="ค่าห้องคิดแยกตามธุรกิจ/ตึก — เลือกธุรกิจก่อน" /></div></div>
-  );
-
   return (
     <div className="h-full overflow-auto">
-      <PageHeader title="ค่าห้องพนักงาน" subtitle={`${business?.name || ''} — งวด ${MONTH_NAMES[month - 1]} ${year + 543} (จ่าย ${payMonthLabel(year, month)})`}>
+      <PageHeader title="ค่าห้องพนักงาน" subtitle={`ส่วนกลาง — ทุกธุรกิจ • งวด ${MONTH_NAMES[month - 1]} ${year + 543} (จ่าย ${payMonthLabel(year, month)})`}>
         <button onClick={save} disabled={saving} className="flex items-center gap-2 px-4 py-2 bg-emerald-900 hover:bg-emerald-800 disabled:opacity-50 text-white rounded-lg text-sm font-medium"><Check className="w-4 h-4" />{saving ? 'กำลังบันทึก...' : 'บันทึกค่าห้อง'}</button>
       </PageHeader>
       <div className="p-4 md:p-6 space-y-4">
@@ -3945,7 +3942,7 @@ function RoomRentPage({ businesses, employees, activeBusinessId, ops }) {
                   const total = roomTotal(r);
                   const occ = (r.occupantIds || []).filter(Boolean);
                   const share = occ.length ? total / occ.length : 0;
-                  const available = bizEmployees.filter((e) => !occ.includes(e.id));
+                  const available = allEmployees.filter((e) => !occ.includes(e.id));
                   return (
                     <tr key={r.id} className="border-b border-stone-100 align-top">
                       <td className="px-2 py-2"><input value={r.floor} onChange={(e) => setRoom(r.id, { floor: e.target.value })} className="w-full px-2 py-1.5 border border-stone-200 rounded text-center" /></td>
@@ -3959,7 +3956,7 @@ function RoomRentPage({ businesses, employees, activeBusinessId, ops }) {
                           {available.length > 0 && (
                             <select value="" onChange={(e) => { addOccupant(r.id, e.target.value); e.target.value = ''; }} className="text-[11px] px-1 py-0.5 border border-stone-200 rounded bg-white text-stone-500">
                               <option value="">+ ผูกเงินเดือน</option>
-                              {available.map((e) => <option key={e.id} value={e.id}>{dispName(e)}</option>)}
+                              {available.map((e) => <option key={e.id} value={e.id}>{dispName(e)}{bizName(e) ? ` · ${bizName(e)}` : ''}</option>)}
                             </select>
                           )}
                         </div>
@@ -4280,7 +4277,7 @@ function PayrollPage({ businesses, zones, positions, employees, activeBusinessId
       if (cancelled) return;
       const pool = await ops.commission.getByPeriod(activeBusinessId, year, month);
       if (cancelled) return;
-      const rrPool = await ops.roomRent.getByPeriod(activeBusinessId, year, month);
+      const rrPool = await ops.roomRent.getByPeriod(year, month);
       if (cancelled) return;
       setPayrolls(ps); setItems(its); setCommissionPool(pool); setRoomRentPool(rrPool); setLoading(false);
     })();
