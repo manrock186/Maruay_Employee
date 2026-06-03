@@ -6,7 +6,7 @@ import {
   Eye, EyeOff, Network, Save, ChevronDown, ChevronUp, User,
   KeyRound, AlertCircle, CheckCircle2, Crown, Award, MapPinned, Clock,
   Globe, CreditCard, BookOpen, FileText, ExternalLink, Paperclip,
-  Wallet, Banknote, Calculator, Receipt, Minus, TrendingUp, TrendingDown, Bell, BellRing, Check, CheckCheck, Hash, Menu, Wrench, Percent
+  Wallet, Banknote, Calculator, Receipt, Minus, TrendingUp, TrendingDown, Bell, BellRing, Check, CheckCheck, Hash, Menu, Wrench, Percent, Sparkles
 } from 'lucide-react';
 import { supabase, fromDB, toDB } from './supabase.js';
 
@@ -62,6 +62,33 @@ const applyTheme = (theme) => {
 
 // ============ PAYROLL HELPERS ============
 const MONTH_NAMES = ['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน', 'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
+
+// ============ บันทึกการอัปเดต (What's New) — เรียงใหม่สุดบนสุด, v ต้องเพิ่มขึ้นเรื่อยๆ ============
+const CHANGELOG = [
+  { v: 5, date: '3 มิ.ย. 2569', title: 'สิทธิ์เมนูรายคน + แก้บั๊กช่าง', items: [
+    'เพิ่ม "สิทธิ์เข้าถึงเมนู" รายคนในหน้าผู้ใช้ระบบ — เลือกได้ว่าใครเห็นเมนูไหน',
+    'มอบสิทธิ์เข้าถึง "ช่าง/ผู้รับเหมา" ให้ผู้ใช้คนอื่นได้ (ปกติเฉพาะเจ้าของ)',
+    'แก้บั๊ก: บันทึกประวัติช่าง/ผู้รับเหมาแล้วแสดงผลทันที ไม่ต้องรีโหลด',
+  ] },
+  { v: 4, date: '3 มิ.ย. 2569', title: 'กรอกเงินเดือนลื่นขึ้น', items: [
+    'แก้บั๊กช่องกรอกเงินเดือนเด้งหลุดโฟกัสตอนพิมพ์ — พิมพ์รัวได้ไม่ต้องคลิกซ้ำ',
+    'หน้ากรอกเร็ว: เอา "สาย" ออก เพิ่ม "เบิกล่วงหน้า" และ "ค่าห้องพัก"',
+    'งานเสริม: เลือกจากรายการที่เคยทำได้ (เช่น ล้างห้องน้ำ)',
+  ] },
+  { v: 3, date: '2 มิ.ย. 2569', title: 'แก้ไขงวดที่ปิดแล้ว + พิมพ์สลิป', items: [
+    'แก้ไขเงินเดือนงวดที่ปิดแล้วได้ (เผื่อคิดผิด) แล้วเลือกคงปิดงวดหรือเปิดเป็นร่าง',
+    'ฟอร์มพิมพ์สลิปเงินเดือนรายคน + พิมพ์ทีละหลายคนได้',
+  ] },
+  { v: 2, date: '1 มิ.ย. 2569', title: 'คอมมิชชั่น 2 ก้อน + ซ่อนเงินเดือน', items: [
+    'เพิ่มคอมมิชชั่นก้อนที่ 2 (รายได้ร้านค้า) รวมกับคอมเดิมเป็นยอดเดียว',
+    'สิทธิ์ "ไม่เห็นเงินเดือน" ซ่อนทุกอย่างที่เป็นตัวเงินจริงจัง',
+  ] },
+  { v: 1, date: '31 พ.ค. 2569', title: 'รองรับพนักงานหลายธุรกิจ', items: [
+    'พนักงาน 1 คนทำได้หลายธุรกิจ — แยกตำแหน่ง แยกเงินเดือน แยกสลิป',
+  ] },
+];
+const LATEST_UPDATE_V = CHANGELOG.reduce((m, c) => Math.max(m, c.v), 0);
+
 // ป้ายเดือนที่จ่ายเงิน (งวดทำงานเดือน month → จ่ายต้นเดือนถัดไป)
 function payMonthLabel(year, month) {
   const d = new Date(Number(year), Number(month), 1);
@@ -545,6 +572,8 @@ export default function App() {
   const [activeBusinessId, setActiveBusinessId] = useState(null);
   const [activeZoneId, setActiveZoneId] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(() => typeof window !== 'undefined' && window.innerWidth >= 1024);
+  const [showWhatsNew, setShowWhatsNew] = useState(false);
+  const whatsNewShownRef = useRef(false);
 
   // ---- AUTH ----
   useEffect(() => {
@@ -604,9 +633,20 @@ export default function App() {
     if (!profile || profile.isOwner || profile.role === 'pending') return;
     if (!Array.isArray(profile.allowedViews)) return;
     const allowed = new Set([...profile.allowedViews, 'dashboard']);
-    const gated = ['businesses', 'positions', 'employees', 'orgchart', 'payroll', 'commission', 'roomrent'];
+    const gated = ['businesses', 'positions', 'employees', 'orgchart', 'payroll', 'commission', 'roomrent', 'contractors'];
     if (gated.includes(view) && !allowed.has(view)) setView('dashboard');
   }, [view, profile]);
+
+  // ---- เด้ง "มีอะไรใหม่" อัตโนมัติครั้งแรกที่เปิด ถ้ามีอัปเดตที่ยังไม่เห็น ----
+  useEffect(() => {
+    if (!profile || profile.role === 'pending') return;
+    if (whatsNewShownRef.current) return;
+    const lastSeen = Number(profile.lastSeenUpdate) || 0;
+    if (LATEST_UPDATE_V > lastSeen) {
+      whatsNewShownRef.current = true;
+      setShowWhatsNew(true);
+    }
+  }, [profile]);
 
   // ---- LOAD ALL DATA + REALTIME ----
   useEffect(() => {
@@ -626,8 +666,8 @@ export default function App() {
         supabase.from('notifications').select('*').order('created_at', { ascending: false }),
         supabase.from('notification_reads').select('*'),
         supabase.from('app_settings').select('expiry_warn_months, birthday_notify_enabled, birthday_warn_days').eq('id', 1).maybeSingle(),
-        profile.isOwner ? supabase.from('contractors').select('*').order('created_at', { ascending: false }) : Promise.resolve({ data: [] }),
-        profile.isOwner ? supabase.from('contractor_visits').select('*').order('visit_date', { ascending: false }) : Promise.resolve({ data: [] }),
+        (profile.isOwner || (Array.isArray(profile.allowedViews) && profile.allowedViews.includes('contractors'))) ? supabase.from('contractors').select('*').order('created_at', { ascending: false }) : Promise.resolve({ data: [] }),
+        (profile.isOwner || (Array.isArray(profile.allowedViews) && profile.allowedViews.includes('contractors'))) ? supabase.from('contractor_visits').select('*').order('visit_date', { ascending: false }) : Promise.resolve({ data: [] }),
       ]);
       if (cancelled) return;
       if (settingsRow?.data?.expiry_warn_months != null) setExpiryWarnMonths(settingsRow.data.expiry_warn_months);
@@ -742,6 +782,12 @@ export default function App() {
     applyTheme(theme); // เปลี่ยนทันที
     setProfile((prev) => prev ? { ...prev, theme } : prev);
     await supabase.from('user_profiles').update({ theme }).eq('id', session.user.id);
+  };
+  // ทำเครื่องหมายว่าเห็นอัปเดตล่าสุดแล้ว
+  const markUpdatesSeen = async () => {
+    if (!session?.user?.id) return;
+    setProfile((prev) => prev ? { ...prev, lastSeenUpdate: LATEST_UPDATE_V } : prev);
+    await supabase.from('user_profiles').update({ last_seen_update: LATEST_UPDATE_V }).eq('id', session.user.id);
   };
   const openZoneEmployees = (bid, zid) => {
     setActiveBusinessId(bid); setActiveZoneId(zid); setView('employees');
@@ -1080,6 +1126,17 @@ export default function App() {
           <button onClick={() => setSidebarOpen((o) => !o)} className="p-2 rounded-lg hover:bg-stone-100 text-stone-600" title="แสดง/ซ่อนเมนู" aria-label="เมนู"><Menu className="w-5 h-5" /></button>
           <div className="w-7 h-7 rounded-md bg-amber-500 flex items-center justify-center lg:hidden"><Users className="w-4 h-4 text-emerald-950" strokeWidth={2.5} /></div>
           <span className="font-semibold text-stone-700 text-sm lg:hidden">ระบบพนักงาน</span>
+          <div className="flex-1" />
+          {(() => {
+            const unseen = CHANGELOG.filter((c) => c.v > (Number(profile.lastSeenUpdate) || 0)).length;
+            return (
+              <button onClick={() => setShowWhatsNew(true)} className="relative flex items-center gap-1.5 px-3 py-1.5 rounded-lg hover:bg-amber-50 text-stone-600 hover:text-amber-700 text-sm font-medium transition-colors" title="มีอะไรใหม่">
+                <Sparkles className="w-4 h-4" />
+                <span className="hidden sm:inline">มีอะไรใหม่</span>
+                {unseen > 0 && <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 bg-rose-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">{unseen}</span>}
+              </button>
+            );
+          })()}
         </div>
         <div className="flex-1 min-h-0">
         {view === 'dashboard' && (
@@ -1175,7 +1232,7 @@ export default function App() {
             currentUserId={session.user.id}
           />
         )}
-        {view === 'contractors' && profile.isOwner && (
+        {view === 'contractors' && (profile.isOwner || (Array.isArray(profile.allowedViews) && profile.allowedViews.includes('contractors'))) && (
           <ContractorsPage
             contractors={contractors}
             visits={contractorVisits}
@@ -1195,6 +1252,59 @@ export default function App() {
         )}
         </div>
       </main>
+      {showWhatsNew && (
+        <WhatsNewModal
+          lastSeen={Number(profile.lastSeenUpdate) || 0}
+          onClose={() => { setShowWhatsNew(false); markUpdatesSeen(); }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ============ WHAT'S NEW (มีอะไรใหม่) ============
+function WhatsNewModal({ lastSeen, onClose }) {
+  return (
+    <div className="fixed inset-0 bg-stone-900/50 backdrop-blur-sm z-[60] flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="px-5 py-4 border-b border-stone-200 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="w-9 h-9 rounded-lg bg-amber-100 flex items-center justify-center"><Sparkles className="w-5 h-5 text-amber-600" /></div>
+            <div>
+              <div className="font-semibold text-stone-800">มีอะไรใหม่</div>
+              <div className="text-xs text-stone-500">อัปเดตล่าสุดของระบบ</div>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-1 hover:bg-stone-100 rounded text-stone-500"><X className="w-5 h-5" /></button>
+        </div>
+        <div className="p-5 overflow-auto space-y-4">
+          {CHANGELOG.map((c) => {
+            const isNew = c.v > lastSeen;
+            return (
+              <div key={c.v} className={`rounded-xl border p-3.5 ${isNew ? 'border-amber-300 bg-amber-50/50' : 'border-stone-200'}`}>
+                <div className="flex items-center justify-between gap-2 mb-2">
+                  <div className="font-medium text-stone-800 text-sm flex items-center gap-2">
+                    {c.title}
+                    {isNew && <span className="px-1.5 py-0.5 bg-rose-500 text-white text-[10px] font-bold rounded">ใหม่</span>}
+                  </div>
+                  <span className="text-[11px] text-stone-400 flex-shrink-0">{c.date}</span>
+                </div>
+                <ul className="space-y-1">
+                  {c.items.map((it, i) => (
+                    <li key={i} className="flex items-start gap-2 text-sm text-stone-600">
+                      <Check className="w-3.5 h-3.5 text-emerald-600 mt-0.5 flex-shrink-0" />
+                      <span>{it}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            );
+          })}
+        </div>
+        <div className="px-5 py-3 border-t border-stone-200 bg-stone-50 flex justify-end">
+          <button onClick={onClose} className="px-5 py-2 bg-emerald-900 hover:bg-emerald-800 text-white rounded-lg text-sm font-medium">รับทราบ</button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1461,6 +1571,8 @@ function Sidebar({ view, setView, profile, businesses, zones, activeBusinessId, 
   // สิทธิ์เข้าถึงเมนูรายคน (ทับ role เดิม — จำกัดได้ ไม่เกินสิทธิ์ role) — เจ้าของไม่ถูกจำกัด, "ภาพรวม" เข้าได้เสมอ
   const allowedViewSet = (!isOwner && Array.isArray(profile.allowedViews)) ? new Set([...profile.allowedViews, 'dashboard']) : null;
   const navAllowed = (id) => (allowedViewSet ? allowedViewSet.has(id) : true);
+  // ช่าง/ผู้รับเหมา: ปกติเจ้าของเท่านั้น แต่มอบสิทธิ์ให้คนอื่นได้ผ่าน allowed_views
+  const canViewContractors = isOwner || !!(allowedViewSet && allowedViewSet.has('contractors'));
   const NAV_ITEMS = [
     { id: 'dashboard', label: 'ภาพรวม', icon: Home },
     { id: 'businesses', label: 'ธุรกิจและโซน', icon: Building2, show: canManageBiz && navAllowed('businesses') },
@@ -1471,7 +1583,7 @@ function Sidebar({ view, setView, profile, businesses, zones, activeBusinessId, 
     { id: 'commission', label: 'คอมมิชชั่น', icon: Percent, show: profile.canManagePayroll && navAllowed('commission') },
     { id: 'roomrent', label: 'ค่าห้องพนักงาน', icon: KeyRound, show: profile.canManagePayroll && navAllowed('roomrent') },
     { id: 'users', label: 'ผู้ใช้ระบบ', icon: Shield, show: isOwner },
-    { id: 'contractors', label: 'ช่าง/ผู้รับเหมา', icon: Wrench, show: isOwner },
+    { id: 'contractors', label: 'ช่าง/ผู้รับเหมา', icon: Wrench, show: canViewContractors },
     { id: 'settings', label: 'ตั้งค่า', icon: Settings, show: isOwner },
   ];
 
@@ -4898,11 +5010,15 @@ function ProfileEditForm({ initial, businesses, zones, onSave, onCancel, isSelf 
     { id: 'payroll', label: 'เงินเดือน', when: role === 'business_manager' && canManagePayroll },
     { id: 'commission', label: 'คอมมิชชั่น', when: role === 'business_manager' && canManagePayroll },
     { id: 'roomrent', label: 'ค่าห้องพนักงาน', when: role === 'business_manager' && canManagePayroll },
+    { id: 'contractors', label: 'ช่าง/ผู้รับเหมา', when: true, grant: true }, // มอบสิทธิ์พิเศษ (ปกติเฉพาะเจ้าของ) — ปิดเป็นค่าเริ่มต้น
   ].filter((m) => m.when);
   const showMenuPicker = ['business_manager', 'zone_manager', 'viewer'].includes(role);
-  const isMenuOn = (id) => (menuSet ? menuSet.has(id) : true);
+  const grantIds = toggleMenus.filter((m) => m.grant).map((m) => m.id);
+  const restrictIds = toggleMenus.filter((m) => !m.grant).map((m) => m.id);
+  // เมนูปกติ (restrict) เปิดเป็นค่าเริ่มต้น / เมนูมอบสิทธิ์ (grant เช่น ช่าง) ปิดเป็นค่าเริ่มต้น
+  const isMenuOn = (id) => (menuSet ? menuSet.has(id) : !grantIds.includes(id));
   const toggleMenu = (id) => setMenuSet((prev) => {
-    const base = prev ? new Set(prev) : new Set(toggleMenus.map((m) => m.id));
+    const base = prev ? new Set(prev) : new Set(restrictIds);
     base.has(id) ? base.delete(id) : base.add(id);
     return base;
   });
@@ -4919,12 +5035,13 @@ function ProfileEditForm({ initial, businesses, zones, onSave, onCancel, isSelf 
       if (viewerScope === 'business') bizIds = businessIds;
       else if (viewerScope === 'zone') zIds = zoneIds;
     }
-    // สิทธิ์เมนูรายคน: ถ้าเลือกครบทุกเมนู = null (ไม่จำกัด)
+    // สิทธิ์เมนูรายคน: ถ้าตรงกับค่าเริ่มต้น (เมนูปกติเปิดหมด + เมนูพิเศษปิดหมด) = null (ไม่จำกัด)
     let allowedViews = null;
     if (showMenuPicker) {
       const applicable = toggleMenus.map((m) => m.id);
       const on = applicable.filter((id) => isMenuOn(id));
-      allowedViews = on.length === applicable.length ? null : on;
+      const isDefault = restrictIds.every((id) => isMenuOn(id)) && grantIds.every((id) => !isMenuOn(id));
+      allowedViews = isDefault ? null : on;
     }
     onSave({ name: name.trim(), role, businessIds: bizIds, zoneIds: zIds, canManagePayroll: role === 'business_manager' ? canManagePayroll : false, allowedViews });
   };
@@ -5095,19 +5212,19 @@ function ProfileEditForm({ initial, businesses, zones, onSave, onCancel, isSelf 
 
       {showMenuPicker && toggleMenus.length > 0 && (
         <FormField label="เมนูที่เข้าถึงได้">
-          <p className="text-xs text-stone-500 -mt-1 mb-2">ติ๊กเมนูที่ผู้ใช้คนนี้เห็น/เข้าได้ (เอาออกเพื่อซ่อน) — "ภาพรวม" เข้าได้เสมอ • ติ๊กครบทุกอัน = เข้าได้ตามสิทธิ์ปกติ</p>
+          <p className="text-xs text-stone-500 -mt-1 mb-2">ติ๊กเมนูที่ผู้ใช้คนนี้เห็น/เข้าได้ (เอาออกเพื่อซ่อน) — "ภาพรวม" เข้าได้เสมอ • "ช่าง/ผู้รับเหมา" เป็นสิทธิ์พิเศษ ปกติเฉพาะเจ้าของ ติ๊กเพื่อมอบให้</p>
           <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
             {toggleMenus.map((m) => {
               const on = isMenuOn(m.id);
               return (
-                <label key={m.id} className={`flex items-center gap-2 p-2.5 rounded-lg border-2 cursor-pointer ${on ? 'border-emerald-600 bg-emerald-50' : 'border-stone-200 hover:border-stone-300'}`}>
+                <label key={m.id} className={`flex items-center gap-2 p-2.5 rounded-lg border-2 cursor-pointer ${on ? (m.grant ? 'border-amber-500 bg-amber-50' : 'border-emerald-600 bg-emerald-50') : 'border-stone-200 hover:border-stone-300'}`}>
                   <input type="checkbox" checked={on} onChange={() => toggleMenu(m.id)} className="w-4 h-4 rounded text-emerald-700" />
-                  <span className={`text-sm ${on ? 'font-medium text-emerald-900' : 'text-stone-600'}`}>{m.label}</span>
+                  <span className={`text-sm ${on ? (m.grant ? 'font-medium text-amber-900' : 'font-medium text-emerald-900') : 'text-stone-600'}`}>{m.label}{m.grant ? ' ★' : ''}</span>
                 </label>
               );
             })}
           </div>
-          {menuSet && <button type="button" onClick={() => setMenuSet(null)} className="mt-2 text-xs text-emerald-700 hover:underline">เลือกทุกเมนู (รีเซ็ตเป็นค่าปกติ)</button>}
+          {menuSet && <button type="button" onClick={() => setMenuSet(null)} className="mt-2 text-xs text-emerald-700 hover:underline">รีเซ็ตเป็นค่าปกติ (เมนูตามบทบาท ไม่รวมช่าง)</button>}
         </FormField>
       )}
 
