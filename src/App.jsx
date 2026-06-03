@@ -4903,13 +4903,13 @@ function PayrollQuickEntry({ bizEmployees, positions, payrollByEmp, itemsByPayro
             <thead className="bg-stone-50 border-b border-stone-200 text-xs text-stone-500">
               <tr>
                 <th className="text-left px-3 py-2.5 sticky left-0 bg-stone-50 z-10 min-w-[160px]">ชื่อ</th>
-                <th className="text-right px-2 py-2.5">ฐาน</th>
-                <th className="text-right px-2 py-2.5">คอม</th>
+                <th className="text-center px-2 py-2.5">ฐาน</th>
+                <th className="text-center px-2 py-2.5">คอม</th>
                 <th className="text-center px-2 py-2.5">ทำหยุด</th>
                 <th className="text-center px-2 py-2.5">หยุด</th>
-                <th className="text-right px-2 py-2.5">เบิก</th>
-                <th className="text-right px-2 py-2.5">ค่าห้อง</th>
-                <th className="text-right px-2 py-2.5">รับแล้ว</th>
+                <th className="text-center px-2 py-2.5">เบิก</th>
+                <th className="text-center px-2 py-2.5">ค่าห้อง</th>
+                <th className="text-center px-2 py-2.5">รับแล้ว</th>
                 <th className="text-center px-2 py-2.5">รายการ</th>
                 <th className="text-right px-3 py-2.5 sticky right-0 bg-stone-50 z-10">สุทธิ</th>
               </tr>
