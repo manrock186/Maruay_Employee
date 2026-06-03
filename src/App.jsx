@@ -5350,8 +5350,16 @@ function ContractorsPage({ contractors, visits, expenseRequests = [], employees 
 
   const enriched = useMemo(() => contractors.map((c) => {
     const my = visits.filter((v) => v.contractorId === c.id);
-    return { ...c, visitCount: my.length, lastVisit: my.map((v) => v.visitDate).sort().slice(-1)[0] || null, totalCost: my.reduce((s, v) => s + (Number(v.cost) || 0), 0) };
-  }), [contractors, visits]);
+    const myExp = expenseRequests.filter((r) => r.payeeKind === 'contractor' && r.payeeContractorId === c.id);
+    const expPaid = myExp.filter((r) => r.status === 'approved' || r.status === 'paid');
+    const dates = [...my.map((v) => v.visitDate), ...myExp.map((r) => String(r.createdAt || '').slice(0, 10))].filter(Boolean).sort();
+    return {
+      ...c,
+      visitCount: my.length + myExp.length,
+      lastVisit: dates.slice(-1)[0] || null,
+      totalCost: my.reduce((s, v) => s + (Number(v.cost) || 0), 0) + expPaid.reduce((s, r) => s + (Number(r.amount) || 0), 0),
+    };
+  }), [contractors, visits, expenseRequests]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -5446,7 +5454,7 @@ function ContractorsPage({ contractors, visits, expenseRequests = [], employees 
         </Modal>
       )}
       {openContractor && (
-        <ContractorDetailModal contractor={openContractor} allVisits={visits} businesses={businesses} ops={ops} onClose={() => setOpenContractor(null)} />
+        <ContractorDetailModal contractor={openContractor} allVisits={visits} expenseRequests={expenseRequests} businesses={businesses} ops={ops} onClose={() => setOpenContractor(null)} />
       )}
     </div>
   );
@@ -5693,11 +5701,20 @@ function ContractorForm({ initial, onSave, onCancel }) {
   );
 }
 
-function ContractorDetailModal({ contractor, allVisits, businesses, ops, onClose }) {
+function ContractorDetailModal({ contractor, allVisits, expenseRequests = [], businesses, ops, onClose }) {
   const myVisits = useMemo(() =>
     allVisits.filter((v) => v.contractorId === contractor.id)
       .sort((a, b) => String(b.visitDate || '').localeCompare(String(a.visitDate || ''))),
     [allVisits, contractor.id]);
+  const myExpenses = useMemo(() =>
+    expenseRequests.filter((r) => r.payeeKind === 'contractor' && r.payeeContractorId === contractor.id),
+    [expenseRequests, contractor.id]);
+  // รวมประวัติ: การมาทำงาน (visit) + ตั้งเบิก (expense) เรียงตามวันที่ใหม่สุด
+  const history = useMemo(() => {
+    const v = myVisits.map((x) => ({ ...x, _kind: 'visit', _date: x.visitDate }));
+    const e = myExpenses.map((x) => ({ ...x, _kind: 'expense', _date: String(x.createdAt || '').slice(0, 10) }));
+    return [...v, ...e].sort((a, b) => String(b._date || '').localeCompare(String(a._date || '')));
+  }, [myVisits, myExpenses]);
   const [editingVisit, setEditingVisit] = useState(null);
   const [showVisitForm, setShowVisitForm] = useState(false);
 
@@ -5711,7 +5728,14 @@ function ContractorDetailModal({ contractor, allVisits, businesses, ops, onClose
     if (!window.confirm(`ลบประวัติวันที่ ${fmt(v.visitDate)}?\nไฟล์แนบทั้งหมดจะถูกลบและไม่สามารถกู้คืนได้`)) return;
     await ops.contractorVisit.del(v.id);
   };
-  const totalCost = myVisits.reduce((s, v) => s + (Number(v.cost) || 0), 0);
+  const expPaid = myExpenses.filter((r) => r.status === 'approved' || r.status === 'paid');
+  const totalCost = myVisits.reduce((s, v) => s + (Number(v.cost) || 0), 0) + expPaid.reduce((s, r) => s + (Number(r.amount) || 0), 0);
+  const EXP_STATUS = {
+    pending: { label: 'รออนุมัติ', cls: 'bg-amber-100 text-amber-800' },
+    approved: { label: 'อนุมัติแล้ว', cls: 'bg-emerald-100 text-emerald-800' },
+    paid: { label: 'จ่ายแล้ว', cls: 'bg-sky-100 text-sky-800' },
+    rejected: { label: 'ไม่อนุมัติ', cls: 'bg-rose-100 text-rose-700' },
+  };
 
   return (
     <Modal title={`ประวัติ — ${contractor.name}`} onClose={onClose} wide>
@@ -5727,21 +5751,40 @@ function ContractorDetailModal({ contractor, allVisits, businesses, ops, onClose
           </div>
         </div>
         <div className="grid grid-cols-3 gap-3">
-          <div className="bg-stone-50 rounded-lg p-3 text-center"><div className="text-xs text-stone-500">จำนวนครั้ง</div><div className="font-semibold text-stone-800 text-lg">{myVisits.length}</div></div>
+          <div className="bg-stone-50 rounded-lg p-3 text-center"><div className="text-xs text-stone-500">รายการ</div><div className="font-semibold text-stone-800 text-lg">{history.length}</div></div>
           <div className="bg-stone-50 rounded-lg p-3 text-center"><div className="text-xs text-stone-500">รวมจ่าย</div><div className="font-semibold text-stone-800 text-lg">{fmtMoney(totalCost)}</div></div>
-          <div className="bg-stone-50 rounded-lg p-3 text-center"><div className="text-xs text-stone-500">มาล่าสุด</div><div className="font-semibold text-stone-800 text-lg">{myVisits[0]?.visitDate ? fmt(myVisits[0].visitDate) : '—'}</div></div>
+          <div className="bg-stone-50 rounded-lg p-3 text-center"><div className="text-xs text-stone-500">ล่าสุด</div><div className="font-semibold text-stone-800 text-lg">{history[0]?._date ? fmt(history[0]._date) : '—'}</div></div>
         </div>
         <div className="flex justify-end">
           <button onClick={() => { setEditingVisit({}); setShowVisitForm(true); }} className="flex items-center gap-2 px-3 py-2 bg-emerald-900 hover:bg-emerald-800 text-white rounded-lg text-sm font-medium"><Plus className="w-4 h-4" />บันทึกการมาทำงาน</button>
         </div>
-        {myVisits.length === 0 ? (
-          <EmptyState icon={Calendar} title="ยังไม่มีประวัติ" description="กดปุ่ม 'บันทึกการมาทำงาน' เพื่อบันทึกครั้งแรก" />
+        {history.length === 0 ? (
+          <EmptyState icon={Calendar} title="ยังไม่มีประวัติ" description="กดปุ่ม 'บันทึกการมาทำงาน' หรือไปตั้งเบิกให้ช่างคนนี้ที่แท็บ 'ตั้งเบิก'" />
         ) : (
           <div className="space-y-2 max-h-[55vh] overflow-y-auto pr-1">
-            {myVisits.map((v) => {
+            {history.map((v) => {
               const biz = businesses.find((b) => b.id === v.businessId);
+              if (v._kind === 'expense') {
+                const st = EXP_STATUS[v.status] || EXP_STATUS.pending;
+                return (
+                  <div key={`e-${v.id}`} className="bg-white border border-amber-200 rounded-lg p-3">
+                    <div className="flex flex-wrap items-center gap-1.5 mb-1.5">
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-50 text-amber-800 text-xs font-medium rounded"><Receipt className="w-3 h-3" />ตั้งเบิก</span>
+                      <span className={`px-2 py-0.5 text-[11px] font-medium rounded ${st.cls}`}>{st.label}</span>
+                      {v._date && <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-stone-100 text-stone-600 text-xs rounded"><Calendar className="w-3 h-3" />{fmt(v._date)}</span>}
+                      {biz && <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-sky-50 text-sky-800 text-xs font-medium rounded"><Building2 className="w-3 h-3" />{biz.name}</span>}
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-50 text-amber-800 text-xs font-medium rounded">{fmtMoney(v.amount)} ฿</span>
+                    </div>
+                    <div className="text-sm text-stone-700 whitespace-pre-line">{v.workDescription}</div>
+                    {v.notes && <div className="text-xs text-stone-500 mt-1 italic whitespace-pre-line">หมายเหตุ: {v.notes}</div>}
+                    {v.status === 'rejected' && v.rejectReason && <div className="text-xs text-rose-600 mt-1">เหตุผลที่ไม่อนุมัติ: {v.rejectReason}</div>}
+                    {v.docs?.length > 0 && <div className="mt-2"><DocList paths={v.docs} /></div>}
+                    <div className="text-[11px] text-stone-400 mt-1.5">จัดการที่แท็บ "ตั้งเบิก"</div>
+                  </div>
+                );
+              }
               return (
-                <div key={v.id} className="bg-white border border-stone-200 rounded-lg p-3 hover:border-stone-300">
+                <div key={`v-${v.id}`} className="bg-white border border-stone-200 rounded-lg p-3 hover:border-stone-300">
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-1.5 mb-1.5">
