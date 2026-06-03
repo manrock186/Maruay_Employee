@@ -306,8 +306,8 @@ function openPrintHtml(title, inner, pageCss) {
   w.document.close();
 }
 
-// พิมพ์สลิปเงินเดือนรายคน (มาตรฐาน: บาทอักษร + ช่องลงนาม + หมายเหตุ)
-function printPayslip({ employee, payroll, items, business, position, year, month }) {
+// สร้าง HTML เนื้อสลิปเงินเดือน 1 ใบ (ใช้ซ้ำได้ทั้งพิมพ์เดี่ยว/หลายใบ)
+function payslipInner({ employee, payroll, items, business, position, year, month }) {
   const c = computePayroll(payroll, items || []);
   const m = fmtMoney;
   const period = `${MONTH_NAMES[month - 1]} ${year + 543}`;
@@ -326,12 +326,10 @@ function printPayslip({ employee, payroll, items, business, position, year, mont
     ...(items || []).filter((i) => i.kind === 'advance').map((i) => [i.label || 'เบิกล่วงหน้า', Number(i.amount) || 0]),
     ...(items || []).filter((i) => i.kind === 'other_deduction').map((i) => [i.label || 'หักอื่นๆ', Number(i.amount) || 0]),
   ].filter((r) => Number(r[1]) > 0);
-  const rowsHtml = (arr, color) => arr.map(([label, amt]) =>
-    `<tr><td style="padding:6px 10px;border-bottom:1px solid #f0eeec;">${esc(label)}</td><td style="padding:6px 10px;border-bottom:1px solid #f0eeec;text-align:right;color:${color};">${m(amt)}</td></tr>`).join('');
   const maxLen = Math.max(income.length, deduct.length);
   const display = dispName(employee);
 
-  const inner = `<div class="doc" style="width:200mm;padding:16mm 14mm;">
+  return `<div class="doc" style="width:200mm;padding:16mm 14mm;">
     <div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #065f46;padding-bottom:12px;">
       ${slipHeaderHtml(business)}
       <div style="text-align:right;">
@@ -378,7 +376,20 @@ function printPayslip({ employee, payroll, items, business, position, year, mont
       <div style="text-align:center;font-size:13px;flex:1;"><div style="border-top:1px dotted #78716c;padding-top:6px;">ลงชื่อ ............................................. ผู้รับเงิน</div></div>
     </div>
   </div>`;
-  openPrintHtml(`สลิปเงินเดือน ${display} ${period}`, inner, `@page{size:A4;margin:0;}`);
+}
+
+// พิมพ์สลิปเงินเดือนรายคน
+function printPayslip(args) {
+  const display = dispName(args.employee);
+  const period = `${MONTH_NAMES[args.month - 1]} ${args.year + 543}`;
+  openPrintHtml(`สลิปเงินเดือน ${display} ${period}`, payslipInner(args), `@page{size:A4;margin:0;}`);
+}
+
+// พิมพ์สลิปหลายคนพร้อมกัน (คนละหน้า)
+function printPayslips(list, year, month) {
+  if (!list || list.length === 0) return;
+  const inner = list.map((a, i) => `<div style="${i < list.length - 1 ? 'page-break-after:always;' : ''}">${payslipInner(a)}</div>`).join('');
+  openPrintHtml(`สลิปเงินเดือน ${MONTH_NAMES[month - 1]} ${year + 543} (${list.length} ใบ)`, inner, `@page{size:A4;margin:0;}`);
 }
 
 // พิมพ์รายงานรวมหน้าเดียว (ทุกคนในธุรกิจ — คนที่ยังไม่ทำเงินเดือนขึ้นว่าง)
@@ -3972,6 +3983,7 @@ function PayrollPage({ businesses, zones, positions, employees, activeBusinessId
   const [editingEmp, setEditingEmp] = useState(null);
   const [reload, setReload] = useState(0);
   const [mode, setMode] = useState('list'); // 'list' | 'quick'
+  const [showPrintSlips, setShowPrintSlips] = useState(false);
   const [commissionPool, setCommissionPool] = useState(null);
   const [roomRentPool, setRoomRentPool] = useState(null);
 
@@ -4053,6 +4065,9 @@ function PayrollPage({ businesses, zones, positions, employees, activeBusinessId
   return (
     <div className="h-full overflow-auto">
       <PageHeader title="เงินเดือน" subtitle={`${bizName} — งวด ${MONTH_NAMES[month - 1]} ${year + 543} (จ่าย ${payMonthLabel(year, month)})`}>
+        <button onClick={() => setShowPrintSlips(true)} disabled={payrolls.length === 0} className="flex items-center gap-2 px-4 py-2 bg-white border border-stone-300 hover:bg-stone-50 disabled:opacity-50 disabled:cursor-not-allowed text-stone-700 rounded-lg text-sm font-medium">
+          <FileText className="w-4 h-4" /> พิมพ์สลิป
+        </button>
         <button onClick={printReport} disabled={bizEmployees.length === 0} className="flex items-center gap-2 px-4 py-2 bg-white border border-stone-300 hover:bg-stone-50 disabled:opacity-50 disabled:cursor-not-allowed text-stone-700 rounded-lg text-sm font-medium">
           <FileText className="w-4 h-4" /> พิมพ์รายงานรวม
         </button>
@@ -4155,6 +4170,92 @@ function PayrollPage({ businesses, zones, positions, employees, activeBusinessId
           onSaved={() => { setEditingEmp(null); setReload((r) => r + 1); }}
         />
       )}
+      {showPrintSlips && (
+        <PrintSlipsModal
+          business={business}
+          bizEmployees={bizEmployees}
+          payrollByEmp={payrollByEmp}
+          itemsByPayroll={itemsByPayroll}
+          positions={positions}
+          activeBusinessId={activeBusinessId}
+          year={year} month={month}
+          onClose={() => setShowPrintSlips(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ============ PRINT SLIPS MODAL (ฟอร์มพิมพ์สลิปรายคน) ============
+function PrintSlipsModal({ business, bizEmployees, payrollByEmp, itemsByPayroll, positions, activeBusinessId, year, month, onClose }) {
+  // เฉพาะคนที่ทำเงินเดือนงวดนี้แล้ว (มีสลิปให้พิมพ์)
+  const rows = bizEmployees.filter((e) => payrollByEmp[e.id]).map((e) => ({
+    emp: e,
+    payroll: payrollByEmp[e.id],
+    items: itemsByPayroll[payrollByEmp[e.id].id] || [],
+    position: positions.find((x) => x.id === businessPositionId(e, activeBusinessId)),
+  }));
+  const [selected, setSelected] = useState(() => new Set(rows.map((r) => r.emp.id)));
+  const toggle = (id) => setSelected((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const allOn = selected.size === rows.length && rows.length > 0;
+  const toggleAll = () => setSelected(allOn ? new Set() : new Set(rows.map((r) => r.emp.id)));
+
+  const argsFor = (r) => ({ employee: r.emp, payroll: r.payroll, items: r.items, business, position: r.position, year, month });
+  const printOne = (r) => printPayslip(argsFor(r));
+  const printSelected = () => {
+    const list = rows.filter((r) => selected.has(r.emp.id)).map(argsFor);
+    printPayslips(list, year, month);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-stone-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[88vh] flex flex-col">
+        <div className="px-5 py-4 border-b border-stone-200 flex items-center justify-between">
+          <div>
+            <div className="font-semibold text-stone-800">พิมพ์สลิปเงินเดือน</div>
+            <div className="text-xs text-stone-500">{business?.name} • {MONTH_NAMES[month - 1]} {year + 543}</div>
+          </div>
+          <button onClick={onClose} className="p-1 hover:bg-stone-100 rounded text-stone-500"><X className="w-5 h-5" /></button>
+        </div>
+
+        {rows.length === 0 ? (
+          <div className="p-8 text-center text-stone-400 text-sm">ยังไม่มีพนักงานที่ทำเงินเดือนงวดนี้ — ทำเงินเดือนก่อนถึงจะพิมพ์สลิปได้</div>
+        ) : (
+          <>
+            <div className="px-5 py-2 border-b border-stone-100 flex items-center justify-between">
+              <label className="flex items-center gap-2 text-sm text-stone-600 cursor-pointer">
+                <input type="checkbox" checked={allOn} onChange={toggleAll} className="w-4 h-4 rounded text-emerald-700" />
+                เลือกทั้งหมด ({selected.size}/{rows.length})
+              </label>
+            </div>
+            <div className="p-3 overflow-auto space-y-1.5 flex-1">
+              {rows.map((r) => {
+                const calc = computePayroll(r.payroll, r.items);
+                const on = selected.has(r.emp.id);
+                return (
+                  <div key={r.emp.id} className={`flex items-center gap-3 p-2.5 rounded-lg border ${on ? 'border-emerald-300 bg-emerald-50/40' : 'border-stone-200'}`}>
+                    <input type="checkbox" checked={on} onChange={() => toggle(r.emp.id)} className="w-4 h-4 rounded text-emerald-700 flex-shrink-0" />
+                    <Avatar photo={r.emp.photo} name={dispName(r.emp)} size={34} />
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium text-stone-800 truncate text-sm"><span className="font-mono text-xs text-stone-400 mr-1">#{r.emp.employeeNumber}</span>{dispName(r.emp)}</div>
+                      <div className="text-xs text-stone-500">{r.position?.name || '—'} • สุทธิ {fmtMoney(calc.net)} ฿{r.payroll.status === 'finalized' && <span className="text-emerald-600"> • ปิดงวดแล้ว</span>}</div>
+                    </div>
+                    <button onClick={() => printOne(r)} title="พิมพ์สลิปคนนี้" className="flex-shrink-0 px-3 py-1.5 bg-white border border-stone-300 hover:bg-stone-50 text-stone-700 rounded-lg text-sm font-medium flex items-center gap-1.5">
+                      <FileText className="w-3.5 h-3.5" />พิมพ์
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="px-5 py-3 border-t border-stone-200 bg-stone-50 flex justify-between items-center gap-2">
+              <button onClick={onClose} className="px-4 py-2 text-stone-700 hover:bg-stone-100 rounded-lg text-sm font-medium">ปิด</button>
+              <button onClick={printSelected} disabled={selected.size === 0} className="flex items-center gap-2 px-4 py-2 bg-emerald-900 hover:bg-emerald-800 disabled:bg-stone-300 disabled:cursor-not-allowed text-white rounded-lg text-sm font-medium">
+                <FileText className="w-4 h-4" />พิมพ์ที่เลือก ({selected.size})
+              </button>
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -4162,6 +4263,8 @@ function PayrollPage({ businesses, zones, positions, employees, activeBusinessId
 // ============ PAYROLL EDITOR MODAL ============
 function PayrollEditor({ employee, existing, existingItems, year, month, businessId, businessName, commissionPrefill, roomFeePrefill, ops, onClose, onSaved }) {
   const isFinalized = existing?.status === 'finalized';
+  const [unlocked, setUnlocked] = useState(false);
+  const locked = isFinalized && !unlocked;
   // ค่าตั้งต้น: ถ้ามี payroll แล้วใช้ค่าเดิม ถ้าไม่มีดึงจากข้อมูลพนักงาน
   const [f, setF] = useState(() => ({
     baseSalary: existing?.baseSalary ?? payrollBaseSalaryForBiz(employee, businessId, year, month),
@@ -4220,19 +4323,19 @@ function PayrollEditor({ employee, existing, existingItems, year, month, busines
     } finally { setSaving(false); }
   };
 
-  const ItemList = ({ title, list, setList, color, addLabel }) => (
+  const ItemList = ({ title, list, setList, color, addLabel, disabled }) => (
     <div>
       <div className="flex items-center justify-between mb-1.5">
         <span className="text-xs font-medium text-stone-600">{title}</span>
-        <button type="button" onClick={() => setList([...list, { label: '', amount: '' }])} className={`text-xs ${color} hover:underline flex items-center gap-0.5`}><Plus className="w-3 h-3" />{addLabel}</button>
+        {!disabled && <button type="button" onClick={() => setList([...list, { label: '', amount: '' }])} className={`text-xs ${color} hover:underline flex items-center gap-0.5`}><Plus className="w-3 h-3" />{addLabel}</button>}
       </div>
       <div className="space-y-1.5">
         {list.length === 0 && <div className="text-xs text-stone-400 italic">ไม่มี</div>}
         {list.map((it, idx) => (
           <div key={idx} className="flex gap-2">
-            <input value={it.label} onChange={(e) => setList(list.map((x, i) => i === idx ? { ...x, label: e.target.value } : x))} placeholder="รายการ" className="flex-1 px-2 py-1.5 text-sm border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40" />
-            <input type="number" min="0" step="0.01" value={it.amount} onChange={(e) => setList(list.map((x, i) => i === idx ? { ...x, amount: e.target.value } : x))} placeholder="0.00" className="w-28 px-2 py-1.5 text-sm border border-stone-300 rounded-lg text-right focus:outline-none focus:ring-2 focus:ring-emerald-500/40" />
-            <button type="button" onClick={() => setList(list.filter((_, i) => i !== idx))} className="p-1.5 text-red-500 hover:bg-red-50 rounded"><X className="w-4 h-4" /></button>
+            <input disabled={disabled} value={it.label} onChange={(e) => setList(list.map((x, i) => i === idx ? { ...x, label: e.target.value } : x))} placeholder="รายการ" className="flex-1 px-2 py-1.5 text-sm border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 disabled:bg-stone-100" />
+            <input disabled={disabled} type="number" min="0" step="0.01" value={it.amount} onChange={(e) => setList(list.map((x, i) => i === idx ? { ...x, amount: e.target.value } : x))} placeholder="0.00" className="w-28 px-2 py-1.5 text-sm border border-stone-300 rounded-lg text-right focus:outline-none focus:ring-2 focus:ring-emerald-500/40 disabled:bg-stone-100" />
+            {!disabled && <button type="button" onClick={() => setList(list.filter((_, i) => i !== idx))} className="p-1.5 text-red-500 hover:bg-red-50 rounded"><X className="w-4 h-4" /></button>}
           </div>
         ))}
       </div>
@@ -4246,7 +4349,7 @@ function PayrollEditor({ employee, existing, existingItems, year, month, busines
     </div>
   );
   const numInput = (k, opts = {}) => (
-    <input type="number" min="0" step="0.01" disabled={isFinalized || opts.disabled} value={f[k]} onChange={(e) => set(k, e.target.value)} className="w-full px-2 py-1.5 text-sm border border-stone-300 rounded-lg text-right focus:outline-none focus:ring-2 focus:ring-emerald-500/40 disabled:bg-stone-100" />
+    <input type="number" min="0" step="0.01" disabled={locked || opts.disabled} value={f[k]} onChange={(e) => set(k, e.target.value)} className="w-full px-2 py-1.5 text-sm border border-stone-300 rounded-lg text-right focus:outline-none focus:ring-2 focus:ring-emerald-500/40 disabled:bg-stone-100" />
   );
 
   return (
@@ -4264,9 +4367,15 @@ function PayrollEditor({ employee, existing, existingItems, year, month, busines
         </div>
 
         <div className="p-6 overflow-auto space-y-5">
-          {isFinalized && (
-            <div className="flex items-start gap-2 px-3 py-2 bg-emerald-50 border border-emerald-200 rounded-lg text-sm text-emerald-800">
-              <CheckCircle2 className="w-4 h-4 mt-0.5" /><div>งวดนี้ปิดแล้ว — กด "เปิดแก้ไข" ด้านล่างถ้าต้องการแก้</div>
+          {locked && (
+            <div className="flex items-center justify-between gap-2 px-3 py-2 bg-emerald-50 border border-emerald-200 rounded-lg text-sm text-emerald-800">
+              <div className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 mt-0.5" /><div>งวดนี้ปิดแล้ว — กด "แก้ไขงวดนี้" ถ้าคิดผิด/ต้องการแก้</div></div>
+              <button onClick={() => setUnlocked(true)} className="flex-shrink-0 flex items-center gap-1 px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-white rounded-lg text-xs font-medium"><Edit2 className="w-3.5 h-3.5" />แก้ไขงวดนี้</button>
+            </div>
+          )}
+          {isFinalized && unlocked && (
+            <div className="flex items-start gap-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
+              <Edit2 className="w-4 h-4 mt-0.5" /><div>กำลังแก้งวดที่ปิดแล้ว — แก้ตัวเลขแล้วเลือก "บันทึก (คงปิดงวด)" หรือ "เปิดเป็นร่าง" ด้านล่าง</div>
             </div>
           )}
 
@@ -4288,7 +4397,7 @@ function PayrollEditor({ employee, existing, existingItems, year, month, busines
             <Row label="เงินเดือนฐาน" hint={`ค่าแรง/วัน = ${fmtMoney(calc.daily)} ฿`}>{numInput('baseSalary')}</Row>
             <Row label="คอมมิชชั่น" hint={!existing && commissionPrefill ? 'จากหน้าคอมมิชชั่นงวดนี้' : undefined}>{numInput('commission')}</Row>
             <Row label="ทำงานวันหยุด (วัน)" hint={`+${fmtMoney(calc.holidayWorkPay)} ฿`}>{numInput('holidayWorkDays')}</Row>
-            <div className="mt-2 pt-2 border-t border-emerald-100"><ItemList title="งานเสริม (ล้างห้องน้ำ, ลอกท่อ ฯลฯ)" list={bonusTasks} setList={setBonusTasks} color="text-emerald-700" addLabel="เพิ่มงานเสริม" /></div>
+            <div className="mt-2 pt-2 border-t border-emerald-100"><ItemList title="งานเสริม (ล้างห้องน้ำ, ลอกท่อ ฯลฯ)" list={bonusTasks} setList={setBonusTasks} color="text-emerald-700" addLabel="เพิ่มงานเสริม" disabled={locked} /></div>
           </div>
 
           {/* วันหยุด */}
@@ -4307,12 +4416,12 @@ function PayrollEditor({ employee, existing, existingItems, year, month, busines
             <Row label="ค่าห้องพัก" hint={!existing && roomFeePrefill != null ? 'จากหน้าค่าห้อง (มิเตอร์) งวดนี้' : undefined}>{numInput('roomFee')}</Row>
             <Row label="รับผ่านบัญชี บ.วีเอสจง แล้ว" hint="เงินที่จ่ายไปแล้ว">{numInput('paidViaCompany')}</Row>
             <div className="mt-2 pt-2 border-t border-red-100 space-y-3">
-              <ItemList title="เบิกล่วงหน้า" list={advances} setList={setAdvances} color="text-red-600" addLabel="เพิ่มการเบิก" />
-              <ItemList title="หักอื่นๆ" list={otherDeductions} setList={setOtherDeductions} color="text-red-600" addLabel="เพิ่มรายการหัก" />
+              <ItemList title="เบิกล่วงหน้า" list={advances} setList={setAdvances} color="text-red-600" addLabel="เพิ่มการเบิก" disabled={locked} />
+              <ItemList title="หักอื่นๆ" list={otherDeductions} setList={setOtherDeductions} color="text-red-600" addLabel="เพิ่มรายการหัก" disabled={locked} />
             </div>
           </div>
 
-          <FormField label="หมายเหตุ"><textarea disabled={isFinalized} value={f.note} onChange={(e) => set('note', e.target.value)} rows={2} className="w-full px-3 py-2 border border-stone-300 rounded-lg text-sm resize-none focus:outline-none focus:ring-2 focus:ring-emerald-500/40 disabled:bg-stone-100" /></FormField>
+          <FormField label="หมายเหตุ"><textarea disabled={locked} value={f.note} onChange={(e) => set('note', e.target.value)} rows={2} className="w-full px-3 py-2 border border-stone-300 rounded-lg text-sm resize-none focus:outline-none focus:ring-2 focus:ring-emerald-500/40 disabled:bg-stone-100" /></FormField>
 
           {/* สรุป */}
           <div className="bg-emerald-900 text-white rounded-xl p-4">
@@ -4326,8 +4435,13 @@ function PayrollEditor({ employee, existing, existingItems, year, month, busines
         </div>
 
         <div className="px-6 py-3 border-t border-stone-200 bg-stone-50 flex justify-end gap-2">
-          {isFinalized ? (
-            <button onClick={() => save(false)} disabled={saving} className="px-4 py-2 text-amber-700 hover:bg-amber-50 border border-amber-300 rounded-lg text-sm font-medium">เปิดแก้ไข (ยกเลิกปิดงวด)</button>
+          {locked ? (
+            <button onClick={() => setUnlocked(true)} className="flex items-center gap-1.5 px-4 py-2 bg-amber-500 hover:bg-amber-400 text-white rounded-lg text-sm font-medium"><Edit2 className="w-4 h-4" />แก้ไขงวดนี้</button>
+          ) : isFinalized && unlocked ? (
+            <>
+              <button onClick={() => save(false)} disabled={saving} className="px-4 py-2 text-amber-700 hover:bg-amber-50 border border-amber-300 rounded-lg text-sm font-medium">บันทึก + เปิดเป็นร่าง</button>
+              <button onClick={() => save(true)} disabled={saving} className="flex items-center gap-1.5 px-4 py-2 bg-emerald-900 hover:bg-emerald-800 text-white rounded-lg text-sm font-medium"><CheckCircle2 className="w-4 h-4" />{saving ? 'กำลังบันทึก...' : 'บันทึก (คงปิดงวด)'}</button>
+            </>
           ) : (
             <>
               <button onClick={() => save(false)} disabled={saving} className="px-4 py-2 text-stone-700 hover:bg-stone-100 rounded-lg text-sm font-medium">{saving ? 'กำลังบันทึก...' : 'บันทึกร่าง'}</button>
