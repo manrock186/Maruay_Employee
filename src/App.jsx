@@ -802,7 +802,7 @@ export default function App() {
     P.forEach((pos) => {
       const target = pos.targetHeadcount || 0;
       if (target <= 0) return;
-      const count = active.filter((e) => e.positionId === pos.id).length;
+      const count = active.filter((e) => businessPositionId(e, pos.businessId) === pos.id).length;
       if (count < target) desired.push({ dedupeKey: `understaffed:${pos.id}`, businessId: pos.businessId, zoneId: null, type: 'understaffed', severity: 'warning', title: 'ตำแหน่งขาดคน', body: `${pos.name} — มี ${count}/${target} ขาดอีก ${target - count} คน` });
       else if (count > target) desired.push({ dedupeKey: `overstaffed:${pos.id}`, businessId: pos.businessId, zoneId: null, type: 'overstaffed', severity: 'info', title: 'ตำแหน่งมีคนเกิน', body: `${pos.name} — มี ${count}/${target} เกิน ${count - target} คน` });
     });
@@ -1633,7 +1633,7 @@ function Dashboard({ profile, businesses, zones, employees, positions, activeBus
     scopePos.forEach((pos) => {
       const target = pos.targetHeadcount || 0;
       if (target <= 0) return;
-      const count = employees.filter((e) => e.positionId === pos.id && isActive(e)).length;
+      const count = employees.filter((e) => businessPositionId(e, pos.businessId) === pos.id && isActive(e)).length;
       const biz = businesses.find((b) => b.id === pos.businessId);
       if (count < target) under.push({ position: pos, biz, count, target, shortage: target - count });
       else if (count > target) over.push({ position: pos, biz, count, target, excess: count - target });
