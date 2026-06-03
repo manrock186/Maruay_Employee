@@ -65,35 +65,52 @@ const MONTH_NAMES = ['มกราคม', 'กุมภาพันธ์', '�
 
 // ============ บันทึกการอัปเดต (What's New) — เรียงใหม่สุดบนสุด, v ต้องเพิ่มขึ้นเรื่อยๆ ============
 const CHANGELOG = [
-  { v: 6, date: '3 มิ.ย. 2569', title: 'ระบบตั้งเบิก (อนุมัติก่อนจ่าย)', items: [
+  { v: 7, date: '3 มิ.ย. 2569', scopes: ['contractors'], title: 'แจ้งเตือนการตั้งเบิก', items: [
+    'เมื่อมีคนตั้งเบิก เจ้าของจะได้รับแจ้งเตือน "มีคำขอเบิกรออนุมัติ" ทันที',
+    'เมื่อเจ้าของอนุมัติ/ไม่อนุมัติ ผู้ตั้งเบิกจะได้รับแจ้งเตือนผลทุกครั้ง',
+    'กดที่แจ้งเตือนเพื่อไปหน้าตั้งเบิกได้เลย',
+  ] },
+  { v: 6, date: '3 มิ.ย. 2569', scopes: ['contractors'], title: 'ระบบตั้งเบิก (อนุมัติก่อนจ่าย)', items: [
     'เพิ่มแท็บ "ตั้งเบิก" ในหน้าช่าง/ผู้รับเหมา — ขอเบิกค่าใช้จ่ายงานพิเศษได้',
     'จ่ายให้ช่างนอก ช่างในระบบ หรือพนักงานก็ได้ (งานพิเศษนอกเงินเดือน)',
     'ต้องให้เจ้าของ "อนุมัติ" ก่อน แล้วทำเครื่องหมาย "จ่ายแล้ว" ได้',
     'มี badge แจ้งจำนวนรายการรออนุมัติบนเมนู',
   ] },
-  { v: 5, date: '3 มิ.ย. 2569', title: 'สิทธิ์เมนูรายคน + แก้บั๊กช่าง', items: [
+  { v: 5, date: '3 มิ.ย. 2569', scopes: ['owner', 'contractors'], title: 'สิทธิ์เมนูรายคน + แก้บั๊กช่าง', items: [
     'เพิ่ม "สิทธิ์เข้าถึงเมนู" รายคนในหน้าผู้ใช้ระบบ — เลือกได้ว่าใครเห็นเมนูไหน',
     'มอบสิทธิ์เข้าถึง "ช่าง/ผู้รับเหมา" ให้ผู้ใช้คนอื่นได้ (ปกติเฉพาะเจ้าของ)',
     'แก้บั๊ก: บันทึกประวัติช่าง/ผู้รับเหมาแล้วแสดงผลทันที ไม่ต้องรีโหลด',
   ] },
-  { v: 4, date: '3 มิ.ย. 2569', title: 'กรอกเงินเดือนลื่นขึ้น', items: [
+  { v: 4, date: '3 มิ.ย. 2569', scopes: ['payroll'], title: 'กรอกเงินเดือนลื่นขึ้น', items: [
     'แก้บั๊กช่องกรอกเงินเดือนเด้งหลุดโฟกัสตอนพิมพ์ — พิมพ์รัวได้ไม่ต้องคลิกซ้ำ',
     'หน้ากรอกเร็ว: เอา "สาย" ออก เพิ่ม "เบิกล่วงหน้า" และ "ค่าห้องพัก"',
     'งานเสริม: เลือกจากรายการที่เคยทำได้ (เช่น ล้างห้องน้ำ)',
   ] },
-  { v: 3, date: '2 มิ.ย. 2569', title: 'แก้ไขงวดที่ปิดแล้ว + พิมพ์สลิป', items: [
+  { v: 3, date: '2 มิ.ย. 2569', scopes: ['payroll'], title: 'แก้ไขงวดที่ปิดแล้ว + พิมพ์สลิป', items: [
     'แก้ไขเงินเดือนงวดที่ปิดแล้วได้ (เผื่อคิดผิด) แล้วเลือกคงปิดงวดหรือเปิดเป็นร่าง',
     'ฟอร์มพิมพ์สลิปเงินเดือนรายคน + พิมพ์ทีละหลายคนได้',
   ] },
-  { v: 2, date: '1 มิ.ย. 2569', title: 'คอมมิชชั่น 2 ก้อน + ซ่อนเงินเดือน', items: [
+  { v: 2, date: '1 มิ.ย. 2569', scopes: ['payroll'], title: 'คอมมิชชั่น 2 ก้อน + ซ่อนเงินเดือน', items: [
     'เพิ่มคอมมิชชั่นก้อนที่ 2 (รายได้ร้านค้า) รวมกับคอมเดิมเป็นยอดเดียว',
     'สิทธิ์ "ไม่เห็นเงินเดือน" ซ่อนทุกอย่างที่เป็นตัวเงินจริงจัง',
   ] },
-  { v: 1, date: '31 พ.ค. 2569', title: 'รองรับพนักงานหลายธุรกิจ', items: [
+  { v: 1, date: '31 พ.ค. 2569', scopes: ['payroll'], title: 'รองรับพนักงานหลายธุรกิจ', items: [
     'พนักงาน 1 คนทำได้หลายธุรกิจ — แยกตำแหน่ง แยกเงินเดือน แยกสลิป',
   ] },
 ];
 const LATEST_UPDATE_V = CHANGELOG.reduce((m, c) => Math.max(m, c.v), 0);
+// แสดงรายการอัปเดตตามสิทธิ์: 'all' ทุกคน, 'payroll' คนเห็นเงินเดือน, 'owner' เจ้าของ, 'contractors' คนเข้าถึงช่าง/ตั้งเบิก
+function changelogVisibleTo(entry, profile) {
+  const sc = entry.scopes;
+  if (!sc || sc.includes('all')) return true;
+  const canContractors = !!(profile?.isOwner || (Array.isArray(profile?.allowedViews) && profile.allowedViews.includes('contractors')));
+  return sc.some((s) =>
+    (s === 'payroll' && profile?.canManagePayroll) ||
+    (s === 'owner' && profile?.isOwner) ||
+    (s === 'contractors' && canContractors)
+  );
+}
+function visibleChangelog(profile) { return CHANGELOG.filter((c) => changelogVisibleTo(c, profile)); }
 
 // ป้ายเดือนที่จ่ายเงิน (งวดทำงานเดือน month → จ่ายต้นเดือนถัดไป)
 function payMonthLabel(year, month) {
@@ -644,12 +661,13 @@ export default function App() {
     if (gated.includes(view) && !allowed.has(view)) setView('dashboard');
   }, [view, profile]);
 
-  // ---- เด้ง "มีอะไรใหม่" อัตโนมัติครั้งแรกที่เปิด ถ้ามีอัปเดตที่ยังไม่เห็น ----
+  // ---- เด้ง "มีอะไรใหม่" อัตโนมัติครั้งแรกที่เปิด ถ้ามีอัปเดตที่ยังไม่เห็น (ตามสิทธิ์) ----
   useEffect(() => {
     if (!profile || profile.role === 'pending') return;
     if (whatsNewShownRef.current) return;
     const lastSeen = Number(profile.lastSeenUpdate) || 0;
-    if (LATEST_UPDATE_V > lastSeen) {
+    const unseen = visibleChangelog(profile).filter((c) => c.v > lastSeen);
+    if (unseen.length > 0) {
       whatsNewShownRef.current = true;
       setShowWhatsNew(true);
     }
@@ -792,6 +810,11 @@ export default function App() {
     setProfile((prev) => prev ? { ...prev, theme } : prev);
     await supabase.from('user_profiles').update({ theme }).eq('id', session.user.id);
   };
+  // โหลดแจ้งเตือนใหม่ (หลังมี event เช่น ตั้งเบิก/อนุมัติ)
+  const refreshNotifications = async () => {
+    const { data } = await supabase.from('notifications').select('*').order('created_at', { ascending: false });
+    if (data) setNotifications(fromDB(data));
+  };
   // ทำเครื่องหมายว่าเห็นอัปเดตล่าสุดแล้ว
   const markUpdatesSeen = async () => {
     if (!session?.user?.id) return;
@@ -906,10 +929,12 @@ export default function App() {
     });
 
     // reconcile: ลบของเก่าที่ไม่อยู่ในชุดปัจจุบัน + insert ที่ขาด
-    const { data: existing } = await supabase.from('notifications').select('id,dedupe_key');
+    // ลบเฉพาะแจ้งเตือนชนิด "คำนวณจากสถานะ" (derived) — ไม่แตะแจ้งเตือนแบบ event (เช่น ตั้งเบิก expense_*)
+    const DERIVED_TYPES = ['pending_user', 'permit_expiry', 'passport_expiry', 'idcard_expiry', 'birthday', 'vacancy', 'understaffed', 'overstaffed', 'payroll_incomplete', 'pending_raise'];
+    const { data: existing } = await supabase.from('notifications').select('id,dedupe_key,type');
     const existKeys = new Set((existing || []).map((n) => n.dedupe_key));
     const desiredKeys = new Set(desired.map((d) => d.dedupeKey));
-    const toDelete = (existing || []).filter((n) => !desiredKeys.has(n.dedupe_key));
+    const toDelete = (existing || []).filter((n) => !desiredKeys.has(n.dedupe_key) && DERIVED_TYPES.includes(n.type));
     const toInsert = desired.filter((d) => !existKeys.has(d.dedupeKey));
     if (toDelete.length > 0) await supabase.from('notifications').delete().in('id', toDelete.map((n) => n.id));
     if (toInsert.length > 0) await supabase.from('notifications').insert(toInsert.map((d) => toDB(d)));
@@ -1093,10 +1118,37 @@ export default function App() {
       },
     },
     expenseRequest: {
-      add: async (d) => { const row = await insertRow('expense_requests', { ...d, requestedBy: session.user.id, status: 'pending' }); if (row) setExpenseRequests((prev) => [row, ...prev]); return row; },
+      add: async (d) => {
+        const row = await insertRow('expense_requests', { ...d, requestedBy: session.user.id, status: 'pending' });
+        if (row) {
+          setExpenseRequests((prev) => [row, ...prev]);
+          const short = (d.workDescription || '').slice(0, 40);
+          await supabase.rpc('notify_expense', { p_request_id: row.id, p_type: 'expense_pending', p_business_id: d.businessId || null, p_title: 'มีคำขอเบิกรออนุมัติ', p_body: `${d.payeeName || ''} • ${fmtMoney(d.amount)} ฿ — ${short}`, p_severity: 'warning' });
+          refreshNotifications();
+        }
+        return row;
+      },
       update: async (id, d) => { const ok = await updateRow('expense_requests', id, d); if (ok) setExpenseRequests((prev) => prev.map((r) => (r.id === id ? { ...r, ...d } : r))); return ok; },
-      approve: async (id) => { const d = { status: 'approved', decidedBy: session.user.id, decidedAt: new Date().toISOString(), rejectReason: null }; const ok = await updateRow('expense_requests', id, d); if (ok) setExpenseRequests((prev) => prev.map((r) => (r.id === id ? { ...r, ...d } : r))); return ok; },
-      reject: async (id, reason) => { const d = { status: 'rejected', decidedBy: session.user.id, decidedAt: new Date().toISOString(), rejectReason: reason || null }; const ok = await updateRow('expense_requests', id, d); if (ok) setExpenseRequests((prev) => prev.map((r) => (r.id === id ? { ...r, ...d } : r))); return ok; },
+      approve: async (id) => {
+        const r = expenseRequests.find((x) => x.id === id);
+        const d = { status: 'approved', decidedBy: session.user.id, decidedAt: new Date().toISOString(), rejectReason: null };
+        const ok = await updateRow('expense_requests', id, d);
+        if (ok) {
+          setExpenseRequests((prev) => prev.map((x) => (x.id === id ? { ...x, ...d } : x)));
+          if (r) { await supabase.rpc('notify_expense', { p_request_id: id, p_type: 'expense_approved', p_business_id: r.businessId || null, p_title: 'อนุมัติคำขอเบิกแล้ว', p_body: `${r.payeeName || ''} • ${fmtMoney(r.amount)} ฿ — อนุมัติแล้ว พร้อมจ่าย`, p_severity: 'info' }); refreshNotifications(); }
+        }
+        return ok;
+      },
+      reject: async (id, reason) => {
+        const r = expenseRequests.find((x) => x.id === id);
+        const d = { status: 'rejected', decidedBy: session.user.id, decidedAt: new Date().toISOString(), rejectReason: reason || null };
+        const ok = await updateRow('expense_requests', id, d);
+        if (ok) {
+          setExpenseRequests((prev) => prev.map((x) => (x.id === id ? { ...x, ...d } : x)));
+          if (r) { await supabase.rpc('notify_expense', { p_request_id: id, p_type: 'expense_rejected', p_business_id: r.businessId || null, p_title: 'คำขอเบิกไม่ได้รับอนุมัติ', p_body: `${r.payeeName || ''} • ${fmtMoney(r.amount)} ฿${reason ? ` — ${reason}` : ''}`, p_severity: 'info' }); refreshNotifications(); }
+        }
+        return ok;
+      },
       markPaid: async (id, note) => { const d = { status: 'paid', paidAt: new Date().toISOString(), paidNote: note || null }; const ok = await updateRow('expense_requests', id, d); if (ok) setExpenseRequests((prev) => prev.map((r) => (r.id === id ? { ...r, ...d } : r))); return ok; },
       del: async (id) => {
         const r = expenseRequests.find((x) => x.id === id);
@@ -1136,9 +1188,11 @@ export default function App() {
             notiReads={notiReads}
             userId={session.user.id}
             canManagePayroll={profile.canManagePayroll}
+            canViewContractors={profile.isOwner || (Array.isArray(profile.allowedViews) && profile.allowedViews.includes('contractors'))}
             ops={ops}
             onJump={(n) => {
               if (n.type === 'pending_user') setView('users');
+              else if (n.type === 'expense_pending' || n.type === 'expense_approved' || n.type === 'expense_rejected') { if (n.businessId) changeBusiness(n.businessId); setView('contractors'); }
               else if (n.type === 'payroll_incomplete' || n.type === 'pending_raise') { if (n.businessId) changeBusiness(n.businessId); setView(n.type === 'payroll_incomplete' ? 'payroll' : 'employees'); }
               else if (n.type === 'permit_expiry' || n.type === 'passport_expiry' || n.type === 'idcard_expiry' || n.type === 'birthday' || n.type === 'vacancy') { if (n.businessId) changeBusiness(n.businessId); setView('employees'); }
               else { if (n.businessId) changeBusiness(n.businessId); setView('positions'); }
@@ -1153,7 +1207,7 @@ export default function App() {
           <span className="font-semibold text-stone-700 text-sm lg:hidden">ระบบพนักงาน</span>
           <div className="flex-1" />
           {(() => {
-            const unseen = CHANGELOG.filter((c) => c.v > (Number(profile.lastSeenUpdate) || 0)).length;
+            const unseen = visibleChangelog(profile).filter((c) => c.v > (Number(profile.lastSeenUpdate) || 0)).length;
             return (
               <button onClick={() => setShowWhatsNew(true)} className="relative flex items-center gap-1.5 px-3 py-1.5 rounded-lg hover:bg-amber-50 text-stone-600 hover:text-amber-700 text-sm font-medium transition-colors" title="มีอะไรใหม่">
                 <Sparkles className="w-4 h-4" />
@@ -1283,6 +1337,7 @@ export default function App() {
       </main>
       {showWhatsNew && (
         <WhatsNewModal
+          profile={profile}
           lastSeen={Number(profile.lastSeenUpdate) || 0}
           onClose={() => { setShowWhatsNew(false); markUpdatesSeen(); }}
         />
@@ -1292,7 +1347,8 @@ export default function App() {
 }
 
 // ============ WHAT'S NEW (มีอะไรใหม่) ============
-function WhatsNewModal({ lastSeen, onClose }) {
+function WhatsNewModal({ profile, lastSeen, onClose }) {
+  const entries = visibleChangelog(profile);
   return (
     <div className="fixed inset-0 bg-stone-900/50 backdrop-blur-sm z-[60] flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
@@ -1307,7 +1363,8 @@ function WhatsNewModal({ lastSeen, onClose }) {
           <button onClick={onClose} className="p-1 hover:bg-stone-100 rounded text-stone-500"><X className="w-5 h-5" /></button>
         </div>
         <div className="p-5 overflow-auto space-y-4">
-          {CHANGELOG.map((c) => {
+          {entries.length === 0 && <div className="text-center text-stone-400 text-sm py-8">ยังไม่มีอัปเดตสำหรับสิทธิ์ของคุณ</div>}
+          {entries.map((c) => {
             const isNew = c.v > lastSeen;
             return (
               <div key={c.v} className={`rounded-xl border p-3.5 ${isNew ? 'border-amber-300 bg-amber-50/50' : 'border-stone-200'}`}>
@@ -1466,6 +1523,9 @@ const NOTI_META = {
   overstaffed:        { icon: Users, color: 'text-sky-600 bg-sky-100' },
   payroll_incomplete: { icon: Wallet, color: 'text-amber-600 bg-amber-100' },
   pending_raise:      { icon: TrendingUp, color: 'text-emerald-600 bg-emerald-100' },
+  expense_pending:    { icon: Receipt, color: 'text-amber-600 bg-amber-100' },
+  expense_approved:   { icon: CheckCircle2, color: 'text-emerald-600 bg-emerald-100' },
+  expense_rejected:   { icon: X, color: 'text-rose-600 bg-rose-100' },
 };
 function timeAgo(ts) {
   const s = Math.floor((Date.now() - new Date(ts)) / 1000);
@@ -1474,13 +1534,18 @@ function timeAgo(ts) {
   if (s < 86400) return `${Math.floor(s / 3600)} ชม.ที่แล้ว`;
   return `${Math.floor(s / 86400)} วันที่แล้ว`;
 }
-function NotificationBell({ notifications, notiReads, userId, canManagePayroll, ops, onJump }) {
+function NotificationBell({ notifications, notiReads, userId, canManagePayroll, canViewContractors, ops, onJump }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   const readSet = useMemo(() => new Set(notiReads.filter((r) => r.userId === userId).map((r) => r.notificationId)), [notiReads, userId]);
-  // ซ่อนการแจ้งเตือนที่เกี่ยวกับเงินเดือน จากผู้ที่ไม่มีสิทธิ์ดูเงินเดือน
+  // ซ่อนการแจ้งเตือนที่เกี่ยวกับเงินเดือน จากผู้ที่ไม่มีสิทธิ์ดูเงินเดือน + ซ่อนแจ้งเตือนตั้งเบิกจากผู้ไม่มีสิทธิ์ช่าง
   const PAYROLL_NOTI = ['payroll_incomplete', 'pending_raise'];
-  const visibleNoti = useMemo(() => (canManagePayroll ? notifications : notifications.filter((n) => !PAYROLL_NOTI.includes(n.type))), [notifications, canManagePayroll]);
+  const EXPENSE_NOTI = ['expense_pending', 'expense_approved', 'expense_rejected'];
+  const visibleNoti = useMemo(() => notifications.filter((n) => {
+    if (!canManagePayroll && PAYROLL_NOTI.includes(n.type)) return false;
+    if (!canViewContractors && EXPENSE_NOTI.includes(n.type)) return false;
+    return true;
+  }), [notifications, canManagePayroll, canViewContractors]);
   const sorted = useMemo(() => [...visibleNoti].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)), [visibleNoti]);
   const unread = sorted.filter((n) => !readSet.has(n.id));
   const unreadCount = unread.length;
