@@ -65,6 +65,12 @@ const MONTH_NAMES = ['มกราคม', 'กุมภาพันธ์', '�
 
 // ============ บันทึกการอัปเดต (What's New) — เรียงใหม่สุดบนสุด, v ต้องเพิ่มขึ้นเรื่อยๆ ============
 const CHANGELOG = [
+  { v: 6, date: '3 มิ.ย. 2569', title: 'ระบบตั้งเบิก (อนุมัติก่อนจ่าย)', items: [
+    'เพิ่มแท็บ "ตั้งเบิก" ในหน้าช่าง/ผู้รับเหมา — ขอเบิกค่าใช้จ่ายงานพิเศษได้',
+    'จ่ายให้ช่างนอก ช่างในระบบ หรือพนักงานก็ได้ (งานพิเศษนอกเงินเดือน)',
+    'ต้องให้เจ้าของ "อนุมัติ" ก่อน แล้วทำเครื่องหมาย "จ่ายแล้ว" ได้',
+    'มี badge แจ้งจำนวนรายการรออนุมัติบนเมนู',
+  ] },
   { v: 5, date: '3 มิ.ย. 2569', title: 'สิทธิ์เมนูรายคน + แก้บั๊กช่าง', items: [
     'เพิ่ม "สิทธิ์เข้าถึงเมนู" รายคนในหน้าผู้ใช้ระบบ — เลือกได้ว่าใครเห็นเมนูไหน',
     'มอบสิทธิ์เข้าถึง "ช่าง/ผู้รับเหมา" ให้ผู้ใช้คนอื่นได้ (ปกติเฉพาะเจ้าของ)',
@@ -568,6 +574,7 @@ export default function App() {
   const [birthdayWarnDays, setBirthdayWarnDays] = useState(7); // เตือนวันเกิดล่วงหน้ากี่วัน
   const [contractors, setContractors] = useState([]);
   const [contractorVisits, setContractorVisits] = useState([]);
+  const [expenseRequests, setExpenseRequests] = useState([]);
 
   const [activeBusinessId, setActiveBusinessId] = useState(null);
   const [activeZoneId, setActiveZoneId] = useState(null);
@@ -655,7 +662,7 @@ export default function App() {
     let cancelled = false;
     setDataLoading(true);
     (async () => {
-      const [b, z, p, e, up, noti, reads, settingsRow, contractorsRes, visitsRes] = await Promise.all([
+      const [b, z, p, e, up, noti, reads, settingsRow, contractorsRes, visitsRes, expReqRes] = await Promise.all([
         supabase.from('businesses').select('*').order('created_at'),
         supabase.from('zones').select('*').order('created_at'),
         supabase.from('positions').select('*').order('created_at'),
@@ -668,6 +675,7 @@ export default function App() {
         supabase.from('app_settings').select('expiry_warn_months, birthday_notify_enabled, birthday_warn_days').eq('id', 1).maybeSingle(),
         (profile.isOwner || (Array.isArray(profile.allowedViews) && profile.allowedViews.includes('contractors'))) ? supabase.from('contractors').select('*').order('created_at', { ascending: false }) : Promise.resolve({ data: [] }),
         (profile.isOwner || (Array.isArray(profile.allowedViews) && profile.allowedViews.includes('contractors'))) ? supabase.from('contractor_visits').select('*').order('visit_date', { ascending: false }) : Promise.resolve({ data: [] }),
+        (profile.isOwner || (Array.isArray(profile.allowedViews) && profile.allowedViews.includes('contractors'))) ? supabase.from('expense_requests').select('*').order('created_at', { ascending: false }) : Promise.resolve({ data: [] }),
       ]);
       if (cancelled) return;
       if (settingsRow?.data?.expiry_warn_months != null) setExpiryWarnMonths(settingsRow.data.expiry_warn_months);
@@ -675,6 +683,7 @@ export default function App() {
       if (settingsRow?.data?.birthday_warn_days != null) setBirthdayWarnDays(settingsRow.data.birthday_warn_days);
       setContractors(fromDB(contractorsRes?.data) || []);
       setContractorVisits(fromDB(visitsRes?.data) || []);
+      setExpenseRequests(fromDB(expReqRes?.data) || []);
       setBusinesses(fromDB(b.data || []));
       setZones(fromDB(z.data || []));
       const posRows = fromDB(p.data || []);
@@ -1083,6 +1092,21 @@ export default function App() {
         return true;
       },
     },
+    expenseRequest: {
+      add: async (d) => { const row = await insertRow('expense_requests', { ...d, requestedBy: session.user.id, status: 'pending' }); if (row) setExpenseRequests((prev) => [row, ...prev]); return row; },
+      update: async (id, d) => { const ok = await updateRow('expense_requests', id, d); if (ok) setExpenseRequests((prev) => prev.map((r) => (r.id === id ? { ...r, ...d } : r))); return ok; },
+      approve: async (id) => { const d = { status: 'approved', decidedBy: session.user.id, decidedAt: new Date().toISOString(), rejectReason: null }; const ok = await updateRow('expense_requests', id, d); if (ok) setExpenseRequests((prev) => prev.map((r) => (r.id === id ? { ...r, ...d } : r))); return ok; },
+      reject: async (id, reason) => { const d = { status: 'rejected', decidedBy: session.user.id, decidedAt: new Date().toISOString(), rejectReason: reason || null }; const ok = await updateRow('expense_requests', id, d); if (ok) setExpenseRequests((prev) => prev.map((r) => (r.id === id ? { ...r, ...d } : r))); return ok; },
+      markPaid: async (id, note) => { const d = { status: 'paid', paidAt: new Date().toISOString(), paidNote: note || null }; const ok = await updateRow('expense_requests', id, d); if (ok) setExpenseRequests((prev) => prev.map((r) => (r.id === id ? { ...r, ...d } : r))); return ok; },
+      del: async (id) => {
+        const r = expenseRequests.find((x) => x.id === id);
+        await Promise.all((r?.docs || []).map((p) => deleteDocument(p)));
+        const { error } = await supabase.from('expense_requests').delete().eq('id', id);
+        if (error) { alert('ลบไม่สำเร็จ: ' + error.message); return false; }
+        setExpenseRequests((prev) => prev.filter((x) => x.id !== id));
+        return true;
+      },
+    },
   };
 
   if (authLoading) return <LoadingScreen />;
@@ -1103,6 +1127,7 @@ export default function App() {
         activeBusinessId={activeBusinessId}
         setActiveBusinessId={changeBusiness}
         onThemeChange={changeTheme}
+        contractorPendingCount={expenseRequests.filter((r) => r.status === 'pending').length}
         open={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
         notiBell={
@@ -1236,7 +1261,11 @@ export default function App() {
           <ContractorsPage
             contractors={contractors}
             visits={contractorVisits}
+            expenseRequests={expenseRequests}
+            employees={employees}
             businesses={businesses}
+            profile={profile}
+            currentUserId={session.user.id}
             ops={ops}
           />
         )}
@@ -1560,7 +1589,7 @@ function ThemePicker({ current, onSelect }) {
 }
 
 // ============ SIDEBAR ============
-function Sidebar({ view, setView, profile, businesses, zones, activeBusinessId, setActiveBusinessId, notiBell, onThemeChange, open, onClose }) {
+function Sidebar({ view, setView, profile, businesses, zones, activeBusinessId, setActiveBusinessId, notiBell, onThemeChange, contractorPendingCount = 0, open, onClose }) {
   const isOwner = profile.isOwner;
   const isBM = profile.isBM;
   const isZM = profile.isZM;
@@ -1583,7 +1612,7 @@ function Sidebar({ view, setView, profile, businesses, zones, activeBusinessId, 
     { id: 'commission', label: 'คอมมิชชั่น', icon: Percent, show: profile.canManagePayroll && navAllowed('commission') },
     { id: 'roomrent', label: 'ค่าห้องพนักงาน', icon: KeyRound, show: profile.canManagePayroll && navAllowed('roomrent') },
     { id: 'users', label: 'ผู้ใช้ระบบ', icon: Shield, show: isOwner },
-    { id: 'contractors', label: 'ช่าง/ผู้รับเหมา', icon: Wrench, show: canViewContractors },
+    { id: 'contractors', label: 'ช่าง/ผู้รับเหมา', icon: Wrench, show: canViewContractors, badge: contractorPendingCount },
     { id: 'settings', label: 'ตั้งค่า', icon: Settings, show: isOwner },
   ];
 
@@ -1663,7 +1692,8 @@ function Sidebar({ view, setView, profile, businesses, zones, activeBusinessId, 
           return (
             <button key={item.id} onClick={() => navClick(item.id)} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all ${active ? 'bg-amber-500 text-emerald-950 font-medium shadow-lg shadow-amber-500/20' : 'text-emerald-100/80 hover:bg-emerald-900 hover:text-white'}`}>
               <Icon className="w-4 h-4" />
-              <span>{item.label}</span>
+              <span className="flex-1 text-left">{item.label}</span>
+              {item.badge > 0 && <span className={`min-w-[18px] h-[18px] px-1 text-[10px] font-bold rounded-full flex items-center justify-center ${active ? 'bg-emerald-950 text-amber-400' : 'bg-rose-500 text-white'}`}>{item.badge}</span>}
             </button>
           );
         })}
@@ -5234,11 +5264,16 @@ function ProfileEditForm({ initial, businesses, zones, onSave, onCancel, isSelf 
 }
 
 // ============ CONTRACTORS PAGE ============
-function ContractorsPage({ contractors, visits, businesses, ops }) {
+function ContractorsPage({ contractors, visits, expenseRequests = [], employees = [], businesses, profile, currentUserId, ops }) {
+  const [tab, setTab] = useState('contractors'); // 'contractors' | 'expenses'
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null);
   const [openContractor, setOpenContractor] = useState(null);
   const [search, setSearch] = useState('');
+  const [showExpForm, setShowExpForm] = useState(false);
+  const [editingExp, setEditingExp] = useState(null);
+  const isOwner = !!profile?.isOwner;
+  const pendingExpenseCount = useMemo(() => expenseRequests.filter((r) => r.status === 'pending').length, [expenseRequests]);
 
   const enriched = useMemo(() => contractors.map((c) => {
     const my = visits.filter((v) => v.contractorId === c.id);
@@ -5260,12 +5295,32 @@ function ContractorsPage({ contractors, visits, businesses, ops }) {
     if (!window.confirm(`ลบ "${c.name}" และประวัติทั้งหมด (${c.visitCount} ครั้ง)?\nไฟล์แนบทั้งหมดจะถูกลบและไม่สามารถกู้คืนได้`)) return;
     await ops.contractor.del(c.id);
   };
+  const saveExpense = async (data) => {
+    if (editingExp?.id) await ops.expenseRequest.update(editingExp.id, data);
+    else await ops.expenseRequest.add(data);
+    setShowExpForm(false); setEditingExp(null);
+  };
 
   return (
     <div className="h-full overflow-auto">
-      <PageHeader title="ช่าง/ผู้รับเหมา" subtitle={`${contractors.length} คน • ${visits.length} ครั้งที่เคยมาทำงาน`}>
-        <button onClick={() => { setEditing({}); setShowForm(true); }} className="flex items-center gap-2 px-4 py-2 bg-emerald-900 hover:bg-emerald-800 text-white rounded-lg text-sm font-medium"><Plus className="w-4 h-4" />เพิ่มช่าง</button>
+      <PageHeader title="ช่าง/ผู้รับเหมา" subtitle={tab === 'contractors' ? `${contractors.length} คน • ${visits.length} ครั้งที่เคยมาทำงาน` : `${expenseRequests.length} รายการเบิก${pendingExpenseCount > 0 ? ` • รออนุมัติ ${pendingExpenseCount}` : ''}`}>
+        {tab === 'contractors'
+          ? <button onClick={() => { setEditing({}); setShowForm(true); }} className="flex items-center gap-2 px-4 py-2 bg-emerald-900 hover:bg-emerald-800 text-white rounded-lg text-sm font-medium"><Plus className="w-4 h-4" />เพิ่มช่าง</button>
+          : <button onClick={() => { setEditingExp({}); setShowExpForm(true); }} className="flex items-center gap-2 px-4 py-2 bg-emerald-900 hover:bg-emerald-800 text-white rounded-lg text-sm font-medium"><Plus className="w-4 h-4" />ตั้งเบิกใหม่</button>}
       </PageHeader>
+      <div className="px-4 md:px-8 pt-4">
+        <div className="flex gap-1 border-b border-stone-200">
+          <button onClick={() => setTab('contractors')} className={`px-4 py-2.5 text-sm font-medium border-b-2 -mb-px ${tab === 'contractors' ? 'border-emerald-700 text-emerald-800' : 'border-transparent text-stone-500 hover:text-stone-700'}`}>ช่าง/ผู้รับเหมา</button>
+          <button onClick={() => setTab('expenses')} className={`px-4 py-2.5 text-sm font-medium border-b-2 -mb-px flex items-center gap-1.5 ${tab === 'expenses' ? 'border-emerald-700 text-emerald-800' : 'border-transparent text-stone-500 hover:text-stone-700'}`}>
+            ตั้งเบิก
+            {pendingExpenseCount > 0 && <span className="min-w-[18px] h-[18px] px-1 bg-rose-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">{pendingExpenseCount}</span>}
+          </button>
+        </div>
+      </div>
+
+      {tab === 'expenses' ? (
+        <ExpenseRequestsView requests={expenseRequests} employees={employees} contractors={contractors} businesses={businesses} isOwner={isOwner} currentUserId={currentUserId} ops={ops} onNew={() => { setEditingExp({}); setShowExpForm(true); }} onEdit={(r) => { setEditingExp(r); setShowExpForm(true); }} />
+      ) : (
       <div className="p-4 md:p-8">
         <div className="mb-4 relative max-w-md">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-stone-400" />
@@ -5306,14 +5361,196 @@ function ContractorsPage({ contractors, visits, businesses, ops }) {
           </div>
         )}
       </div>
+      )}
       {showForm && (
         <Modal title={editing?.id ? 'แก้ไขข้อมูลช่าง' : 'เพิ่มช่างใหม่'} onClose={() => { setShowForm(false); setEditing(null); }}>
           <ContractorForm initial={editing} onSave={saveContractor} onCancel={() => { setShowForm(false); setEditing(null); }} />
         </Modal>
       )}
+      {showExpForm && (
+        <Modal title={editingExp?.id ? 'แก้ไขคำขอเบิก' : 'ตั้งเบิกค่าใช้จ่าย'} onClose={() => { setShowExpForm(false); setEditingExp(null); }}>
+          <ExpenseRequestForm initial={editingExp} employees={employees} contractors={contractors} businesses={businesses} onSave={saveExpense} onCancel={() => { setShowExpForm(false); setEditingExp(null); }} />
+        </Modal>
+      )}
       {openContractor && (
         <ContractorDetailModal contractor={openContractor} allVisits={visits} businesses={businesses} ops={ops} onClose={() => setOpenContractor(null)} />
       )}
+    </div>
+  );
+}
+
+// แสดงรายการคำขอเบิก + อนุมัติ/ปฏิเสธ/จ่าย
+function ExpenseRequestsView({ requests, employees, contractors, businesses, isOwner, currentUserId, ops, onNew, onEdit }) {
+  const [filter, setFilter] = useState('all'); // all | pending | approved | paid | rejected
+  const payeeName = (r) => {
+    if (r.payeeKind === 'employee') { const e = employees.find((x) => x.id === r.payeeEmployeeId); return e ? dispName(e) : (r.payeeName || '—'); }
+    if (r.payeeKind === 'contractor') { const c = contractors.find((x) => x.id === r.payeeContractorId); return c ? c.name : (r.payeeName || '—'); }
+    return r.payeeName || '—';
+  };
+  const STATUS = {
+    pending: { label: 'รออนุมัติ', cls: 'bg-amber-100 text-amber-800' },
+    approved: { label: 'อนุมัติแล้ว', cls: 'bg-emerald-100 text-emerald-800' },
+    paid: { label: 'จ่ายแล้ว', cls: 'bg-sky-100 text-sky-800' },
+    rejected: { label: 'ไม่อนุมัติ', cls: 'bg-rose-100 text-rose-700' },
+  };
+  const KIND = { employee: 'พนักงาน', contractor: 'ช่าง', external: 'ช่างนอก/อื่นๆ' };
+  const list = useMemo(() => (filter === 'all' ? requests : requests.filter((r) => r.status === filter)), [requests, filter]);
+  const totalApprovedUnpaid = useMemo(() => requests.filter((r) => r.status === 'approved').reduce((s, r) => s + (Number(r.amount) || 0), 0), [requests]);
+
+  const doReject = async (r) => {
+    const reason = window.prompt(`ไม่อนุมัติคำขอเบิกของ "${payeeName(r)}" (${fmtMoney(r.amount)} ฿)\nระบุเหตุผล (ไม่บังคับ):`, '');
+    if (reason === null) return;
+    await ops.expenseRequest.reject(r.id, reason.trim());
+  };
+  const doApprove = async (r) => { if (window.confirm(`อนุมัติให้จ่าย ${fmtMoney(r.amount)} ฿ ให้ "${payeeName(r)}" ?`)) await ops.expenseRequest.approve(r.id); };
+  const doPaid = async (r) => {
+    const note = window.prompt(`ทำเครื่องหมายว่า "จ่ายแล้ว" ${fmtMoney(r.amount)} ฿ ให้ "${payeeName(r)}"\nหมายเหตุการจ่าย (ไม่บังคับ เช่น โอน/เงินสด):`, '');
+    if (note === null) return;
+    await ops.expenseRequest.markPaid(r.id, note.trim());
+  };
+  const doDelete = async (r) => { if (window.confirm('ลบคำขอเบิกนี้? ไฟล์แนบจะถูกลบด้วย')) await ops.expenseRequest.del(r.id); };
+
+  return (
+    <div className="p-4 md:p-8 space-y-4">
+      {totalApprovedUnpaid > 0 && (
+        <div className="bg-emerald-50 border border-emerald-200 rounded-lg px-4 py-2.5 text-sm text-emerald-800 flex items-center gap-2">
+          <Wallet className="w-4 h-4" />อนุมัติแล้วรอจ่าย รวม <b>{fmtMoney(totalApprovedUnpaid)} ฿</b>
+        </div>
+      )}
+      <div className="flex flex-wrap gap-1.5">
+        {[['all', 'ทั้งหมด'], ['pending', 'รออนุมัติ'], ['approved', 'อนุมัติแล้ว'], ['paid', 'จ่ายแล้ว'], ['rejected', 'ไม่อนุมัติ']].map(([k, lbl]) => (
+          <button key={k} onClick={() => setFilter(k)} className={`px-3 py-1.5 rounded-full text-xs font-medium border ${filter === k ? 'bg-emerald-900 text-white border-emerald-900' : 'bg-white border-stone-300 text-stone-600 hover:bg-stone-50'}`}>{lbl}</button>
+        ))}
+      </div>
+      {list.length === 0 ? (
+        <EmptyState icon={Receipt} title="ไม่มีรายการ" description="กด 'ตั้งเบิกใหม่' เพื่อสร้างคำขอเบิกค่าใช้จ่ายงานพิเศษ ให้เจ้าของอนุมัติก่อนจ่าย" action={<button onClick={onNew} className="px-4 py-2 bg-emerald-900 text-white rounded-lg text-sm font-medium">ตั้งเบิกใหม่</button>} />
+      ) : (
+        <div className="space-y-2">
+          {list.map((r) => {
+            const st = STATUS[r.status] || STATUS.pending;
+            const biz = businesses.find((b) => b.id === r.businessId);
+            const canEdit = r.status === 'pending' && (isOwner || r.requestedBy === currentUserId);
+            return (
+              <div key={r.id} className="bg-white border border-stone-200 rounded-xl p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-1.5 mb-1">
+                      <span className={`px-2 py-0.5 text-[11px] font-medium rounded ${st.cls}`}>{st.label}</span>
+                      <span className="px-2 py-0.5 bg-stone-100 text-stone-600 text-[11px] rounded">{KIND[r.payeeKind] || 'อื่นๆ'}</span>
+                      {biz && <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-sky-50 text-sky-800 text-[11px] rounded"><Building2 className="w-3 h-3" />{biz.name}</span>}
+                    </div>
+                    <div className="font-semibold text-stone-800">{payeeName(r)} <span className="text-amber-700">• {fmtMoney(r.amount)} ฿</span></div>
+                    <div className="text-sm text-stone-700 whitespace-pre-line mt-0.5">{r.workDescription}</div>
+                    {r.notes && <div className="text-xs text-stone-500 mt-1 italic whitespace-pre-line">หมายเหตุ: {r.notes}</div>}
+                    {r.status === 'rejected' && r.rejectReason && <div className="text-xs text-rose-600 mt-1">เหตุผลที่ไม่อนุมัติ: {r.rejectReason}</div>}
+                    {r.status === 'paid' && <div className="text-xs text-sky-700 mt-1">จ่ายแล้ว {r.paidAt ? fmt(r.paidAt) : ''}{r.paidNote ? ` • ${r.paidNote}` : ''}</div>}
+                    {r.docs?.length > 0 && <div className="mt-2"><DocList paths={r.docs} /></div>}
+                    <div className="text-[11px] text-stone-400 mt-1.5">ตั้งเบิก {fmt(r.createdAt)}</div>
+                  </div>
+                  <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
+                    {canEdit && <button onClick={() => onEdit(r)} className="p-1.5 hover:bg-stone-100 rounded text-stone-500" title="แก้ไข"><Edit2 className="w-3.5 h-3.5" /></button>}
+                    {canEdit && <button onClick={() => doDelete(r)} className="p-1.5 hover:bg-red-50 rounded text-red-500" title="ลบ"><Trash2 className="w-3.5 h-3.5" /></button>}
+                  </div>
+                </div>
+                {/* ปุ่มดำเนินการ */}
+                {isOwner && r.status === 'pending' && (
+                  <div className="flex gap-2 mt-3 pt-3 border-t border-stone-100">
+                    <button onClick={() => doApprove(r)} className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-emerald-700 hover:bg-emerald-600 text-white rounded-lg text-sm font-medium"><CheckCircle2 className="w-4 h-4" />อนุมัติ</button>
+                    <button onClick={() => doReject(r)} className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-white border border-rose-300 text-rose-600 hover:bg-rose-50 rounded-lg text-sm font-medium"><X className="w-4 h-4" />ไม่อนุมัติ</button>
+                  </div>
+                )}
+                {isOwner && r.status === 'approved' && (
+                  <div className="flex mt-3 pt-3 border-t border-stone-100">
+                    <button onClick={() => doPaid(r)} className="flex items-center justify-center gap-1.5 px-3 py-2 bg-sky-700 hover:bg-sky-600 text-white rounded-lg text-sm font-medium"><Banknote className="w-4 h-4" />ทำเครื่องหมายว่าจ่ายแล้ว</button>
+                  </div>
+                )}
+                {!isOwner && r.status === 'pending' && <div className="mt-2 text-xs text-amber-600">รอเจ้าของอนุมัติ</div>}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ฟอร์มตั้งเบิก
+function ExpenseRequestForm({ initial, employees, contractors, businesses, onSave, onCancel }) {
+  const [payeeKind, setPayeeKind] = useState(initial?.payeeKind || 'external');
+  const [payeeEmployeeId, setPayeeEmployeeId] = useState(initial?.payeeEmployeeId || '');
+  const [payeeContractorId, setPayeeContractorId] = useState(initial?.payeeContractorId || '');
+  const [payeeName, setPayeeName] = useState(initial?.payeeName || '');
+  const [businessId, setBusinessId] = useState(initial?.businessId || businesses[0]?.id || '');
+  const [workDescription, setWorkDescription] = useState(initial?.workDescription || '');
+  const [amount, setAmount] = useState(initial?.amount ?? '');
+  const [notes, setNotes] = useState(initial?.notes || '');
+  const [docs, setDocs] = useState(initial?.docs || []);
+  const activeEmployees = useMemo(() => employees.filter((e) => isActive(e)).sort((a, b) => (a.employeeNumber || '').localeCompare(b.employeeNumber || '')), [employees]);
+
+  const submit = () => {
+    if (!businessId) return alert('กรุณาเลือกตึก/ธุรกิจ');
+    if (!workDescription.trim()) return alert('กรุณากรอกรายละเอียดงาน');
+    if (!(Number(amount) > 0)) return alert('กรุณาระบุจำนวนเงิน');
+    let pName = payeeName.trim();
+    if (payeeKind === 'employee') { if (!payeeEmployeeId) return alert('กรุณาเลือกพนักงาน'); pName = dispName(employees.find((e) => e.id === payeeEmployeeId) || {}); }
+    else if (payeeKind === 'contractor') { if (!payeeContractorId) return alert('กรุณาเลือกช่าง'); pName = (contractors.find((c) => c.id === payeeContractorId) || {}).name || ''; }
+    else { if (!pName) return alert('กรุณากรอกชื่อผู้รับเงิน'); }
+    onSave({
+      businessId, workDescription: workDescription.trim(), amount: Number(amount) || 0,
+      payeeKind,
+      payeeEmployeeId: payeeKind === 'employee' ? payeeEmployeeId : null,
+      payeeContractorId: payeeKind === 'contractor' ? payeeContractorId : null,
+      payeeName: pName,
+      notes: notes.trim() || null, docs,
+    });
+  };
+
+  return (
+    <div className="space-y-4">
+      <FormField label="จ่ายให้ใคร" required>
+        <div className="grid grid-cols-3 gap-2">
+          {[['external', 'ช่างนอก/อื่นๆ'], ['contractor', 'ช่างในระบบ'], ['employee', 'พนักงาน']].map(([k, lbl]) => (
+            <button key={k} type="button" onClick={() => setPayeeKind(k)} className={`p-2.5 rounded-lg border-2 text-center text-xs ${payeeKind === k ? 'border-emerald-600 bg-emerald-50 font-medium text-emerald-900' : 'border-stone-200 text-stone-600 hover:border-stone-300'}`}>{lbl}</button>
+          ))}
+        </div>
+      </FormField>
+      {payeeKind === 'employee' && (
+        <FormField label="เลือกพนักงาน" required>
+          <select value={payeeEmployeeId} onChange={(e) => setPayeeEmployeeId(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500/40">
+            <option value="">— เลือกพนักงาน —</option>
+            {activeEmployees.map((e) => <option key={e.id} value={e.id}>#{e.employeeNumber} {dispName(e)}</option>)}
+          </select>
+        </FormField>
+      )}
+      {payeeKind === 'contractor' && (
+        <FormField label="เลือกช่าง" required>
+          <select value={payeeContractorId} onChange={(e) => setPayeeContractorId(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500/40">
+            <option value="">— เลือกช่าง —</option>
+            {contractors.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+          {contractors.length === 0 && <p className="text-xs text-amber-600 mt-1">ยังไม่มีช่างในระบบ — เพิ่มที่แท็บ "ช่าง/ผู้รับเหมา" หรือเลือก "ช่างนอก/อื่นๆ"</p>}
+        </FormField>
+      )}
+      {payeeKind === 'external' && (
+        <FormField label="ชื่อผู้รับเงิน" required><input value={payeeName} onChange={(e) => setPayeeName(e.target.value)} placeholder="เช่น ช่างแอร์ร้านเฮง, ร้านกระจกพี่ตู่" className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40" /></FormField>
+      )}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <FormField label="ตึก/ธุรกิจ" required>
+          <select value={businessId} onChange={(e) => setBusinessId(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500/40">
+            <option value="">— เลือกตึก —</option>
+            {businesses.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+          </select>
+        </FormField>
+        <FormField label="จำนวนเงิน (บาท)" required><input type="number" min={0} step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40" /></FormField>
+      </div>
+      <FormField label="รายละเอียดงาน" required><textarea autoFocus value={workDescription} onChange={(e) => setWorkDescription(e.target.value)} rows={3} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 resize-none" placeholder="เช่น ล้างแอร์ 5 เครื่อง ชั้น 2, ซ่อมประตูม้วนหน้าร้าน" /></FormField>
+      <FormField label="หมายเหตุ"><textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 resize-none" /></FormField>
+      {businessId ? (
+        <MultiDocUpload label="ใบเสนอราคา/บิล/รูปงาน (ถ้ามี)" paths={docs} businessId={businessId} docType="expense" onChange={setDocs} />
+      ) : (
+        <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2">เลือกตึก/ธุรกิจก่อน จึงจะแนบเอกสารได้</p>
+      )}
+      <FormActions onCancel={onCancel} onSubmit={submit} submitLabel={initial?.id ? 'บันทึก' : 'ส่งคำขอเบิก'} />
     </div>
   );
 }
@@ -5629,11 +5866,11 @@ function FormField({ label, required, children }) {
   return <div><label className="block text-sm font-medium text-stone-700 mb-1.5">{label}{required && <span className="text-red-500"> *</span>}</label>{children}</div>;
 }
 
-function FormActions({ onCancel, onSubmit }) {
+function FormActions({ onCancel, onSubmit, submitLabel }) {
   return (
     <div className="flex justify-end gap-2 pt-2">
       <button onClick={onCancel} className="px-4 py-2 text-stone-700 hover:bg-stone-100 rounded-lg text-sm font-medium">ยกเลิก</button>
-      <button onClick={onSubmit} className="flex items-center gap-2 px-4 py-2 bg-emerald-900 hover:bg-emerald-800 text-white rounded-lg text-sm font-medium"><Save className="w-4 h-4" /> บันทึก</button>
+      <button onClick={onSubmit} className="flex items-center gap-2 px-4 py-2 bg-emerald-900 hover:bg-emerald-800 text-white rounded-lg text-sm font-medium"><Save className="w-4 h-4" /> {submitLabel || 'บันทึก'}</button>
     </div>
   );
 }
