@@ -65,6 +65,10 @@ const MONTH_NAMES = ['มกราคม', 'กุมภาพันธ์', '�
 
 // ============ บันทึกการอัปเดต (What's New) — เรียงใหม่สุดบนสุด, v ต้องเพิ่มขึ้นเรื่อยๆ ============
 const CHANGELOG = [
+  { v: 8, date: '3 มิ.ย. 2569', scopes: ['payroll'], title: 'จำราคารายการที่เคยกรอก', items: [
+    'เพิ่มงานเสริม/เบิก/หักในหน้าเงินเดือน: ถ้าเคยกรอกชื่อรายการไหนมาก่อน ระบบจะเติมราคาล่าสุดให้อัตโนมัติ',
+    'มีรายการชื่อที่เคยใช้ให้เลือก (พิมพ์แล้วขึ้นให้เลือก) และยังแก้ไขราคาได้ทุกครั้ง',
+  ] },
   { v: 7, date: '3 มิ.ย. 2569', scopes: ['contractors'], title: 'แจ้งเตือนการตั้งเบิก', items: [
     'เมื่อมีคนตั้งเบิก เจ้าของจะได้รับแจ้งเตือน "มีคำขอเบิกรออนุมัติ" ทันที',
     'เมื่อเจ้าของอนุมัติ/ไม่อนุมัติ ผู้ตั้งเบิกจะได้รับแจ้งเตือนผลทุกครั้ง',
@@ -1022,6 +1026,18 @@ export default function App() {
         const { data, error } = await supabase.from('payroll_items').select('label').eq('kind', kind).limit(1000);
         if (error) { console.error(error); return []; }
         return [...new Set((data || []).map((r) => r.label).filter((l) => l && l !== '-'))];
+      },
+      // จดจำราคาล่าสุดของแต่ละชื่อรายการ (แยกตามชนิด) เพื่อเติมอัตโนมัติ
+      recentPrices: async () => {
+        const { data, error } = await supabase.from('payroll_items').select('label, amount, kind, created_at').order('created_at', { ascending: false }).limit(3000);
+        if (error) { console.error(error); return {}; }
+        const map = { bonus_task: {}, advance: {}, other_deduction: {} };
+        (data || []).forEach((r) => {
+          if (!r.label || r.label === '-') return;
+          if (!map[r.kind]) map[r.kind] = {};
+          if (map[r.kind][r.label] == null && r.amount != null && Number(r.amount) > 0) map[r.kind][r.label] = Number(r.amount);
+        });
+        return map;
       },
       add: (d) => insertRow('payroll_items', d),
       delete: (id) => deleteRow('payroll_items', id),
@@ -4501,18 +4517,28 @@ function EditorRow({ label, children, hint }) {
     </div>
   );
 }
-function EditorItemList({ title, list, setList, color, addLabel, disabled }) {
+function EditorItemList({ title, list, setList, color, addLabel, disabled, priceMap = {} }) {
+  const dlId = useRef('dl-' + Math.random().toString(36).slice(2, 9)).current;
+  const knownLabels = Object.keys(priceMap || {});
+  // เปลี่ยนชื่อรายการ: ถ้าเคยกรอกชื่อนี้มาก่อนและช่องเงินยังว่าง ให้เติมราคาที่จำไว้ (แก้ได้)
+  const onLabel = (idx, label) => setList(list.map((x, i) => {
+    if (i !== idx) return x;
+    const next = { ...x, label };
+    if ((x.amount === '' || x.amount == null) && priceMap && priceMap[label] != null) next.amount = priceMap[label];
+    return next;
+  }));
   return (
     <div>
       <div className="flex items-center justify-between mb-1.5">
         <span className="text-xs font-medium text-stone-600">{title}</span>
         {!disabled && <button type="button" onClick={() => setList([...list, { label: '', amount: '' }])} className={`text-xs ${color} hover:underline flex items-center gap-0.5`}><Plus className="w-3 h-3" />{addLabel}</button>}
       </div>
+      {knownLabels.length > 0 && <datalist id={dlId}>{knownLabels.map((l) => <option key={l} value={l} />)}</datalist>}
       <div className="space-y-1.5">
         {list.length === 0 && <div className="text-xs text-stone-400 italic">ไม่มี</div>}
         {list.map((it, idx) => (
           <div key={idx} className="flex gap-2">
-            <input disabled={disabled} value={it.label} onChange={(e) => setList(list.map((x, i) => i === idx ? { ...x, label: e.target.value } : x))} placeholder="รายการ" className="flex-1 px-2 py-1.5 text-sm border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 disabled:bg-stone-100" />
+            <input disabled={disabled} list={knownLabels.length ? dlId : undefined} value={it.label} onChange={(e) => onLabel(idx, e.target.value)} placeholder="รายการ" className="flex-1 px-2 py-1.5 text-sm border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 disabled:bg-stone-100" />
             <input disabled={disabled} type="number" min="0" step="0.01" value={it.amount} onChange={(e) => setList(list.map((x, i) => i === idx ? { ...x, amount: e.target.value } : x))} placeholder="0.00" className="w-28 px-2 py-1.5 text-sm border border-stone-300 rounded-lg text-right focus:outline-none focus:ring-2 focus:ring-emerald-500/40 disabled:bg-stone-100" />
             {!disabled && <button type="button" onClick={() => setList(list.filter((_, i) => i !== idx))} className="p-1.5 text-red-500 hover:bg-red-50 rounded"><X className="w-4 h-4" /></button>}
           </div>
@@ -4543,6 +4569,8 @@ function PayrollEditor({ employee, existing, existingItems, year, month, busines
   const [bonusTasks, setBonusTasks] = useState(existingItems.filter((i) => i.kind === 'bonus_task').map((i) => ({ label: i.label, amount: i.amount })));
   const [advances, setAdvances] = useState(existingItems.filter((i) => i.kind === 'advance').map((i) => ({ label: i.label, amount: i.amount })));
   const [otherDeductions, setOtherDeductions] = useState(existingItems.filter((i) => i.kind === 'other_deduction').map((i) => ({ label: i.label, amount: i.amount })));
+  const [priceMaps, setPriceMaps] = useState({});
+  useEffect(() => { let c = false; (async () => { const m = ops.payrollItem.recentPrices ? await ops.payrollItem.recentPrices() : {}; if (!c) setPriceMaps(m || {}); })(); return () => { c = true; }; }, []);
   const [saving, setSaving] = useState(false);
 
   const set = (k, v) => setF((prev) => ({ ...prev, [k]: v }));
@@ -4634,7 +4662,7 @@ function PayrollEditor({ employee, existing, existingItems, year, month, busines
             <EditorRow label="เงินเดือนฐาน" hint={`ค่าแรง/วัน = ${fmtMoney(calc.daily)} ฿`}>{numInput('baseSalary')}</EditorRow>
             <EditorRow label="คอมมิชชั่น" hint={!existing && commissionPrefill ? 'จากหน้าคอมมิชชั่นงวดนี้' : undefined}>{numInput('commission')}</EditorRow>
             <EditorRow label="ทำงานวันหยุด (วัน)" hint={`+${fmtMoney(calc.holidayWorkPay)} ฿`}>{numInput('holidayWorkDays')}</EditorRow>
-            <div className="mt-2 pt-2 border-t border-emerald-100"><EditorItemList title="งานเสริม (ล้างห้องน้ำ, ลอกท่อ ฯลฯ)" list={bonusTasks} setList={setBonusTasks} color="text-emerald-700" addLabel="เพิ่มงานเสริม" disabled={locked} /></div>
+            <div className="mt-2 pt-2 border-t border-emerald-100"><EditorItemList title="งานเสริม (ล้างห้องน้ำ, ลอกท่อ ฯลฯ)" list={bonusTasks} setList={setBonusTasks} color="text-emerald-700" addLabel="เพิ่มงานเสริม" disabled={locked} priceMap={priceMaps.bonus_task} /></div>
           </div>
 
           {/* วันหยุด */}
@@ -4653,8 +4681,8 @@ function PayrollEditor({ employee, existing, existingItems, year, month, busines
             <EditorRow label="ค่าห้องพัก" hint={!existing && roomFeePrefill != null ? 'จากหน้าค่าห้อง (มิเตอร์) งวดนี้' : undefined}>{numInput('roomFee')}</EditorRow>
             <EditorRow label="รับผ่านบัญชี บ.วีเอสจง แล้ว" hint="เงินที่จ่ายไปแล้ว">{numInput('paidViaCompany')}</EditorRow>
             <div className="mt-2 pt-2 border-t border-red-100 space-y-3">
-              <EditorItemList title="เบิกล่วงหน้า" list={advances} setList={setAdvances} color="text-red-600" addLabel="เพิ่มการเบิก" disabled={locked} />
-              <EditorItemList title="หักอื่นๆ" list={otherDeductions} setList={setOtherDeductions} color="text-red-600" addLabel="เพิ่มรายการหัก" disabled={locked} />
+              <EditorItemList title="เบิกล่วงหน้า" list={advances} setList={setAdvances} color="text-red-600" addLabel="เพิ่มการเบิก" disabled={locked} priceMap={priceMaps.advance} />
+              <EditorItemList title="หักอื่นๆ" list={otherDeductions} setList={setOtherDeductions} color="text-red-600" addLabel="เพิ่มรายการหัก" disabled={locked} priceMap={priceMaps.other_deduction} />
             </div>
           </div>
 
@@ -4699,13 +4727,15 @@ function PayrollQuickEntry({ bizEmployees, positions, payrollByEmp, itemsByPayro
   const [itemsEmp, setItemsEmp] = useState(null);
   const [saving, setSaving] = useState(false);
   const [pastBonus, setPastBonus] = useState([]);
+  const [priceMaps, setPriceMaps] = useState({});
 
-  // ดึงรายการงานเสริมที่เคยใช้ในอดีต (เช่น ล้างห้องน้ำ) + ค่าตั้งต้นที่ทำประจำ
+  // ดึงรายการงานเสริมที่เคยใช้ในอดีต (เช่น ล้างห้องน้ำ) + ราคาล่าสุดที่จำไว้ของแต่ละรายการ
   useEffect(() => {
     let cancelled = false;
     (async () => {
       const labels = ops.payrollItem.distinctLabels ? await ops.payrollItem.distinctLabels('bonus_task') : [];
-      if (!cancelled) setPastBonus([...new Set(['ล้างห้องน้ำ', ...labels])]);
+      const prices = ops.payrollItem.recentPrices ? await ops.payrollItem.recentPrices() : {};
+      if (!cancelled) { setPastBonus([...new Set(['ล้างห้องน้ำ', ...labels])]); setPriceMaps(prices || {}); }
     })();
     return () => { cancelled = true; };
   }, []);
@@ -4925,6 +4955,7 @@ function PayrollQuickEntry({ bizEmployees, positions, payrollByEmp, itemsByPayro
           employee={itemsEmp}
           draft={drafts[itemsEmp.id]}
           pastBonusLabels={pastBonus}
+          priceMaps={priceMaps}
           onApply={(items) => { updItems(itemsEmp.id, items); setItemsEmp(null); }}
           onClose={() => setItemsEmp(null)}
         />
@@ -4934,11 +4965,11 @@ function PayrollQuickEntry({ bizEmployees, positions, payrollByEmp, itemsByPayro
 }
 
 // ============ POPUP: งานเสริม/เบิก/หักอื่นๆ (สำหรับโหมดกรอกเร็ว) ============
-function PayrollItemsModal({ employee, draft, pastBonusLabels, onApply, onClose }) {
+function PayrollItemsModal({ employee, draft, pastBonusLabels, priceMaps = {}, onApply, onClose }) {
   const [bonusTasks, setBonusTasks] = useState(draft.items.filter((i) => i.kind === 'bonus_task').map((i) => ({ label: i.label, amount: i.amount })));
   const [advances, setAdvances] = useState(draft.items.filter((i) => i.kind === 'advance').map((i) => ({ label: i.label, amount: i.amount })));
   const [others, setOthers] = useState(draft.items.filter((i) => i.kind === 'other_deduction').map((i) => ({ label: i.label, amount: i.amount })));
-  const addBonus = (label) => setBonusTasks((prev) => prev.some((b) => b.label === label) ? prev : [...prev, { label, amount: '' }]);
+  const addBonus = (label) => setBonusTasks((prev) => prev.some((b) => b.label === label) ? prev : [...prev, { label, amount: (priceMaps.bonus_task && priceMaps.bonus_task[label] != null) ? priceMaps.bonus_task[label] : '' }]);
 
   const apply = () => {
     onApply([
@@ -4972,11 +5003,11 @@ function PayrollItemsModal({ employee, draft, pastBonusLabels, onApply, onClose 
                 </div>
               </div>
             )}
-            <EditorItemList title="งานเสริม (ล้างห้องน้ำ, ลอกท่อ ฯลฯ)" list={bonusTasks} setList={setBonusTasks} color="text-emerald-700" addLabel="เพิ่มเอง" />
+            <EditorItemList title="งานเสริม (ล้างห้องน้ำ, ลอกท่อ ฯลฯ)" list={bonusTasks} setList={setBonusTasks} color="text-emerald-700" addLabel="เพิ่มเอง" priceMap={priceMaps.bonus_task} />
           </div>
           <div className="bg-red-50/40 rounded-xl p-3 space-y-3">
-            <EditorItemList title="เบิกล่วงหน้า" list={advances} setList={setAdvances} color="text-red-600" addLabel="เพิ่ม" />
-            <EditorItemList title="หักอื่นๆ" list={others} setList={setOthers} color="text-red-600" addLabel="เพิ่ม" />
+            <EditorItemList title="เบิกล่วงหน้า" list={advances} setList={setAdvances} color="text-red-600" addLabel="เพิ่ม" priceMap={priceMaps.advance} />
+            <EditorItemList title="หักอื่นๆ" list={others} setList={setOthers} color="text-red-600" addLabel="เพิ่ม" priceMap={priceMaps.other_deduction} />
           </div>
         </div>
         <div className="px-5 py-3 border-t border-stone-200 bg-stone-50 flex justify-end gap-2">
