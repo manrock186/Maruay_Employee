@@ -179,7 +179,7 @@ function commissionPoolValue(pool) {
 function commissionForEmployee(pool, employeeId) {
   if (!pool) return 0;
   const e = (pool.entries || []).find((x) => x.employeeId === employeeId);
-  return e ? (Number(e.amount) || 0) : 0;
+  return e ? ((Number(e.amount) || 0) + (Number(e.amount2) || 0)) : 0;
 }
 
 // ============ ROOM RENT (ค่าห้องพนักงานจากมิเตอร์) ============
@@ -620,7 +620,7 @@ export default function App() {
       if (!profile.canManagePayroll) posRows.forEach((r) => { delete r.standardSalary; });
       setPositions(posRows);
       const empRows = fromDB(e.data || []);
-      if (!profile.canManagePayroll) empRows.forEach((r) => { delete r.baseSalary; delete r.holidayQuota; delete r.hasSocialSecurity; delete r.roomFee; });
+      if (!profile.canManagePayroll) empRows.forEach((r) => { delete r.baseSalary; delete r.holidayQuota; delete r.hasSocialSecurity; delete r.roomFee; delete r.salarySplit; delete r.commissionPct; delete r.probationSalary; });
       setEmployees(empRows);
       setProfiles(fromDB(up.data || []));
       setNotifications(fromDB(noti.data || []));
@@ -680,12 +680,16 @@ export default function App() {
       out.canManagePayroll = out.role === 'owner' || (out.role === 'business_manager' && !!out.canManagePayroll);
       return out;
     };
-    const handle = (setter) => (payload) => {
+    // ตัดข้อมูลตัวเงินสำหรับคนที่ไม่มีสิทธิ์เห็นเงินเดือน (กันรั่วผ่าน realtime — RLS เป็น row-level ไม่ตัดคอลัมน์)
+    const stripEmpPay = (r) => { if (!profile.canManagePayroll && r) { delete r.baseSalary; delete r.holidayQuota; delete r.hasSocialSecurity; delete r.roomFee; delete r.salarySplit; delete r.commissionPct; delete r.probationSalary; } return r; };
+    const stripPosPay = (r) => { if (!profile.canManagePayroll && r) { delete r.standardSalary; } return r; };
+    const handle = (setter, transform) => (payload) => {
       const { eventType, new: nv, old: ov } = payload;
+      const map = (row) => (transform ? transform(fromDB(row)) : fromDB(row));
       if (eventType === 'INSERT') {
-        setter((prev) => (prev.some((r) => r.id === nv.id) ? prev : [...prev, fromDB(nv)]));
+        setter((prev) => (prev.some((r) => r.id === nv.id) ? prev : [...prev, map(nv)]));
       } else if (eventType === 'UPDATE') {
-        setter((prev) => prev.map((r) => (r.id === nv.id ? fromDB(nv) : r)));
+        setter((prev) => prev.map((r) => (r.id === nv.id ? map(nv) : r)));
         // If current user's profile changed, re-enrich
         if (nv.id === session?.user?.id) setProfile(enrichProfile(nv));
       } else if (eventType === 'DELETE') {
@@ -696,8 +700,8 @@ export default function App() {
       .channel('app')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'businesses' }, handle(setBusinesses))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'zones' }, handle(setZones))
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'positions' }, handle(setPositions))
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'employees' }, handle(setEmployees))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'positions' }, handle(setPositions, stripPosPay))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'employees' }, handle(setEmployees, stripEmpPay))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'user_profiles' }, handle(setProfiles))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications' }, handle(setNotifications))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'notification_reads' }, (payload) => {
@@ -3744,6 +3748,7 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, op
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth() + 1);
   const [posProfit, setPosProfit] = useState('');
+  const [pool2Total, setPool2Total] = useState('');
   const [deductions, setDeductions] = useState([]);
   const [entries, setEntries] = useState({});
   const [note, setNote] = useState('');
@@ -3763,18 +3768,19 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, op
       if (cancelled) return;
       if (pool) {
         setPosProfit(pool.posProfit ?? '');
+        setPool2Total(pool.pool2Total ?? '');
         setDeductions(pool.deductions || []);
         setNote(pool.note || '');
         const em = {};
-        (pool.entries || []).forEach((e) => { em[e.employeeId] = { pct: e.pct ?? '', amount: e.amount ?? '' }; });
+        (pool.entries || []).forEach((e) => { em[e.employeeId] = { pct: e.pct ?? '', amount: e.amount ?? '', pct2: e.pct2 ?? '', amount2: e.amount2 ?? '' }; });
         // เติม pct ตั้งต้นให้คนที่ยังไม่มี entry
-        bizEmployees.forEach((e) => { if (!em[e.id] && e.commissionPct != null) em[e.id] = { pct: e.commissionPct, amount: '' }; });
+        bizEmployees.forEach((e) => { if (!em[e.id] && e.commissionPct != null) em[e.id] = { pct: e.commissionPct, amount: '', pct2: '', amount2: '' }; });
         setEntries(em);
         setSavedAt(pool.updatedAt || pool.createdAt || null);
       } else {
-        setPosProfit(''); setDeductions([]); setNote(''); setSavedAt(null);
+        setPosProfit(''); setPool2Total(''); setDeductions([]); setNote(''); setSavedAt(null);
         const em = {};
-        bizEmployees.forEach((e) => { if (e.commissionPct != null) em[e.id] = { pct: e.commissionPct, amount: '' }; });
+        bizEmployees.forEach((e) => { if (e.commissionPct != null) em[e.id] = { pct: e.commissionPct, amount: '', pct2: '', amount2: '' }; });
         setEntries(em);
       }
       setLoading(false);
@@ -3783,18 +3789,29 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, op
   }, [activeBusinessId, year, month]);
 
   const poolValue = (Number(posProfit) || 0) - deductions.reduce((s, d) => s + (Number(d.amount) || 0), 0);
+  const pool2Value = Number(pool2Total) || 0;
   const computedFor = (empId) => {
     const pct = Number(entries[empId]?.pct) || 0;
     return Math.round(poolValue * pct / 100 * 100) / 100;
   };
+  const computedFor2 = (empId) => {
+    const pct = Number(entries[empId]?.pct2) || 0;
+    return Math.round(pool2Value * pct / 100 * 100) / 100;
+  };
+  const rowTotal = (empId) => (Number(entries[empId]?.amount) || 0) + (Number(entries[empId]?.amount2) || 0);
   const setEntry = (empId, patch) => setEntries((prev) => ({ ...prev, [empId]: { ...prev[empId], ...patch } }));
   const fillFromPct = () => setEntries((prev) => {
     const next = { ...prev };
-    bizEmployees.forEach((e) => { const pct = Number(next[e.id]?.pct) || 0; next[e.id] = { ...next[e.id], amount: Math.round(poolValue * pct / 100 * 100) / 100 }; });
+    bizEmployees.forEach((e) => {
+      const pct = Number(next[e.id]?.pct) || 0;
+      const pct2 = Number(next[e.id]?.pct2) || 0;
+      next[e.id] = { ...next[e.id], amount: Math.round(poolValue * pct / 100 * 100) / 100, amount2: Math.round(pool2Value * pct2 / 100 * 100) / 100 };
+    });
     return next;
   });
-  const totalCommission = bizEmployees.reduce((s, e) => s + (Number(entries[e.id]?.amount) || 0), 0);
-  const totalPct = bizEmployees.reduce((s, e) => s + (Number(entries[e.id]?.pct) || 0), 0);
+  const totalCommission = bizEmployees.reduce((s, e) => s + rowTotal(e.id), 0);
+  const total1 = bizEmployees.reduce((s, e) => s + (Number(entries[e.id]?.amount) || 0), 0);
+  const total2 = bizEmployees.reduce((s, e) => s + (Number(entries[e.id]?.amount2) || 0), 0);
 
   const addDeduction = () => setDeductions((d) => [...d, { label: '', amount: '' }]);
   const setDed = (i, patch) => setDeductions((d) => d.map((x, idx) => idx === i ? { ...x, ...patch } : x));
@@ -3803,11 +3820,12 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, op
   const save = async () => {
     setSaving(true);
     const entryList = bizEmployees
-      .map((e) => ({ employeeId: e.id, pct: Number(entries[e.id]?.pct) || 0, amount: Number(entries[e.id]?.amount) || 0 }))
-      .filter((x) => x.amount !== 0 || x.pct !== 0);
+      .map((e) => ({ employeeId: e.id, pct: Number(entries[e.id]?.pct) || 0, amount: Number(entries[e.id]?.amount) || 0, pct2: Number(entries[e.id]?.pct2) || 0, amount2: Number(entries[e.id]?.amount2) || 0 }))
+      .filter((x) => x.amount !== 0 || x.pct !== 0 || x.amount2 !== 0 || x.pct2 !== 0);
     const ok = await ops.commission.upsert({
       businessId: activeBusinessId, periodYear: year, periodMonth: month,
       posProfit: Number(posProfit) || 0,
+      pool2Total: Number(pool2Total) || 0,
       deductions: deductions.map((d) => ({ label: d.label || '', amount: Number(d.amount) || 0 })),
       entries: entryList, note: note.trim() || null,
     });
@@ -3837,9 +3855,9 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, op
           {savedAt && <span className="text-xs text-stone-400">บันทึกล่าสุด {fmt(savedAt)}</span>}
         </div>
 
-        {/* กองกลางคอม */}
+        {/* กองกลางคอม ก้อนที่ 1 */}
         <div className="bg-white border border-stone-200 rounded-xl p-4 space-y-3">
-          <div className="flex items-center gap-2"><Banknote className="w-4 h-4 text-emerald-700" /><h3 className="text-sm font-medium text-stone-800">กองกลางคอมมิชชั่น</h3>
+          <div className="flex items-center gap-2"><Banknote className="w-4 h-4 text-emerald-700" /><h3 className="text-sm font-medium text-stone-800">ก้อนที่ 1 — คอมจากยอดขาย POS</h3>
             <span className="text-xs text-stone-400">(ตอนนี้กรอกเอง — อนาคตดึงจาก POS อัตโนมัติ)</span></div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <FormField label="กำไรรวมจาก POS (บาท)">
@@ -3863,8 +3881,23 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, op
             </div>
           </div>
           <div className="flex items-center justify-between pt-2 border-t border-stone-100">
-            <span className="text-sm font-medium text-stone-700">กองกลางคอม (กำไร − หัก)</span>
+            <span className="text-sm font-medium text-stone-700">กองกลางก้อนที่ 1 (กำไร − หัก)</span>
             <span className="text-lg font-semibold text-emerald-800">{fmtMoney(poolValue)} ฿</span>
+          </div>
+        </div>
+
+        {/* กองกลางคอม ก้อนที่ 2 */}
+        <div className="bg-white border border-stone-200 rounded-xl p-4 space-y-3">
+          <div className="flex items-center gap-2"><Banknote className="w-4 h-4 text-sky-700" /><h3 className="text-sm font-medium text-stone-800">ก้อนที่ 2 — คอมจากรายได้ร้านค้า (ตึกต่างๆ)</h3>
+            <span className="text-xs text-stone-400">(กรอกยอดรวมเอง — รายละเอียดที่มาค่อยทำทีหลัง)</span></div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <FormField label="ยอดรวมรายได้ร้านค้า (บาท)">
+              <input type="number" step="0.01" value={pool2Total} onChange={(e) => setPool2Total(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-sky-500/40" placeholder="เช่น 50000" />
+            </FormField>
+          </div>
+          <div className="flex items-center justify-between pt-2 border-t border-stone-100">
+            <span className="text-sm font-medium text-stone-700">กองกลางก้อนที่ 2</span>
+            <span className="text-lg font-semibold text-sky-800">{fmtMoney(pool2Value)} ฿</span>
           </div>
         </div>
 
@@ -3875,33 +3908,45 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, op
             <button onClick={fillFromPct} className="text-xs px-2.5 py-1.5 bg-stone-100 hover:bg-stone-200 rounded-lg text-stone-700 font-medium">เติมยอดจาก % (กองกลาง × %)</button>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead><tr className="text-xs text-stone-500 border-b border-stone-200">
-                <th className="text-left py-2 px-2">พนักงาน</th>
-                <th className="text-right py-2 px-2 w-24">%</th>
-                <th className="text-right py-2 px-2 w-32">คิดจาก %</th>
-                <th className="text-right py-2 px-2 w-36">คอมที่จ่าย (บาท)</th>
-              </tr></thead>
+            <table className="w-full text-sm min-w-[760px]">
+              <thead>
+                <tr className="text-xs text-stone-500 border-b border-stone-200">
+                  <th className="text-left py-2 px-2" rowSpan={2}>พนักงาน</th>
+                  <th className="text-center py-1 px-2 bg-emerald-50/50" colSpan={2}>ก้อนที่ 1 (POS)</th>
+                  <th className="text-center py-1 px-2 bg-sky-50/50" colSpan={2}>ก้อนที่ 2 (ร้านค้า)</th>
+                  <th className="text-right py-2 px-2 w-32" rowSpan={2}>รวมคอม</th>
+                </tr>
+                <tr className="text-xs text-stone-500 border-b border-stone-200">
+                  <th className="text-right py-1 px-2 w-20 bg-emerald-50/50">%</th>
+                  <th className="text-right py-1 px-2 w-28 bg-emerald-50/50">คอม 1</th>
+                  <th className="text-right py-1 px-2 w-20 bg-sky-50/50">%</th>
+                  <th className="text-right py-1 px-2 w-28 bg-sky-50/50">คอม 2</th>
+                </tr>
+              </thead>
               <tbody>
-                {bizEmployees.length === 0 && <tr><td colSpan={4} className="text-center text-stone-400 py-6">ไม่มีพนักงานในธุรกิจนี้</td></tr>}
+                {bizEmployees.length === 0 && <tr><td colSpan={6} className="text-center text-stone-400 py-6">ไม่มีพนักงานในธุรกิจนี้</td></tr>}
                 {bizEmployees.map((e) => (
                   <tr key={e.id} className="border-b border-stone-50">
                     <td className="py-1.5 px-2">{dispName(e)}</td>
-                    <td className="py-1.5 px-2"><input type="number" step="0.001" value={entries[e.id]?.pct ?? ''} onChange={(ev) => setEntry(e.id, { pct: ev.target.value })} className="w-full px-2 py-1.5 border border-stone-300 rounded text-right" placeholder="0" /></td>
-                    <td className="py-1.5 px-2 text-right text-stone-400">{fmtMoney(computedFor(e.id))}</td>
-                    <td className="py-1.5 px-2"><input type="number" step="0.01" value={entries[e.id]?.amount ?? ''} onChange={(ev) => setEntry(e.id, { amount: ev.target.value })} className="w-full px-2 py-1.5 border border-stone-300 rounded text-right font-medium text-emerald-800" placeholder="0" /></td>
+                    <td className="py-1.5 px-2 bg-emerald-50/30"><input type="number" step="0.001" value={entries[e.id]?.pct ?? ''} onChange={(ev) => setEntry(e.id, { pct: ev.target.value })} className="w-full px-2 py-1.5 border border-stone-300 rounded text-right" placeholder="0" title={`คิดจาก % = ${fmtMoney(computedFor(e.id))}`} /></td>
+                    <td className="py-1.5 px-2 bg-emerald-50/30"><input type="number" step="0.01" value={entries[e.id]?.amount ?? ''} onChange={(ev) => setEntry(e.id, { amount: ev.target.value })} className="w-full px-2 py-1.5 border border-stone-300 rounded text-right text-emerald-800" placeholder="0" /></td>
+                    <td className="py-1.5 px-2 bg-sky-50/30"><input type="number" step="0.001" value={entries[e.id]?.pct2 ?? ''} onChange={(ev) => setEntry(e.id, { pct2: ev.target.value })} className="w-full px-2 py-1.5 border border-stone-300 rounded text-right" placeholder="0" title={`คิดจาก % = ${fmtMoney(computedFor2(e.id))}`} /></td>
+                    <td className="py-1.5 px-2 bg-sky-50/30"><input type="number" step="0.01" value={entries[e.id]?.amount2 ?? ''} onChange={(ev) => setEntry(e.id, { amount2: ev.target.value })} className="w-full px-2 py-1.5 border border-stone-300 rounded text-right text-sky-800" placeholder="0" /></td>
+                    <td className="py-1.5 px-2 text-right font-semibold text-stone-800">{fmtMoney(rowTotal(e.id))}</td>
                   </tr>
                 ))}
               </tbody>
               <tfoot><tr className="font-semibold text-stone-800 border-t-2 border-stone-200">
                 <td className="py-2 px-2">รวม</td>
-                <td className="py-2 px-2 text-right">{(Math.round(totalPct * 1000) / 1000)}%</td>
                 <td className="py-2 px-2"></td>
-                <td className="py-2 px-2 text-right text-emerald-800">{fmtMoney(totalCommission)} ฿</td>
+                <td className="py-2 px-2 text-right text-emerald-800">{fmtMoney(total1)}</td>
+                <td className="py-2 px-2"></td>
+                <td className="py-2 px-2 text-right text-sky-800">{fmtMoney(total2)}</td>
+                <td className="py-2 px-2 text-right text-stone-900">{fmtMoney(totalCommission)} ฿</td>
               </tr></tfoot>
             </table>
           </div>
-          <p className="text-xs text-stone-500 mt-3">หมายเหตุ: ช่อง "คอมที่จ่าย" แก้เองได้เสมอ (เช่น บวกคอมค่าเช่าห้องเข้าไป) — ยอดนี้จะไปขึ้นช่องคอมฯ ในหน้าเงินเดือนงวดเดียวกันให้อัตโนมัติ</p>
+          <p className="text-xs text-stone-500 mt-3">ช่อง "คอม 1" และ "คอม 2" แก้เองได้เสมอ — <b>รวมคอม</b> (ก้อน 1 + ก้อน 2) จะไปขึ้นช่องคอมฯ ในหน้าเงินเดือนงวดเดียวกันอัตโนมัติ</p>
         </div>
 
         <FormField label="หมายเหตุงวดนี้">
@@ -3964,7 +4009,7 @@ function PayrollPage({ businesses, zones, positions, employees, activeBusinessId
     const m = {}; items.forEach((i) => { (m[i.payrollId] ||= []).push(i); }); return m;
   }, [items]);
   const commissionMap = useMemo(() => {
-    const m = {}; (commissionPool?.entries || []).forEach((e) => { m[e.employeeId] = Number(e.amount) || 0; }); return m;
+    const m = {}; (commissionPool?.entries || []).forEach((e) => { m[e.employeeId] = (Number(e.amount) || 0) + (Number(e.amount2) || 0); }); return m;
   }, [commissionPool]);
   const roomRentMap = useMemo(() => roomRentMapFromPool(roomRentPool), [roomRentPool]);
 
