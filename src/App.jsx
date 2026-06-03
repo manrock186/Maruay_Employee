@@ -1169,6 +1169,15 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-stone-50 lg:flex">
+      <style>{`
+        @media (max-width: 640px) {
+          /* กันมือถือ (iOS) ซูมอัตโนมัติเวลาแตะช่องกรอก: ต้องขนาด >= 16px */
+          input:not([type=checkbox]):not([type=radio]), select, textarea { font-size: 16px !important; }
+        }
+        /* เลื่อนลื่นแบบ momentum + ไม่ให้ scroll ทะลุพื้นหลัง */
+        .overflow-auto, .overflow-y-auto, .overflow-x-auto { -webkit-overflow-scrolling: touch; }
+        button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+      `}</style>
       {sidebarOpen && <div onClick={() => setSidebarOpen(false)} className="fixed inset-0 bg-stone-900/50 z-40 lg:hidden" />}
       <Sidebar
         view={view}
@@ -1182,23 +1191,6 @@ export default function App() {
         contractorPendingCount={expenseRequests.filter((r) => r.status === 'pending').length}
         open={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
-        notiBell={
-          <NotificationBell
-            notifications={notifications}
-            notiReads={notiReads}
-            userId={session.user.id}
-            canManagePayroll={profile.canManagePayroll}
-            canViewContractors={profile.isOwner || (Array.isArray(profile.allowedViews) && profile.allowedViews.includes('contractors'))}
-            ops={ops}
-            onJump={(n) => {
-              if (n.type === 'pending_user') setView('users');
-              else if (n.type === 'expense_pending' || n.type === 'expense_approved' || n.type === 'expense_rejected') { if (n.businessId) changeBusiness(n.businessId); setView('contractors'); }
-              else if (n.type === 'payroll_incomplete' || n.type === 'pending_raise') { if (n.businessId) changeBusiness(n.businessId); setView(n.type === 'payroll_incomplete' ? 'payroll' : 'employees'); }
-              else if (n.type === 'permit_expiry' || n.type === 'passport_expiry' || n.type === 'idcard_expiry' || n.type === 'birthday' || n.type === 'vacancy') { if (n.businessId) changeBusiness(n.businessId); setView('employees'); }
-              else { if (n.businessId) changeBusiness(n.businessId); setView('positions'); }
-            }}
-          />
-        }
       />
       <main className="flex-1 min-w-0 h-screen flex flex-col overflow-hidden">
         <div className="shrink-0 flex items-center gap-2 px-3 py-2 bg-white/95 backdrop-blur border-b border-stone-200 z-30">
@@ -1216,6 +1208,22 @@ export default function App() {
               </button>
             );
           })()}
+          <NotificationBell
+            variant="light"
+            notifications={notifications}
+            notiReads={notiReads}
+            userId={session.user.id}
+            canManagePayroll={profile.canManagePayroll}
+            canViewContractors={profile.isOwner || (Array.isArray(profile.allowedViews) && profile.allowedViews.includes('contractors'))}
+            ops={ops}
+            onJump={(n) => {
+              if (n.type === 'pending_user') setView('users');
+              else if (n.type === 'expense_pending' || n.type === 'expense_approved' || n.type === 'expense_rejected') { if (n.businessId) changeBusiness(n.businessId); setView('contractors'); }
+              else if (n.type === 'payroll_incomplete' || n.type === 'pending_raise') { if (n.businessId) changeBusiness(n.businessId); setView(n.type === 'payroll_incomplete' ? 'payroll' : 'employees'); }
+              else if (n.type === 'permit_expiry' || n.type === 'passport_expiry' || n.type === 'idcard_expiry' || n.type === 'birthday' || n.type === 'vacancy') { if (n.businessId) changeBusiness(n.businessId); setView('employees'); }
+              else { if (n.businessId) changeBusiness(n.businessId); setView('positions'); }
+            }}
+          />
         </div>
         <div className="flex-1 min-h-0">
         {view === 'dashboard' && (
@@ -1350,8 +1358,8 @@ export default function App() {
 function WhatsNewModal({ profile, lastSeen, onClose }) {
   const entries = visibleChangelog(profile);
   return (
-    <div className="fixed inset-0 bg-stone-900/50 backdrop-blur-sm z-[60] flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 bg-stone-900/50 backdrop-blur-sm z-[60] flex items-end sm:items-center justify-center sm:p-4" onClick={onClose}>
+      <div className="bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl w-full sm:max-w-md max-h-[85vh] sm:max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
         <div className="px-5 py-4 border-b border-stone-200 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <div className="w-9 h-9 rounded-lg bg-amber-100 flex items-center justify-center"><Sparkles className="w-5 h-5 text-amber-600" /></div>
@@ -1362,7 +1370,7 @@ function WhatsNewModal({ profile, lastSeen, onClose }) {
           </div>
           <button onClick={onClose} className="p-1 hover:bg-stone-100 rounded text-stone-500"><X className="w-5 h-5" /></button>
         </div>
-        <div className="p-5 overflow-auto space-y-4">
+        <div className="p-4 sm:p-5 overflow-auto overscroll-contain space-y-4">
           {entries.length === 0 && <div className="text-center text-stone-400 text-sm py-8">ยังไม่มีอัปเดตสำหรับสิทธิ์ของคุณ</div>}
           {entries.map((c) => {
             const isNew = c.v > lastSeen;
@@ -1534,7 +1542,7 @@ function timeAgo(ts) {
   if (s < 86400) return `${Math.floor(s / 3600)} ชม.ที่แล้ว`;
   return `${Math.floor(s / 86400)} วันที่แล้ว`;
 }
-function NotificationBell({ notifications, notiReads, userId, canManagePayroll, canViewContractors, ops, onJump }) {
+function NotificationBell({ notifications, notiReads, userId, canManagePayroll, canViewContractors, ops, onJump, variant = 'dark' }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   const readSet = useMemo(() => new Set(notiReads.filter((r) => r.userId === userId).map((r) => r.notificationId)), [notiReads, userId]);
@@ -1564,14 +1572,14 @@ function NotificationBell({ notifications, notiReads, userId, canManagePayroll, 
 
   return (
     <div className="relative" ref={ref}>
-      <button onClick={() => setOpen((o) => !o)} className="relative p-2 rounded-lg hover:bg-emerald-900 text-emerald-100/90 transition-colors" title="การแจ้งเตือน">
+      <button onClick={() => setOpen((o) => !o)} className={`relative p-2 rounded-lg transition-colors ${variant === 'light' ? 'hover:bg-stone-100 text-stone-600' : 'hover:bg-emerald-900 text-emerald-100/90'}`} title="การแจ้งเตือน">
         {unreadCount > 0 ? <BellRing className="w-5 h-5" /> : <Bell className="w-5 h-5" />}
         {unreadCount > 0 && (
           <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">{unreadCount > 99 ? '99+' : unreadCount}</span>
         )}
       </button>
       {open && (
-        <div className="absolute left-0 top-full mt-2 w-[340px] max-w-[90vw] bg-white rounded-xl shadow-2xl border border-stone-200 z-[70] overflow-hidden">
+        <div className={`absolute ${variant === 'light' ? 'right-0' : 'left-0'} top-full mt-2 w-[340px] max-w-[90vw] bg-white rounded-xl shadow-2xl border border-stone-200 z-[70] overflow-hidden`}>
           <div className="px-4 py-3 border-b border-stone-200 flex items-center justify-between bg-stone-50">
             <div className="font-semibold text-stone-800 text-sm">การแจ้งเตือน {unreadCount > 0 && <span className="text-red-500">({unreadCount})</span>}</div>
             {unreadCount > 0 && (
@@ -1786,12 +1794,12 @@ function Sidebar({ view, setView, profile, businesses, zones, activeBusinessId, 
 // ============ PAGE HEADER ============
 function PageHeader({ title, subtitle, children }) {
   return (
-    <div className="bg-white border-b border-stone-200 px-8 py-5 flex items-center justify-between">
-      <div>
-        <h1 className="text-3xl font-bold text-stone-800 tracking-tight">{title}</h1>
-        {subtitle && <p className="text-[15px] text-stone-500 mt-1">{subtitle}</p>}
+    <div className="bg-white border-b border-stone-200 px-4 sm:px-8 py-4 sm:py-5 flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+      <div className="min-w-0">
+        <h1 className="text-xl sm:text-3xl font-bold text-stone-800 tracking-tight truncate">{title}</h1>
+        {subtitle && <p className="text-[13px] sm:text-[15px] text-stone-500 mt-0.5 sm:mt-1">{subtitle}</p>}
       </div>
-      <div className="flex items-center gap-2">{children}</div>
+      <div className="flex items-center gap-2 flex-shrink-0">{children}</div>
     </div>
   );
 }
@@ -1904,7 +1912,7 @@ function Dashboard({ profile, businesses, zones, employees, positions, activeBus
   return (
     <div className="h-full overflow-auto">
       <PageHeader title={`สวัสดี, ${profile.name || 'ผู้ใช้'}`} subtitle="ภาพรวมข้อมูลในระบบ" />
-      <div className="p-8">
+      <div className="p-4 md:p-8">
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
           {stats.map((s) => {
             const Icon = s.icon;
@@ -2072,7 +2080,7 @@ function BusinessesPage({ businesses, zones, employees, positions, profile, ops,
           </button>
         )}
       </PageHeader>
-      <div className="p-8">
+      <div className="p-4 md:p-8">
         {businesses.length === 0 ? (
           <EmptyState icon={Building2} title="ยังไม่มีธุรกิจ" description={isOwner ? 'เริ่มต้นด้วยการเพิ่มธุรกิจแรก' : 'ยังไม่มีธุรกิจที่คุณดูแล'} action={isOwner ? <button onClick={() => { setEditingBiz({}); setShowBizModal(true); }} className="px-4 py-2 bg-emerald-900 text-white rounded-lg text-sm font-medium">เพิ่มธุรกิจ</button> : null} />
         ) : (
@@ -2306,7 +2314,7 @@ function PositionsPage({ businesses, positions, employees, profile, activeBusine
   };
 
   if (!activeBusinessId) return (
-    <div className="h-full overflow-auto"><PageHeader title="ตำแหน่ง" /><div className="p-8"><EmptyState icon={Award} title="เลือกธุรกิจที่ sidebar" description="ตำแหน่งเป็นข้อมูลเฉพาะของแต่ละธุรกิจ — ต้องเลือกธุรกิจที่ sidebar ก่อน" /></div></div>
+    <div className="h-full overflow-auto"><PageHeader title="ตำแหน่ง" /><div className="p-4 md:p-8"><EmptyState icon={Award} title="เลือกธุรกิจที่ sidebar" description="ตำแหน่งเป็นข้อมูลเฉพาะของแต่ละธุรกิจ — ต้องเลือกธุรกิจที่ sidebar ก่อน" /></div></div>
   );
   const roots = bizPositions.filter((p) => !p.parentId);
   const shortages = bizPositions
@@ -2320,7 +2328,7 @@ function PositionsPage({ businesses, positions, employees, profile, activeBusine
       <PageHeader title="ตำแหน่ง" subtitle={`ธุรกิจ: ${businesses.find((b) => b.id === activeBusinessId)?.name}`}>
         {canManageBiz && <button onClick={() => { setEditing({}); setShowModal(true); }} className="flex items-center gap-2 px-4 py-2 bg-emerald-900 hover:bg-emerald-800 text-white rounded-lg text-sm font-medium"><Plus className="w-4 h-4" /> เพิ่มตำแหน่ง</button>}
       </PageHeader>
-      <div className="p-8">
+      <div className="p-4 md:p-8">
         {bizPositions.length === 0 ? (
           <EmptyState icon={Award} title="ยังไม่มีตำแหน่ง" description="เพิ่มตำแหน่งและกำหนดสายบังคับบัญชา (เช่น ผู้จัดการ → หัวหน้าโซน → พนักงาน)" />
         ) : (
@@ -2573,7 +2581,7 @@ function EmployeesPage({ businesses, zones, positions, employees, profile, activ
   const allMode = (isOwner || isBM) && !activeBusinessId && (isOwner || (profile.businessIds || []).length > 1);
 
   if (isOwner && businesses.length === 0) return (
-    <div className="h-full overflow-auto"><PageHeader title="พนักงาน" /><div className="p-8"><EmptyState icon={Users} title="ยังไม่มีธุรกิจ" description="สร้างธุรกิจก่อนที่หน้า 'ธุรกิจและโซน'" /></div></div>
+    <div className="h-full overflow-auto"><PageHeader title="พนักงาน" /><div className="p-4 md:p-8"><EmptyState icon={Users} title="ยังไม่มีธุรกิจ" description="สร้างธุรกิจก่อนที่หน้า 'ธุรกิจและโซน'" /></div></div>
   );
 
   return (
@@ -2583,7 +2591,7 @@ function EmployeesPage({ businesses, zones, positions, employees, profile, activ
           <button onClick={() => { setEditing({}); setShowModal(true); }} className="flex items-center gap-2 px-4 py-2 bg-emerald-900 hover:bg-emerald-800 text-white rounded-lg text-sm font-medium"><Plus className="w-4 h-4" /> เพิ่มพนักงาน</button>
         )}
       </PageHeader>
-      <div className="p-8">
+      <div className="p-4 md:p-8">
         {allMode && (
           <div className="mb-4 flex items-start gap-2 px-4 py-3 bg-sky-50 border border-sky-200 rounded-lg text-sm text-sky-900">
             <Building2 className="w-4 h-4 mt-0.5 flex-shrink-0" />
@@ -2715,13 +2723,13 @@ function ResignModal({ employee, onClose, onConfirm }) {
   };
 
   return (
-    <div className="fixed inset-0 bg-stone-900/50 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md flex flex-col">
-        <div className="px-6 py-4 border-b border-stone-200 flex items-center justify-between">
+    <div className="fixed inset-0 bg-stone-900/50 backdrop-blur-sm z-[60] flex items-end sm:items-center justify-center sm:p-4">
+      <div className="bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl w-full sm:max-w-md flex flex-col max-h-[92vh] sm:max-h-[90vh]">
+        <div className="px-4 sm:px-6 py-4 border-b border-stone-200 flex items-center justify-between flex-shrink-0">
           <h2 className="font-semibold text-stone-800">บันทึกการลาออก</h2>
-          <button onClick={onClose} className="p-1 hover:bg-stone-100 rounded text-stone-500"><X className="w-5 h-5" /></button>
+          <button onClick={onClose} className="p-2 -mr-1 hover:bg-stone-100 rounded-lg text-stone-500"><X className="w-5 h-5" /></button>
         </div>
-        <div className="p-6 space-y-4">
+        <div className="p-4 sm:p-6 space-y-4 overflow-auto overscroll-contain">
           <div className="flex items-center gap-3 p-3 bg-stone-50 rounded-lg">
             <Avatar photo={employee.photo} name={dispName(employee)} size={40} />
             <div>
@@ -2807,13 +2815,13 @@ function SalaryRaiseModal({ employee, ops, onClose, onSaved }) {
   };
 
   return (
-    <div className="fixed inset-0 bg-stone-900/50 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md flex flex-col max-h-[90vh]">
-        <div className="px-6 py-4 border-b border-stone-200 flex items-center justify-between">
+    <div className="fixed inset-0 bg-stone-900/50 backdrop-blur-sm z-[60] flex items-end sm:items-center justify-center sm:p-4">
+      <div className="bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl w-full sm:max-w-md flex flex-col max-h-[92vh] sm:max-h-[90vh]">
+        <div className="px-4 sm:px-6 py-4 border-b border-stone-200 flex items-center justify-between flex-shrink-0">
           <h2 className="font-semibold text-stone-800">ปรับเงินเดือน</h2>
-          <button onClick={onClose} className="p-1 hover:bg-stone-100 rounded text-stone-500"><X className="w-5 h-5" /></button>
+          <button onClick={onClose} className="p-2 -mr-1 hover:bg-stone-100 rounded-lg text-stone-500"><X className="w-5 h-5" /></button>
         </div>
-        <div className="p-6 overflow-auto space-y-4">
+        <div className="p-4 sm:p-6 overflow-auto overscroll-contain space-y-4">
           <div className="flex items-center gap-3 p-3 bg-stone-50 rounded-lg">
             <Avatar photo={employee.photo} name={dispName(employee)} size={40} />
             <div>
@@ -3737,12 +3745,12 @@ function OrgChartPage({ businesses, zones, positions, employees, profile, active
   }, [employees, profile, activeBusinessId, isOwner, isBM, isZM, isViewer]);
   const roots = visible.filter((e) => !e.managerId || !visible.find((x) => x.id === e.managerId));
 
-  if ((isOwner || isBM || isViewer) && !activeBusinessId) return <div className="h-full overflow-auto"><PageHeader title="แผนผังองค์กร" /><div className="p-8"><EmptyState icon={Network} title="เลือกธุรกิจที่ sidebar" description="แผนผังองค์กรเป็นข้อมูลเฉพาะของแต่ละธุรกิจ — ต้องเลือกธุรกิจที่ sidebar ก่อน" /></div></div>;
+  if ((isOwner || isBM || isViewer) && !activeBusinessId) return <div className="h-full overflow-auto"><PageHeader title="แผนผังองค์กร" /><div className="p-4 md:p-8"><EmptyState icon={Network} title="เลือกธุรกิจที่ sidebar" description="แผนผังองค์กรเป็นข้อมูลเฉพาะของแต่ละธุรกิจ — ต้องเลือกธุรกิจที่ sidebar ก่อน" /></div></div>;
 
   return (
     <div className="h-full overflow-auto">
       <PageHeader title="แผนผังองค์กร" subtitle="สายบังคับบัญชาตามที่กำหนด" />
-      <div className="p-8">
+      <div className="p-4 md:p-8">
         {visible.length === 0 ? <EmptyState icon={Network} title="ยังไม่มีพนักงาน" /> : (
           <div className="bg-white rounded-xl border border-stone-200 p-6 overflow-auto">
             <EmployeeTree employees={roots} allEmployees={visible} zones={zones} positions={positions} businesses={businesses} activeBusinessId={activeBusinessId} level={0} />
@@ -3859,7 +3867,7 @@ function RoomRentPage({ businesses, employees, activeBusinessId, ops }) {
   const cellInput = "w-full px-2 py-1.5 border border-stone-200 rounded text-right focus:outline-none focus:ring-1 focus:ring-emerald-500/40";
 
   if (!activeBusinessId) return (
-    <div className="h-full overflow-auto"><PageHeader title="ค่าห้องพนักงาน" /><div className="p-8"><EmptyState icon={KeyRound} title="เลือกธุรกิจที่ sidebar" description="ค่าห้องคิดแยกตามธุรกิจ/ตึก — เลือกธุรกิจก่อน" /></div></div>
+    <div className="h-full overflow-auto"><PageHeader title="ค่าห้องพนักงาน" /><div className="p-4 md:p-8"><EmptyState icon={KeyRound} title="เลือกธุรกิจที่ sidebar" description="ค่าห้องคิดแยกตามธุรกิจ/ตึก — เลือกธุรกิจก่อน" /></div></div>
   );
 
   return (
@@ -4076,7 +4084,7 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, op
   const yearOptions = [now.getFullYear(), now.getFullYear() - 1, now.getFullYear() - 2];
 
   if (!activeBusinessId) return (
-    <div className="h-full overflow-auto"><PageHeader title="คอมมิชชั่น" /><div className="p-8"><EmptyState icon={Percent} title="เลือกธุรกิจที่ sidebar" description="คอมมิชชั่นคิดแยกตามธุรกิจ — เลือกธุรกิจก่อน" /></div></div>
+    <div className="h-full overflow-auto"><PageHeader title="คอมมิชชั่น" /><div className="p-4 md:p-8"><EmptyState icon={Percent} title="เลือกธุรกิจที่ sidebar" description="คอมมิชชั่นคิดแยกตามธุรกิจ — เลือกธุรกิจก่อน" /></div></div>
   );
 
   return (
@@ -4265,7 +4273,7 @@ function PayrollPage({ businesses, zones, positions, employees, activeBusinessId
   const finalizedCount = payrolls.filter((p) => p.status === 'finalized').length;
 
   if (!activeBusinessId) return (
-    <div className="h-full overflow-auto"><PageHeader title="เงินเดือน" /><div className="p-8"><EmptyState icon={Wallet} title="เลือกธุรกิจที่ sidebar" description="เงินเดือนคำนวณแยกตามธุรกิจ — เลือกธุรกิจก่อน" /></div></div>
+    <div className="h-full overflow-auto"><PageHeader title="เงินเดือน" /><div className="p-4 md:p-8"><EmptyState icon={Wallet} title="เลือกธุรกิจที่ sidebar" description="เงินเดือนคำนวณแยกตามธุรกิจ — เลือกธุรกิจก่อน" /></div></div>
   );
 
   const bizName = businesses.find((b) => b.id === activeBusinessId)?.name;
@@ -4432,8 +4440,8 @@ function PrintSlipsModal({ business, bizEmployees, payrollByEmp, itemsByPayroll,
   };
 
   return (
-    <div className="fixed inset-0 bg-stone-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[88vh] flex flex-col">
+    <div className="fixed inset-0 bg-stone-900/50 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center sm:p-4">
+      <div className="bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl w-full sm:max-w-lg max-h-[88vh] sm:max-h-[88vh] flex flex-col">
         <div className="px-5 py-4 border-b border-stone-200 flex items-center justify-between">
           <div>
             <div className="font-semibold text-stone-800">พิมพ์สลิปเงินเดือน</div>
@@ -4582,8 +4590,8 @@ function PayrollEditor({ employee, existing, existingItems, year, month, busines
   );
 
   return (
-    <div className="fixed inset-0 bg-stone-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[92vh] flex flex-col">
+    <div className="fixed inset-0 bg-stone-900/50 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center sm:p-4">
+      <div className="bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl w-full sm:max-w-2xl max-h-[92vh] sm:max-h-[92vh] flex flex-col">
         <div className="px-6 py-4 border-b border-stone-200 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <Avatar photo={employee.photo} name={dispName(employee)} size={40} />
@@ -4595,7 +4603,7 @@ function PayrollEditor({ employee, existing, existingItems, year, month, busines
           <button onClick={onClose} className="p-1 hover:bg-stone-100 rounded text-stone-500"><X className="w-5 h-5" /></button>
         </div>
 
-        <div className="p-6 overflow-auto space-y-5">
+        <div className="p-4 sm:p-6 overflow-auto overscroll-contain space-y-5">
           {locked && (
             <div className="flex items-center justify-between gap-2 px-3 py-2 bg-emerald-50 border border-emerald-200 rounded-lg text-sm text-emerald-800">
               <div className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 mt-0.5" /><div>งวดนี้ปิดแล้ว — กด "แก้ไขงวดนี้" ถ้าคิดผิด/ต้องการแก้</div></div>
@@ -4941,13 +4949,13 @@ function PayrollItemsModal({ employee, draft, pastBonusLabels, onApply, onClose 
   };
 
   return (
-    <div className="fixed inset-0 bg-stone-900/50 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[85vh] flex flex-col">
+    <div className="fixed inset-0 bg-stone-900/50 backdrop-blur-sm z-[60] flex items-end sm:items-center justify-center sm:p-4">
+      <div className="bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl w-full sm:max-w-lg max-h-[85vh] sm:max-h-[85vh] flex flex-col">
         <div className="px-5 py-3 border-b border-stone-200 flex items-center justify-between">
           <div className="font-semibold text-stone-800 text-sm">{dispName(employee)} — งานเสริม/เบิก/หัก</div>
           <button onClick={onClose} className="p-1 hover:bg-stone-100 rounded text-stone-500"><X className="w-5 h-5" /></button>
         </div>
-        <div className="p-5 overflow-auto space-y-4">
+        <div className="p-4 sm:p-5 overflow-auto overscroll-contain space-y-4">
           <div className="bg-emerald-50/50 rounded-xl p-3">
             {pastBonusLabels && pastBonusLabels.length > 0 && (
               <div className="mb-2">
@@ -5915,13 +5923,13 @@ function SettingsPage({ expiryWarnMonths, birthdayNotify, birthdayWarnDays, ops,
 // ============ REUSABLE UI ============
 function Modal({ title, children, onClose, wide }) {
   return (
-    <div className="fixed inset-0 bg-stone-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className={`bg-white rounded-2xl shadow-2xl w-full ${wide ? 'max-w-3xl' : 'max-w-md'} max-h-[90vh] flex flex-col`}>
-        <div className="px-6 py-4 border-b border-stone-200 flex items-center justify-between">
-          <h2 className="font-semibold text-stone-800">{title}</h2>
-          <button onClick={onClose} className="p-1 hover:bg-stone-100 rounded text-stone-500"><X className="w-5 h-5" /></button>
+    <div className="fixed inset-0 bg-stone-900/50 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center sm:p-4">
+      <div className={`bg-white shadow-2xl w-full ${wide ? 'sm:max-w-3xl' : 'sm:max-w-md'} max-h-[92vh] sm:max-h-[90vh] flex flex-col rounded-t-2xl sm:rounded-2xl`}>
+        <div className="px-4 sm:px-6 py-4 border-b border-stone-200 flex items-center justify-between flex-shrink-0">
+          <h2 className="font-semibold text-stone-800 truncate pr-2">{title}</h2>
+          <button onClick={onClose} className="p-2 -mr-1 hover:bg-stone-100 rounded-lg text-stone-500 flex-shrink-0"><X className="w-5 h-5" /></button>
         </div>
-        <div className="p-6 overflow-auto">{children}</div>
+        <div className="p-4 sm:p-6 overflow-auto overscroll-contain">{children}</div>
       </div>
     </div>
   );
@@ -5933,9 +5941,9 @@ function FormField({ label, required, children }) {
 
 function FormActions({ onCancel, onSubmit, submitLabel }) {
   return (
-    <div className="flex justify-end gap-2 pt-2">
-      <button onClick={onCancel} className="px-4 py-2 text-stone-700 hover:bg-stone-100 rounded-lg text-sm font-medium">ยกเลิก</button>
-      <button onClick={onSubmit} className="flex items-center gap-2 px-4 py-2 bg-emerald-900 hover:bg-emerald-800 text-white rounded-lg text-sm font-medium"><Save className="w-4 h-4" /> {submitLabel || 'บันทึก'}</button>
+    <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 pt-2">
+      <button onClick={onCancel} className="px-4 py-2.5 text-stone-700 hover:bg-stone-100 rounded-lg text-sm font-medium border border-stone-200 sm:border-0">ยกเลิก</button>
+      <button onClick={onSubmit} className="flex items-center justify-center gap-2 px-4 py-2.5 bg-emerald-900 hover:bg-emerald-800 text-white rounded-lg text-sm font-medium"><Save className="w-4 h-4" /> {submitLabel || 'บันทึก'}</button>
     </div>
   );
 }
