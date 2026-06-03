@@ -4893,7 +4893,7 @@ function PayrollQuickEntry({ bizEmployees, positions, payrollByEmp, itemsByPayro
                   <input type="number" step="0.01" inputMode="decimal" disabled={locked} value={quickAdvance(emp.id)} onChange={(e) => setQuickAdvance(emp.id, e.target.value)} onFocus={(e) => e.target.select()} className="w-28 px-2 py-1.5 text-sm text-right border border-stone-200 rounded focus:outline-none focus:ring-2 focus:ring-emerald-500/40 disabled:bg-stone-100" />
                 </div>
                 {D({ label: 'ค่าห้องพัก', value: d.roomFee, hint: 'แก้ที่หน้าค่าห้อง' })}
-                {F({ label: 'รับผ่านบัญชีแล้ว', field: 'paidViaCompany' })}
+                {F({ label: 'รับจากวีเอสจง', field: 'paidViaCompany' })}
                 {D({ label: 'คอมมิชชั่น', value: d.commission, hint: 'แก้ที่หน้าคอมมิชชั่น' })}
                 <button onClick={() => setItemsEmp(emp)} disabled={locked} className="w-full mt-2 px-3 py-2 border border-stone-200 rounded-lg text-sm text-stone-600 hover:bg-stone-50 flex items-center justify-center gap-1.5 disabled:opacity-50">
                   <Plus className="w-3.5 h-3.5" />งานเสริม/เบิก/หักอื่นๆ {itemCount(emp.id) > 0 && <span className="px-1.5 py-0.5 bg-emerald-100 text-emerald-700 rounded text-xs">{itemCount(emp.id)}</span>}
@@ -4917,7 +4917,7 @@ function PayrollQuickEntry({ bizEmployees, positions, payrollByEmp, itemsByPayro
                 <th className="text-center px-2 py-2.5" title="ค่าบวก = วันหยุดที่ใช้ (เกินโควต้าถูกหัก) / ค่าลบ = ทำงานวันหยุด เช่น -1 = ทำงานวันหยุด 1 วัน ได้เพิ่ม 1 แรง">หยุด</th>
                 <th className="text-right px-2 py-2.5">เบิก</th>
                 <th className="text-right px-2 py-2.5">ค่าห้อง</th>
-                <th className="text-right px-2 py-2.5">รับแล้ว</th>
+                <th className="text-right px-2 py-2.5">รับจากวีเอสจง</th>
                 <th className="text-right px-2 py-2.5">คอม</th>
                 <th className="text-center px-2 py-2.5">รายการ</th>
                 <th className="text-right px-3 py-2.5 sticky right-0 bg-stone-50 z-10">สุทธิ</th>
@@ -4940,9 +4940,9 @@ function PayrollQuickEntry({ bizEmployees, positions, payrollByEmp, itemsByPayro
                     </td>
                     <td className="px-2 py-2 text-right text-stone-500 whitespace-nowrap">{fmtMoney(d.baseSalary)}</td>
                     <td className="px-2 py-2 text-center">{Cell({ empId: emp.id, field: 'holidayDaysTaken', col: 'holidayDaysTaken', rowIdx, locked, w: 'w-16' })}</td>
-                    <td className="px-2 py-2"><input type="number" step="0.01" inputMode="decimal" data-cell={`advance-${rowIdx}`} disabled={locked} value={quickAdvance(emp.id)} onChange={(e) => setQuickAdvance(emp.id, e.target.value)} onKeyDown={(e) => onKeyNav(e, 'advance', rowIdx)} onFocus={(e) => e.target.select()} className="w-20 px-2 py-1.5 text-sm text-right border border-stone-200 rounded focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500 disabled:bg-stone-100 disabled:text-stone-400" /></td>
+                    <td className="px-2 py-2 text-center"><input type="number" step="0.01" inputMode="decimal" data-cell={`advance-${rowIdx}`} disabled={locked} value={quickAdvance(emp.id)} onChange={(e) => setQuickAdvance(emp.id, e.target.value)} onKeyDown={(e) => onKeyNav(e, 'advance', rowIdx)} onFocus={(e) => e.target.select()} className="w-20 px-2 py-1.5 text-sm text-right border border-stone-200 rounded focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500 disabled:bg-stone-100 disabled:text-stone-400" /></td>
                     <td className="px-2 py-2 text-right text-stone-500 whitespace-nowrap" title="แก้ที่หน้าค่าห้อง">{Number(d.roomFee) ? fmtMoney(d.roomFee) : <span className="text-stone-300">—</span>}</td>
-                    <td className="px-2 py-2">{Cell({ empId: emp.id, field: 'paidViaCompany', col: 'paidViaCompany', rowIdx, locked })}</td>
+                    <td className="px-2 py-2 text-center">{Cell({ empId: emp.id, field: 'paidViaCompany', col: 'paidViaCompany', rowIdx, locked })}</td>
                     <td className="px-2 py-2 text-right text-stone-500 whitespace-nowrap" title="แก้ที่หน้าคอมมิชชั่น">{Number(d.commission) ? fmtMoney(d.commission) : <span className="text-stone-300">—</span>}</td>
                     <td className="px-2 py-2 text-center">
                       <button onClick={() => setItemsEmp(emp)} disabled={locked} className="inline-flex items-center gap-1 px-2 py-1.5 border border-stone-200 rounded hover:bg-stone-50 text-stone-600 disabled:opacity-50">
