@@ -589,6 +589,7 @@ export default function App() {
         p.isViewer = p.role === 'viewer';
         p.canWrite = ['owner', 'business_manager', 'zone_manager'].includes(p.role);
         p.canManagePayroll = p.role === 'owner' || (p.role === 'business_manager' && !!p.canManagePayroll);
+        p.allowedViews = Array.isArray(p.allowedViews) ? p.allowedViews : null;
       }
       setProfile(p);
       if (p?.theme) applyTheme(p.theme);
@@ -597,6 +598,15 @@ export default function App() {
 
   // ---- APPLY THEME เมื่อค่าธีมเปลี่ยน ----
   useEffect(() => { applyTheme(profile?.theme); }, [profile?.theme]);
+
+  // ---- กันค้างอยู่ในเมนูที่ถูกปิดสิทธิ์ (เช่นเจ้าของปิดสิทธิ์ระหว่างใช้งาน) ----
+  useEffect(() => {
+    if (!profile || profile.isOwner || profile.role === 'pending') return;
+    if (!Array.isArray(profile.allowedViews)) return;
+    const allowed = new Set([...profile.allowedViews, 'dashboard']);
+    const gated = ['businesses', 'positions', 'employees', 'orgchart', 'payroll', 'commission', 'roomrent'];
+    if (gated.includes(view) && !allowed.has(view)) setView('dashboard');
+  }, [view, profile]);
 
   // ---- LOAD ALL DATA + REALTIME ----
   useEffect(() => {
@@ -689,6 +699,7 @@ export default function App() {
       out.isViewer = out.role === 'viewer';
       out.canWrite = ['owner', 'business_manager', 'zone_manager'].includes(out.role);
       out.canManagePayroll = out.role === 'owner' || (out.role === 'business_manager' && !!out.canManagePayroll);
+      out.allowedViews = Array.isArray(out.allowedViews) ? out.allowedViews : null;
       return out;
     };
     // ตัดข้อมูลตัวเงินสำหรับคนที่ไม่มีสิทธิ์เห็นเงินเดือน (กันรั่วผ่าน realtime — RLS เป็น row-level ไม่ตัดคอลัมน์)
@@ -1000,8 +1011,8 @@ export default function App() {
       },
     },
     contractor: {
-      add: (d) => insertRow('contractors', d),
-      update: (id, d) => updateRow('contractors', id, d),
+      add: async (d) => { const row = await insertRow('contractors', d); if (row) setContractors((prev) => [row, ...prev]); return row; },
+      update: async (id, d) => { const ok = await updateRow('contractors', id, d); if (ok) setContractors((prev) => prev.map((c) => (c.id === id ? { ...c, ...d } : c))); return ok; },
       del: async (id) => {
         // ลบไฟล์เอกสารของทุก visit ที่ผูกกับช่างคนนี้ก่อน
         const myVisits = contractorVisits.filter((v) => v.contractorId === id);
@@ -1009,17 +1020,20 @@ export default function App() {
         await Promise.all(allDocs.map((p) => deleteDocument(p)));
         const { error } = await supabase.from('contractors').delete().eq('id', id);
         if (error) { alert('ลบไม่สำเร็จ: ' + error.message); return false; }
+        setContractors((prev) => prev.filter((c) => c.id !== id));
+        setContractorVisits((prev) => prev.filter((v) => v.contractorId !== id));
         return true;
       },
     },
     contractorVisit: {
-      add: (d) => insertRow('contractor_visits', d),
-      update: (id, d) => updateRow('contractor_visits', id, d),
+      add: async (d) => { const row = await insertRow('contractor_visits', d); if (row) setContractorVisits((prev) => [row, ...prev]); return row; },
+      update: async (id, d) => { const ok = await updateRow('contractor_visits', id, d); if (ok) setContractorVisits((prev) => prev.map((v) => (v.id === id ? { ...v, ...d } : v))); return ok; },
       del: async (id) => {
         const v = contractorVisits.find((x) => x.id === id);
         await Promise.all((v?.docs || []).map((p) => deleteDocument(p)));
         const { error } = await supabase.from('contractor_visits').delete().eq('id', id);
         if (error) { alert('ลบไม่สำเร็จ: ' + error.message); return false; }
+        setContractorVisits((prev) => prev.filter((x) => x.id !== id));
         return true;
       },
     },
@@ -1444,15 +1458,18 @@ function Sidebar({ view, setView, profile, businesses, zones, activeBusinessId, 
   const canManageBiz = isOwner || isBM;
   const roleLabel = isOwner ? 'เจ้าของระบบ' : isBM ? 'หัวหน้าธุรกิจ' : isZM ? 'หัวหน้าโซน' : isViewer ? 'ผู้ดู' : 'รออนุมัติ';
   const RoleIcon = isOwner ? Crown : isViewer ? Eye : User;
+  // สิทธิ์เข้าถึงเมนูรายคน (ทับ role เดิม — จำกัดได้ ไม่เกินสิทธิ์ role) — เจ้าของไม่ถูกจำกัด, "ภาพรวม" เข้าได้เสมอ
+  const allowedViewSet = (!isOwner && Array.isArray(profile.allowedViews)) ? new Set([...profile.allowedViews, 'dashboard']) : null;
+  const navAllowed = (id) => (allowedViewSet ? allowedViewSet.has(id) : true);
   const NAV_ITEMS = [
     { id: 'dashboard', label: 'ภาพรวม', icon: Home },
-    { id: 'businesses', label: 'ธุรกิจและโซน', icon: Building2, show: canManageBiz },
-    { id: 'positions', label: 'ตำแหน่ง', icon: Award },
-    { id: 'employees', label: 'พนักงาน', icon: Users },
-    { id: 'orgchart', label: 'แผนผังองค์กร', icon: Network },
-    { id: 'payroll', label: 'เงินเดือน', icon: Wallet, show: profile.canManagePayroll },
-    { id: 'commission', label: 'คอมมิชชั่น', icon: Percent, show: profile.canManagePayroll },
-    { id: 'roomrent', label: 'ค่าห้องพนักงาน', icon: KeyRound, show: profile.canManagePayroll },
+    { id: 'businesses', label: 'ธุรกิจและโซน', icon: Building2, show: canManageBiz && navAllowed('businesses') },
+    { id: 'positions', label: 'ตำแหน่ง', icon: Award, show: navAllowed('positions') },
+    { id: 'employees', label: 'พนักงาน', icon: Users, show: navAllowed('employees') },
+    { id: 'orgchart', label: 'แผนผังองค์กร', icon: Network, show: navAllowed('orgchart') },
+    { id: 'payroll', label: 'เงินเดือน', icon: Wallet, show: profile.canManagePayroll && navAllowed('payroll') },
+    { id: 'commission', label: 'คอมมิชชั่น', icon: Percent, show: profile.canManagePayroll && navAllowed('commission') },
+    { id: 'roomrent', label: 'ค่าห้องพนักงาน', icon: KeyRound, show: profile.canManagePayroll && navAllowed('roomrent') },
     { id: 'users', label: 'ผู้ใช้ระบบ', icon: Shield, show: isOwner },
     { id: 'contractors', label: 'ช่าง/ผู้รับเหมา', icon: Wrench, show: isOwner },
     { id: 'settings', label: 'ตั้งค่า', icon: Settings, show: isOwner },
@@ -4860,6 +4877,7 @@ function ProfileEditForm({ initial, businesses, zones, onSave, onCancel, isSelf 
   const [businessIds, setBusinessIds] = useState(initial?.businessIds || []);
   const [zoneIds, setZoneIds] = useState(initial?.zoneIds || []);
   const [canManagePayroll, setCanManagePayroll] = useState(!!initial?.canManagePayroll);
+  const [menuSet, setMenuSet] = useState(initial?.allowedViews ? new Set(initial.allowedViews) : null); // null = ทุกเมนูตามบทบาท
   // สำหรับ viewer: เลือก scope แบบใด
   const [viewerScope, setViewerScope] = useState(() => {
     if (initial?.role !== 'viewer') return 'system';
@@ -4870,6 +4888,24 @@ function ProfileEditForm({ initial, businesses, zones, onSave, onCancel, isSelf 
 
   const toggleBiz = (id) => setBusinessIds(businessIds.includes(id) ? businessIds.filter((x) => x !== id) : [...businessIds, id]);
   const toggleZone = (id) => setZoneIds(zoneIds.includes(id) ? zoneIds.filter((x) => x !== id) : [...zoneIds, id]);
+
+  // เมนูที่ปิด/เปิดสิทธิ์รายคนได้ (ตามบทบาท) — "ภาพรวม" เข้าได้เสมอ ไม่ต้องเลือก
+  const toggleMenus = [
+    { id: 'businesses', label: 'ธุรกิจและโซน', when: role === 'business_manager' },
+    { id: 'positions', label: 'ตำแหน่ง', when: true },
+    { id: 'employees', label: 'พนักงาน', when: true },
+    { id: 'orgchart', label: 'แผนผังองค์กร', when: true },
+    { id: 'payroll', label: 'เงินเดือน', when: role === 'business_manager' && canManagePayroll },
+    { id: 'commission', label: 'คอมมิชชั่น', when: role === 'business_manager' && canManagePayroll },
+    { id: 'roomrent', label: 'ค่าห้องพนักงาน', when: role === 'business_manager' && canManagePayroll },
+  ].filter((m) => m.when);
+  const showMenuPicker = ['business_manager', 'zone_manager', 'viewer'].includes(role);
+  const isMenuOn = (id) => (menuSet ? menuSet.has(id) : true);
+  const toggleMenu = (id) => setMenuSet((prev) => {
+    const base = prev ? new Set(prev) : new Set(toggleMenus.map((m) => m.id));
+    base.has(id) ? base.delete(id) : base.add(id);
+    return base;
+  });
 
   const submit = () => {
     if (role === 'business_manager' && businessIds.length === 0) return alert('กรุณาเลือกธุรกิจอย่างน้อย 1 ที่');
@@ -4883,7 +4919,14 @@ function ProfileEditForm({ initial, businesses, zones, onSave, onCancel, isSelf 
       if (viewerScope === 'business') bizIds = businessIds;
       else if (viewerScope === 'zone') zIds = zoneIds;
     }
-    onSave({ name: name.trim(), role, businessIds: bizIds, zoneIds: zIds, canManagePayroll: role === 'business_manager' ? canManagePayroll : false });
+    // สิทธิ์เมนูรายคน: ถ้าเลือกครบทุกเมนู = null (ไม่จำกัด)
+    let allowedViews = null;
+    if (showMenuPicker) {
+      const applicable = toggleMenus.map((m) => m.id);
+      const on = applicable.filter((id) => isMenuOn(id));
+      allowedViews = on.length === applicable.length ? null : on;
+    }
+    onSave({ name: name.trim(), role, businessIds: bizIds, zoneIds: zIds, canManagePayroll: role === 'business_manager' ? canManagePayroll : false, allowedViews });
   };
 
   const ROLES = [
@@ -5048,6 +5091,24 @@ function ProfileEditForm({ initial, businesses, zones, onSave, onCancel, isSelf 
             </FormField>
           )}
         </>
+      )}
+
+      {showMenuPicker && toggleMenus.length > 0 && (
+        <FormField label="เมนูที่เข้าถึงได้">
+          <p className="text-xs text-stone-500 -mt-1 mb-2">ติ๊กเมนูที่ผู้ใช้คนนี้เห็น/เข้าได้ (เอาออกเพื่อซ่อน) — "ภาพรวม" เข้าได้เสมอ • ติ๊กครบทุกอัน = เข้าได้ตามสิทธิ์ปกติ</p>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+            {toggleMenus.map((m) => {
+              const on = isMenuOn(m.id);
+              return (
+                <label key={m.id} className={`flex items-center gap-2 p-2.5 rounded-lg border-2 cursor-pointer ${on ? 'border-emerald-600 bg-emerald-50' : 'border-stone-200 hover:border-stone-300'}`}>
+                  <input type="checkbox" checked={on} onChange={() => toggleMenu(m.id)} className="w-4 h-4 rounded text-emerald-700" />
+                  <span className={`text-sm ${on ? 'font-medium text-emerald-900' : 'text-stone-600'}`}>{m.label}</span>
+                </label>
+              );
+            })}
+          </div>
+          {menuSet && <button type="button" onClick={() => setMenuSet(null)} className="mt-2 text-xs text-emerald-700 hover:underline">เลือกทุกเมนู (รีเซ็ตเป็นค่าปกติ)</button>}
+        </FormField>
       )}
 
       <FormActions onCancel={onCancel} onSubmit={submit} />
