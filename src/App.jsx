@@ -136,19 +136,24 @@ const calcSocialSecurity = (baseSalary) => Math.min(Math.round(Number(baseSalary
 // คำนวณยอดเงินเดือนสุทธิจากข้อมูล payroll + รายการ items
 function computePayroll(p, items = []) {
   const daily = (Number(p.baseSalary) || 0) / 30;
+  // "หยุด" (holidayDaysTaken): ค่าบวก = วันหยุดที่ใช้ (เกินโควต้าถูกหัก) / ค่าลบ = ทำงานวันหยุด (ได้เงินเพิ่ม)
+  const holidayDaysRaw = Number(p.holidayDaysTaken) || 0;
+  const holidayWorkFromNeg = holidayDaysRaw < 0 ? -holidayDaysRaw : 0;
+  // รวมช่องทำงานวันหยุดเดิม (holidayWorkDays) เพื่อรองรับข้อมูลเก่า + ค่าลบจากช่อง "หยุด"
+  const holidayWorkDays = (Number(p.holidayWorkDays) || 0) + holidayWorkFromNeg;
   // รายรับ
-  const holidayWorkPay = (Number(p.holidayWorkDays) || 0) * daily;
+  const holidayWorkPay = holidayWorkDays * daily;
   const bonusTasks = items.filter((i) => i.kind === 'bonus_task').reduce((s, i) => s + (Number(i.amount) || 0), 0);
   const totalIncome = (Number(p.baseSalary) || 0) + (Number(p.commission) || 0) + holidayWorkPay + bonusTasks;
-  // รายการหัก
-  const excessDays = Math.max(0, (Number(p.holidayDaysTaken) || 0) - (Number(p.holidayQuota) || 0));
+  // รายการหัก — ใช้วันหยุดเกินโควต้า (เฉพาะค่าบวก)
+  const excessDays = Math.max(0, holidayDaysRaw - (Number(p.holidayQuota) || 0));
   const excessHolidayDeduction = excessDays * daily;
   const advances = items.filter((i) => i.kind === 'advance').reduce((s, i) => s + (Number(i.amount) || 0), 0);
   const otherDeductions = items.filter((i) => i.kind === 'other_deduction').reduce((s, i) => s + (Number(i.amount) || 0), 0);
   const totalDeduction = excessHolidayDeduction + (Number(p.lateDeduction) || 0) + (Number(p.socialSecurity) || 0)
     + (Number(p.roomFee) || 0) + (Number(p.paidViaCompany) || 0) + advances + otherDeductions;
   const net = totalIncome - totalDeduction;
-  return { daily, holidayWorkPay, bonusTasks, totalIncome, excessDays, excessHolidayDeduction, advances, otherDeductions, totalDeduction, net };
+  return { daily, holidayWorkDays, holidayWorkPay, bonusTasks, totalIncome, excessDays, excessHolidayDeduction, advances, otherDeductions, totalDeduction, net };
 }
 
 // ============ PROBATION (ทดลองงาน) ============
@@ -368,7 +373,7 @@ function payslipInner({ employee, payroll, items, business, position, year, mont
   const income = [
     ['เงินเดือนพื้นฐาน', Number(payroll.baseSalary) || 0],
     ['ค่าคอมมิชชั่น', Number(payroll.commission) || 0],
-    [`ค่าทำงานวันหยุด (${Number(payroll.holidayWorkDays) || 0} วัน)`, c.holidayWorkPay],
+    [`ค่าทำงานวันหยุด (${c.holidayWorkDays} วัน)`, c.holidayWorkPay],
     ...(items || []).filter((i) => i.kind === 'bonus_task').map((i) => [i.label || 'โบนัส/งานพิเศษ', Number(i.amount) || 0]),
   ].filter((r, idx) => idx === 0 || Number(r[1]) > 0);
   const deduct = [
@@ -4230,7 +4235,7 @@ function PayrollPage({ businesses, zones, positions, employees, activeBusinessId
   const [loading, setLoading] = useState(false);
   const [editingEmp, setEditingEmp] = useState(null);
   const [reload, setReload] = useState(0);
-  const [mode, setMode] = useState('list'); // 'list' | 'quick'
+  const [mode, setMode] = useState('quick'); // 'quick' | 'list'
   const [showPrintSlips, setShowPrintSlips] = useState(false);
   const [commissionPool, setCommissionPool] = useState(null);
   const [roomRentPool, setRoomRentPool] = useState(null);
@@ -4331,8 +4336,8 @@ function PayrollPage({ businesses, zones, positions, employees, activeBusinessId
           </select>
           {/* สลับโหมด */}
           <div className="inline-flex rounded-lg border border-stone-300 overflow-hidden">
-            <button onClick={() => setMode('list')} className={`px-3 py-2 text-sm font-medium ${mode === 'list' ? 'bg-emerald-900 text-white' : 'bg-white text-stone-600 hover:bg-stone-50'}`}>รายคน</button>
             <button onClick={() => setMode('quick')} className={`px-3 py-2 text-sm font-medium ${mode === 'quick' ? 'bg-emerald-900 text-white' : 'bg-white text-stone-600 hover:bg-stone-50'}`}>กรอกเร็ว</button>
+            <button onClick={() => setMode('list')} className={`px-3 py-2 text-sm font-medium ${mode === 'list' ? 'bg-emerald-900 text-white' : 'bg-white text-stone-600 hover:bg-stone-50'}`}>รายคน</button>
           </div>
           <div className="flex-1" />
           <div className="flex gap-3">
@@ -4866,6 +4871,12 @@ function PayrollQuickEntry({ bizEmployees, positions, payrollByEmp, itemsByPayro
                 <input type="number" step="0.01" inputMode="decimal" disabled={locked} value={d[field] ?? ''} onChange={(e) => upd(emp.id, field, e.target.value)} onFocus={(e) => e.target.select()} className="w-28 px-2 py-1.5 text-sm text-right border border-stone-200 rounded focus:outline-none focus:ring-2 focus:ring-emerald-500/40 disabled:bg-stone-100" />
               </div>
             );
+            const D = ({ label, value, hint }) => (
+              <div className="flex items-center justify-between gap-2 py-1">
+                <span className="text-sm text-stone-600">{label}{hint && <span className="block text-[11px] text-stone-400">{hint}</span>}</span>
+                <span className="w-28 px-2 py-1.5 text-sm text-right text-stone-500">{Number(value) ? fmtMoney(value) : '—'}</span>
+              </div>
+            );
             return (
               <div key={emp.id} className={`bg-white rounded-xl border-2 p-4 ${dirty ? 'border-amber-300 bg-amber-50/20' : locked ? 'border-emerald-300' : 'border-stone-200'}`}>
                 <div className="flex items-center gap-3 mb-2">
@@ -4876,15 +4887,14 @@ function PayrollQuickEntry({ bizEmployees, positions, payrollByEmp, itemsByPayro
                   </div>
                   {locked && <span className="text-[10px] text-emerald-700 font-medium">ปิดงวดแล้ว</span>}
                 </div>
-                {F({ label: 'คอมมิชชั่น', field: 'commission' })}
-                {F({ label: 'ทำงานวันหยุด (วัน)', field: 'holidayWorkDays', hint: calc.holidayWorkPay > 0 ? `+${fmtMoney(calc.holidayWorkPay)}` : null })}
-                {F({ label: 'วันหยุดที่ใช้', field: 'holidayDaysTaken', hint: `โควต้า ${d.holidayQuota}${calc.excessDays > 0 ? ` • เกิน ${calc.excessDays}` : ''}` })}
+                {F({ label: 'หยุด', field: 'holidayDaysTaken', hint: calc.holidayWorkPay > 0 ? `ลบ=ทำงานวันหยุด • +${fmtMoney(calc.holidayWorkPay)}` : `โควต้า ${d.holidayQuota}${calc.excessDays > 0 ? ` • เกิน ${calc.excessDays}` : ''} (ลบ=ทำงานวันหยุด)` })}
                 <div className="flex items-center justify-between gap-2 py-1">
                   <span className="text-sm text-stone-600">เบิกล่วงหน้า</span>
                   <input type="number" step="0.01" inputMode="decimal" disabled={locked} value={quickAdvance(emp.id)} onChange={(e) => setQuickAdvance(emp.id, e.target.value)} onFocus={(e) => e.target.select()} className="w-28 px-2 py-1.5 text-sm text-right border border-stone-200 rounded focus:outline-none focus:ring-2 focus:ring-emerald-500/40 disabled:bg-stone-100" />
                 </div>
-                {F({ label: 'ค่าห้องพัก', field: 'roomFee' })}
+                {D({ label: 'ค่าห้องพัก', value: d.roomFee, hint: 'แก้ที่หน้าค่าห้อง' })}
                 {F({ label: 'รับผ่านบัญชีแล้ว', field: 'paidViaCompany' })}
+                {D({ label: 'คอมมิชชั่น', value: d.commission, hint: 'แก้ที่หน้าคอมมิชชั่น' })}
                 <button onClick={() => setItemsEmp(emp)} disabled={locked} className="w-full mt-2 px-3 py-2 border border-stone-200 rounded-lg text-sm text-stone-600 hover:bg-stone-50 flex items-center justify-center gap-1.5 disabled:opacity-50">
                   <Plus className="w-3.5 h-3.5" />งานเสริม/เบิก/หักอื่นๆ {itemCount(emp.id) > 0 && <span className="px-1.5 py-0.5 bg-emerald-100 text-emerald-700 rounded text-xs">{itemCount(emp.id)}</span>}
                 </button>
@@ -4903,13 +4913,12 @@ function PayrollQuickEntry({ bizEmployees, positions, payrollByEmp, itemsByPayro
             <thead className="bg-stone-50 border-b border-stone-200 text-xs text-stone-500">
               <tr>
                 <th className="text-left px-3 py-2.5 sticky left-0 bg-stone-50 z-10 min-w-[160px]">ชื่อ</th>
-                <th className="text-center px-2 py-2.5">ฐาน</th>
-                <th className="text-center px-2 py-2.5">คอม</th>
-                <th className="text-center px-2 py-2.5">ทำหยุด</th>
-                <th className="text-center px-2 py-2.5">หยุด</th>
-                <th className="text-center px-2 py-2.5">เบิก</th>
-                <th className="text-center px-2 py-2.5">ค่าห้อง</th>
-                <th className="text-center px-2 py-2.5">รับแล้ว</th>
+                <th className="text-right px-2 py-2.5">ฐาน</th>
+                <th className="text-center px-2 py-2.5" title="ค่าบวก = วันหยุดที่ใช้ (เกินโควต้าถูกหัก) / ค่าลบ = ทำงานวันหยุด เช่น -1 = ทำงานวันหยุด 1 วัน ได้เพิ่ม 1 แรง">หยุด</th>
+                <th className="text-right px-2 py-2.5">เบิก</th>
+                <th className="text-right px-2 py-2.5">ค่าห้อง</th>
+                <th className="text-right px-2 py-2.5">รับแล้ว</th>
+                <th className="text-right px-2 py-2.5">คอม</th>
                 <th className="text-center px-2 py-2.5">รายการ</th>
                 <th className="text-right px-3 py-2.5 sticky right-0 bg-stone-50 z-10">สุทธิ</th>
               </tr>
@@ -4930,12 +4939,11 @@ function PayrollQuickEntry({ bizEmployees, positions, payrollByEmp, itemsByPayro
                       </button>
                     </td>
                     <td className="px-2 py-2 text-right text-stone-500 whitespace-nowrap">{fmtMoney(d.baseSalary)}</td>
-                    <td className="px-2 py-2">{Cell({ empId: emp.id, field: 'commission', col: 'commission', rowIdx, locked })}</td>
-                    <td className="px-2 py-2 text-center">{Cell({ empId: emp.id, field: 'holidayWorkDays', col: 'holidayWorkDays', rowIdx, locked, w: 'w-14' })}</td>
-                    <td className="px-2 py-2 text-center">{Cell({ empId: emp.id, field: 'holidayDaysTaken', col: 'holidayDaysTaken', rowIdx, locked, w: 'w-14' })}</td>
+                    <td className="px-2 py-2 text-center">{Cell({ empId: emp.id, field: 'holidayDaysTaken', col: 'holidayDaysTaken', rowIdx, locked, w: 'w-16' })}</td>
                     <td className="px-2 py-2"><input type="number" step="0.01" inputMode="decimal" data-cell={`advance-${rowIdx}`} disabled={locked} value={quickAdvance(emp.id)} onChange={(e) => setQuickAdvance(emp.id, e.target.value)} onKeyDown={(e) => onKeyNav(e, 'advance', rowIdx)} onFocus={(e) => e.target.select()} className="w-20 px-2 py-1.5 text-sm text-right border border-stone-200 rounded focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500 disabled:bg-stone-100 disabled:text-stone-400" /></td>
-                    <td className="px-2 py-2">{Cell({ empId: emp.id, field: 'roomFee', col: 'roomFee', rowIdx, locked })}</td>
+                    <td className="px-2 py-2 text-right text-stone-500 whitespace-nowrap" title="แก้ที่หน้าค่าห้อง">{Number(d.roomFee) ? fmtMoney(d.roomFee) : <span className="text-stone-300">—</span>}</td>
                     <td className="px-2 py-2">{Cell({ empId: emp.id, field: 'paidViaCompany', col: 'paidViaCompany', rowIdx, locked })}</td>
+                    <td className="px-2 py-2 text-right text-stone-500 whitespace-nowrap" title="แก้ที่หน้าคอมมิชชั่น">{Number(d.commission) ? fmtMoney(d.commission) : <span className="text-stone-300">—</span>}</td>
                     <td className="px-2 py-2 text-center">
                       <button onClick={() => setItemsEmp(emp)} disabled={locked} className="inline-flex items-center gap-1 px-2 py-1.5 border border-stone-200 rounded hover:bg-stone-50 text-stone-600 disabled:opacity-50">
                         <Plus className="w-3.5 h-3.5" />{ic > 0 ? <span className="px-1 bg-emerald-100 text-emerald-700 rounded text-xs">{ic}</span> : <span className="text-xs">เพิ่ม</span>}
