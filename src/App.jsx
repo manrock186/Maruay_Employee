@@ -916,6 +916,11 @@ export default function App() {
         if (error) { console.error(error); return []; }
         return fromDB(data || []);
       },
+      distinctLabels: async (kind) => {
+        const { data, error } = await supabase.from('payroll_items').select('label').eq('kind', kind).limit(1000);
+        if (error) { console.error(error); return []; }
+        return [...new Set((data || []).map((r) => r.label).filter((l) => l && l !== '-'))];
+      },
       add: (d) => insertRow('payroll_items', d),
       delete: (id) => deleteRow('payroll_items', id),
     },
@@ -4342,6 +4347,29 @@ function PayrollQuickEntry({ bizEmployees, positions, payrollByEmp, itemsByPayro
   const [touched, setTouched] = useState(() => new Set());
   const [itemsEmp, setItemsEmp] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [pastBonus, setPastBonus] = useState([]);
+
+  // ดึงรายการงานเสริมที่เคยใช้ในอดีต (เช่น ล้างห้องน้ำ) + ค่าตั้งต้นที่ทำประจำ
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const labels = ops.payrollItem.distinctLabels ? await ops.payrollItem.distinctLabels('bonus_task') : [];
+      if (!cancelled) setPastBonus([...new Set(['ล้างห้องน้ำ', ...labels])]);
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // "เบิกล่วงหน้า" จัดการเป็นรายการ advance ที่มี label คงที่ (โชว์เป็นช่องเดียวในตารางกรอกเร็ว)
+  const ADV_LABEL = 'เบิกล่วงหน้า';
+  const quickAdvance = (empId) => {
+    const it = (drafts[empId]?.items || []).find((i) => i.kind === 'advance' && i.label === ADV_LABEL);
+    return it ? it.amount : '';
+  };
+  const setQuickAdvance = (empId, value) => {
+    const items = (drafts[empId]?.items || []).filter((i) => !(i.kind === 'advance' && i.label === ADV_LABEL));
+    if (value !== '' && Number(value)) items.push({ kind: 'advance', label: ADV_LABEL, amount: value });
+    updItems(empId, items);
+  };
 
   // init drafts เมื่อข้อมูลเปลี่ยน
   useEffect(() => {
@@ -4470,7 +4498,11 @@ function PayrollQuickEntry({ bizEmployees, positions, payrollByEmp, itemsByPayro
                 <F label="คอมมิชชั่น" field="commission" />
                 <F label="ทำงานวันหยุด (วัน)" field="holidayWorkDays" hint={calc.holidayWorkPay > 0 ? `+${fmtMoney(calc.holidayWorkPay)}` : null} />
                 <F label="วันหยุดที่ใช้" field="holidayDaysTaken" hint={`โควต้า ${d.holidayQuota}${calc.excessDays > 0 ? ` • เกิน ${calc.excessDays}` : ''}`} />
-                <F label="หักมาสาย" field="lateDeduction" />
+                <div className="flex items-center justify-between gap-2 py-1">
+                  <span className="text-sm text-stone-600">เบิกล่วงหน้า</span>
+                  <input type="number" step="0.01" inputMode="decimal" disabled={locked} value={quickAdvance(emp.id)} onChange={(e) => setQuickAdvance(emp.id, e.target.value)} onFocus={(e) => e.target.select()} className="w-28 px-2 py-1.5 text-sm text-right border border-stone-200 rounded focus:outline-none focus:ring-2 focus:ring-emerald-500/40 disabled:bg-stone-100" />
+                </div>
+                <F label="ค่าห้องพัก" field="roomFee" />
                 <F label="รับผ่านบัญชีแล้ว" field="paidViaCompany" />
                 <button onClick={() => setItemsEmp(emp)} disabled={locked} className="w-full mt-2 px-3 py-2 border border-stone-200 rounded-lg text-sm text-stone-600 hover:bg-stone-50 flex items-center justify-center gap-1.5 disabled:opacity-50">
                   <Plus className="w-3.5 h-3.5" />งานเสริม/เบิก/หักอื่นๆ {itemCount(emp.id) > 0 && <span className="px-1.5 py-0.5 bg-emerald-100 text-emerald-700 rounded text-xs">{itemCount(emp.id)}</span>}
@@ -4494,7 +4526,8 @@ function PayrollQuickEntry({ bizEmployees, positions, payrollByEmp, itemsByPayro
                 <th className="text-right px-2 py-2.5">คอม</th>
                 <th className="text-center px-2 py-2.5">ทำหยุด</th>
                 <th className="text-center px-2 py-2.5">หยุด</th>
-                <th className="text-right px-2 py-2.5">สาย</th>
+                <th className="text-right px-2 py-2.5">เบิก</th>
+                <th className="text-right px-2 py-2.5">ค่าห้อง</th>
                 <th className="text-right px-2 py-2.5">รับแล้ว</th>
                 <th className="text-center px-2 py-2.5">รายการ</th>
                 <th className="text-right px-3 py-2.5 sticky right-0 bg-stone-50 z-10">สุทธิ</th>
@@ -4519,7 +4552,8 @@ function PayrollQuickEntry({ bizEmployees, positions, payrollByEmp, itemsByPayro
                     <td className="px-2 py-2"><Cell empId={emp.id} field="commission" col="commission" rowIdx={rowIdx} locked={locked} /></td>
                     <td className="px-2 py-2 text-center"><Cell empId={emp.id} field="holidayWorkDays" col="holidayWorkDays" rowIdx={rowIdx} locked={locked} w="w-14" /></td>
                     <td className="px-2 py-2 text-center"><Cell empId={emp.id} field="holidayDaysTaken" col="holidayDaysTaken" rowIdx={rowIdx} locked={locked} w="w-14" /></td>
-                    <td className="px-2 py-2"><Cell empId={emp.id} field="lateDeduction" col="lateDeduction" rowIdx={rowIdx} locked={locked} /></td>
+                    <td className="px-2 py-2"><input type="number" step="0.01" inputMode="decimal" data-cell={`advance-${rowIdx}`} disabled={locked} value={quickAdvance(emp.id)} onChange={(e) => setQuickAdvance(emp.id, e.target.value)} onKeyDown={(e) => onKeyNav(e, 'advance', rowIdx)} onFocus={(e) => e.target.select()} className="w-20 px-2 py-1.5 text-sm text-right border border-stone-200 rounded focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500 disabled:bg-stone-100 disabled:text-stone-400" /></td>
+                    <td className="px-2 py-2"><Cell empId={emp.id} field="roomFee" col="roomFee" rowIdx={rowIdx} locked={locked} /></td>
                     <td className="px-2 py-2"><Cell empId={emp.id} field="paidViaCompany" col="paidViaCompany" rowIdx={rowIdx} locked={locked} /></td>
                     <td className="px-2 py-2 text-center">
                       <button onClick={() => setItemsEmp(emp)} disabled={locked} className="inline-flex items-center gap-1 px-2 py-1.5 border border-stone-200 rounded hover:bg-stone-50 text-stone-600 disabled:opacity-50">
@@ -4539,6 +4573,7 @@ function PayrollQuickEntry({ bizEmployees, positions, payrollByEmp, itemsByPayro
         <PayrollItemsModal
           employee={itemsEmp}
           draft={drafts[itemsEmp.id]}
+          pastBonusLabels={pastBonus}
           onApply={(items) => { updItems(itemsEmp.id, items); setItemsEmp(null); }}
           onClose={() => setItemsEmp(null)}
         />
@@ -4548,10 +4583,11 @@ function PayrollQuickEntry({ bizEmployees, positions, payrollByEmp, itemsByPayro
 }
 
 // ============ POPUP: งานเสริม/เบิก/หักอื่นๆ (สำหรับโหมดกรอกเร็ว) ============
-function PayrollItemsModal({ employee, draft, onApply, onClose }) {
+function PayrollItemsModal({ employee, draft, pastBonusLabels, onApply, onClose }) {
   const [bonusTasks, setBonusTasks] = useState(draft.items.filter((i) => i.kind === 'bonus_task').map((i) => ({ label: i.label, amount: i.amount })));
   const [advances, setAdvances] = useState(draft.items.filter((i) => i.kind === 'advance').map((i) => ({ label: i.label, amount: i.amount })));
   const [others, setOthers] = useState(draft.items.filter((i) => i.kind === 'other_deduction').map((i) => ({ label: i.label, amount: i.amount })));
+  const addBonus = (label) => setBonusTasks((prev) => prev.some((b) => b.label === label) ? prev : [...prev, { label, amount: '' }]);
 
   const apply = () => {
     onApply([
@@ -4588,7 +4624,24 @@ function PayrollItemsModal({ employee, draft, onApply, onClose }) {
           <button onClick={onClose} className="p-1 hover:bg-stone-100 rounded text-stone-500"><X className="w-5 h-5" /></button>
         </div>
         <div className="p-5 overflow-auto space-y-4">
-          <div className="bg-emerald-50/50 rounded-xl p-3"><List title="งานเสริม (ล้างห้องน้ำ, ลอกท่อ ฯลฯ)" list={bonusTasks} setList={setBonusTasks} color="text-emerald-700" addLabel="เพิ่ม" /></div>
+          <div className="bg-emerald-50/50 rounded-xl p-3">
+            {pastBonusLabels && pastBonusLabels.length > 0 && (
+              <div className="mb-2">
+                <div className="text-[11px] text-stone-500 mb-1">เลือกงานที่เคยทำ:</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {pastBonusLabels.map((lbl) => {
+                    const used = bonusTasks.some((b) => b.label === lbl);
+                    return (
+                      <button key={lbl} type="button" onClick={() => addBonus(lbl)} disabled={used} className={`px-2 py-1 text-xs rounded-full border ${used ? 'bg-emerald-100 border-emerald-300 text-emerald-700 opacity-60' : 'bg-white border-emerald-300 text-emerald-700 hover:bg-emerald-50'}`}>
+                        {used ? '✓ ' : '+ '}{lbl}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+            <List title="งานเสริม (ล้างห้องน้ำ, ลอกท่อ ฯลฯ)" list={bonusTasks} setList={setBonusTasks} color="text-emerald-700" addLabel="เพิ่มเอง" />
+          </div>
           <div className="bg-red-50/40 rounded-xl p-3 space-y-3">
             <List title="เบิกล่วงหน้า" list={advances} setList={setAdvances} color="text-red-600" addLabel="เพิ่ม" />
             <List title="หักอื่นๆ" list={others} setList={setOthers} color="text-red-600" addLabel="เพิ่ม" />
