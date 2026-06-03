@@ -4024,6 +4024,7 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, op
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState(null);
+  const [dedCarried, setDedCarried] = useState(false); // รายการหักถูกดึงมาจากเดือนก่อน (ยังไม่บันทึก)
 
   const business = businesses.find((b) => b.id === activeBusinessId);
   const bizEmployees = useMemo(() => employees.filter((e) => isActive(e) && (e.businessId === activeBusinessId || (e.additionalBusinessIds || []).includes(activeBusinessId))), [employees, activeBusinessId]);
@@ -4036,6 +4037,7 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, op
       const pool = await ops.commission.getByPeriod(activeBusinessId, year, month);
       if (cancelled) return;
       if (pool) {
+        setDedCarried(false);
         setPosProfit(pool.posProfit ?? '');
         setPool2Total(pool.pool2Total ?? '');
         setDeductions(pool.deductions || []);
@@ -4047,7 +4049,17 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, op
         setEntries(em);
         setSavedAt(pool.updatedAt || pool.createdAt || null);
       } else {
-        setPosProfit(''); setPool2Total(''); setDeductions([]); setNote(''); setSavedAt(null);
+        setPosProfit(''); setPool2Total(''); setNote(''); setSavedAt(null);
+        // เดือนใหม่ที่ยังไม่เคยบันทึก → ดึง "รายการหัก" จากเดือนก่อนหน้ามาตั้งต้น (รายการเหมือนเดิม เปลี่ยนแค่ตัวเลข)
+        const prev = month === 1 ? { y: year - 1, m: 12 } : { y: year, m: month - 1 };
+        const prevPool = await ops.commission.getByPeriod(activeBusinessId, prev.y, prev.m);
+        if (cancelled) return;
+        if (prevPool && (prevPool.deductions || []).length) {
+          setDeductions(prevPool.deductions.map((d) => ({ label: d.label || '', amount: d.amount ?? '' })));
+          setDedCarried(true);
+        } else {
+          setDeductions([]); setDedCarried(false);
+        }
         const em = {};
         bizEmployees.forEach((e) => { if (e.commissionPct != null) em[e.id] = { pct: e.commissionPct, amount: '', pct2: '', amount2: '' }; });
         setEntries(em);
@@ -4099,7 +4111,7 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, op
       entries: entryList, note: note.trim() || null,
     });
     setSaving(false);
-    if (ok) { setSavedAt(new Date().toISOString()); alert('บันทึกคอมมิชชั่นแล้ว — ยอดจะไปขึ้นช่องคอมฯ ในหน้าเงินเดือนของงวดนี้อัตโนมัติ'); }
+    if (ok) { setSavedAt(new Date().toISOString()); setDedCarried(false); alert('บันทึกคอมมิชชั่นแล้ว — ยอดจะไปขึ้นช่องคอมฯ ในหน้าเงินเดือนของงวดนี้อัตโนมัติ'); }
   };
 
   const yearOptions = [now.getFullYear(), now.getFullYear() - 1, now.getFullYear() - 2];
@@ -4139,6 +4151,9 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, op
               <button onClick={addDeduction} className="text-xs text-emerald-700 hover:underline flex items-center gap-1"><Plus className="w-3 h-3" />เพิ่มรายการหัก</button>
             </div>
             <div className="space-y-2">
+              {dedCarried && deductions.length > 0 && (
+                <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">ดึงรายการหักจากเดือนก่อนมาให้แล้ว — แก้ตัวเลขให้ตรงเดือนนี้ แล้วกดบันทึก</p>
+              )}
               {deductions.length === 0 && <p className="text-xs text-stone-400">ยังไม่มีรายการหัก</p>}
               {deductions.map((d, i) => (
                 <div key={i} className="flex items-center gap-2">
