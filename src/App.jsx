@@ -4260,6 +4260,36 @@ function PrintSlipsModal({ business, bizEmployees, payrollByEmp, itemsByPayroll,
   );
 }
 
+// ============ STABLE INPUT COMPONENTS (ระดับโมดูล — กันช่องกรอกเสียโฟกัสตอนพิมพ์) ============
+function EditorRow({ label, children, hint }) {
+  return (
+    <div className="flex items-center justify-between gap-3 py-1.5">
+      <div className="text-sm text-stone-600">{label}{hint && <span className="block text-[11px] text-stone-400">{hint}</span>}</div>
+      <div className="w-36">{children}</div>
+    </div>
+  );
+}
+function EditorItemList({ title, list, setList, color, addLabel, disabled }) {
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1.5">
+        <span className="text-xs font-medium text-stone-600">{title}</span>
+        {!disabled && <button type="button" onClick={() => setList([...list, { label: '', amount: '' }])} className={`text-xs ${color} hover:underline flex items-center gap-0.5`}><Plus className="w-3 h-3" />{addLabel}</button>}
+      </div>
+      <div className="space-y-1.5">
+        {list.length === 0 && <div className="text-xs text-stone-400 italic">ไม่มี</div>}
+        {list.map((it, idx) => (
+          <div key={idx} className="flex gap-2">
+            <input disabled={disabled} value={it.label} onChange={(e) => setList(list.map((x, i) => i === idx ? { ...x, label: e.target.value } : x))} placeholder="รายการ" className="flex-1 px-2 py-1.5 text-sm border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 disabled:bg-stone-100" />
+            <input disabled={disabled} type="number" min="0" step="0.01" value={it.amount} onChange={(e) => setList(list.map((x, i) => i === idx ? { ...x, amount: e.target.value } : x))} placeholder="0.00" className="w-28 px-2 py-1.5 text-sm border border-stone-300 rounded-lg text-right focus:outline-none focus:ring-2 focus:ring-emerald-500/40 disabled:bg-stone-100" />
+            {!disabled && <button type="button" onClick={() => setList(list.filter((_, i) => i !== idx))} className="p-1.5 text-red-500 hover:bg-red-50 rounded"><X className="w-4 h-4" /></button>}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ============ PAYROLL EDITOR MODAL ============
 function PayrollEditor({ employee, existing, existingItems, year, month, businessId, businessName, commissionPrefill, roomFeePrefill, ops, onClose, onSaved }) {
   const isFinalized = existing?.status === 'finalized';
@@ -4323,31 +4353,6 @@ function PayrollEditor({ employee, existing, existingItems, year, month, busines
     } finally { setSaving(false); }
   };
 
-  const ItemList = ({ title, list, setList, color, addLabel, disabled }) => (
-    <div>
-      <div className="flex items-center justify-between mb-1.5">
-        <span className="text-xs font-medium text-stone-600">{title}</span>
-        {!disabled && <button type="button" onClick={() => setList([...list, { label: '', amount: '' }])} className={`text-xs ${color} hover:underline flex items-center gap-0.5`}><Plus className="w-3 h-3" />{addLabel}</button>}
-      </div>
-      <div className="space-y-1.5">
-        {list.length === 0 && <div className="text-xs text-stone-400 italic">ไม่มี</div>}
-        {list.map((it, idx) => (
-          <div key={idx} className="flex gap-2">
-            <input disabled={disabled} value={it.label} onChange={(e) => setList(list.map((x, i) => i === idx ? { ...x, label: e.target.value } : x))} placeholder="รายการ" className="flex-1 px-2 py-1.5 text-sm border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 disabled:bg-stone-100" />
-            <input disabled={disabled} type="number" min="0" step="0.01" value={it.amount} onChange={(e) => setList(list.map((x, i) => i === idx ? { ...x, amount: e.target.value } : x))} placeholder="0.00" className="w-28 px-2 py-1.5 text-sm border border-stone-300 rounded-lg text-right focus:outline-none focus:ring-2 focus:ring-emerald-500/40 disabled:bg-stone-100" />
-            {!disabled && <button type="button" onClick={() => setList(list.filter((_, i) => i !== idx))} className="p-1.5 text-red-500 hover:bg-red-50 rounded"><X className="w-4 h-4" /></button>}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-
-  const Row = ({ label, children, hint }) => (
-    <div className="flex items-center justify-between gap-3 py-1.5">
-      <div className="text-sm text-stone-600">{label}{hint && <span className="block text-[11px] text-stone-400">{hint}</span>}</div>
-      <div className="w-36">{children}</div>
-    </div>
-  );
   const numInput = (k, opts = {}) => (
     <input type="number" min="0" step="0.01" disabled={locked || opts.disabled} value={f[k]} onChange={(e) => set(k, e.target.value)} className="w-full px-2 py-1.5 text-sm border border-stone-300 rounded-lg text-right focus:outline-none focus:ring-2 focus:ring-emerald-500/40 disabled:bg-stone-100" />
   );
@@ -4394,30 +4399,30 @@ function PayrollEditor({ employee, existing, existingItems, year, month, busines
               </div>
             )}
             <div className="flex items-center gap-1.5 text-sm font-semibold text-emerald-800 mb-2"><TrendingUp className="w-4 h-4" />รายรับ</div>
-            <Row label="เงินเดือนฐาน" hint={`ค่าแรง/วัน = ${fmtMoney(calc.daily)} ฿`}>{numInput('baseSalary')}</Row>
-            <Row label="คอมมิชชั่น" hint={!existing && commissionPrefill ? 'จากหน้าคอมมิชชั่นงวดนี้' : undefined}>{numInput('commission')}</Row>
-            <Row label="ทำงานวันหยุด (วัน)" hint={`+${fmtMoney(calc.holidayWorkPay)} ฿`}>{numInput('holidayWorkDays')}</Row>
-            <div className="mt-2 pt-2 border-t border-emerald-100"><ItemList title="งานเสริม (ล้างห้องน้ำ, ลอกท่อ ฯลฯ)" list={bonusTasks} setList={setBonusTasks} color="text-emerald-700" addLabel="เพิ่มงานเสริม" disabled={locked} /></div>
+            <EditorRow label="เงินเดือนฐาน" hint={`ค่าแรง/วัน = ${fmtMoney(calc.daily)} ฿`}>{numInput('baseSalary')}</EditorRow>
+            <EditorRow label="คอมมิชชั่น" hint={!existing && commissionPrefill ? 'จากหน้าคอมมิชชั่นงวดนี้' : undefined}>{numInput('commission')}</EditorRow>
+            <EditorRow label="ทำงานวันหยุด (วัน)" hint={`+${fmtMoney(calc.holidayWorkPay)} ฿`}>{numInput('holidayWorkDays')}</EditorRow>
+            <div className="mt-2 pt-2 border-t border-emerald-100"><EditorItemList title="งานเสริม (ล้างห้องน้ำ, ลอกท่อ ฯลฯ)" list={bonusTasks} setList={setBonusTasks} color="text-emerald-700" addLabel="เพิ่มงานเสริม" disabled={locked} /></div>
           </div>
 
           {/* วันหยุด */}
           <div className="bg-stone-50 rounded-xl p-4">
             <div className="text-sm font-semibold text-stone-700 mb-2">วันหยุด</div>
-            <Row label="โควต้าวันหยุดเดือนนี้">{numInput('holidayQuota')}</Row>
-            <Row label="วันหยุดที่ใช้จริง" hint={calc.excessDays > 0 ? `เกิน ${calc.excessDays} วัน → หัก ${fmtMoney(calc.excessHolidayDeduction)} ฿` : 'ไม่เกินโควต้า'}>{numInput('holidayDaysTaken')}</Row>
+            <EditorRow label="โควต้าวันหยุดเดือนนี้">{numInput('holidayQuota')}</EditorRow>
+            <EditorRow label="วันหยุดที่ใช้จริง" hint={calc.excessDays > 0 ? `เกิน ${calc.excessDays} วัน → หัก ${fmtMoney(calc.excessHolidayDeduction)} ฿` : 'ไม่เกินโควต้า'}>{numInput('holidayDaysTaken')}</EditorRow>
           </div>
 
           {/* รายการหัก */}
           <div className="bg-red-50/40 rounded-xl p-4">
             <div className="flex items-center gap-1.5 text-sm font-semibold text-red-700 mb-2"><TrendingDown className="w-4 h-4" />รายการหัก</div>
-            {calc.excessHolidayDeduction > 0 && <Row label="หักหยุดเกิน (อัตโนมัติ)"><div className="text-right text-sm text-red-600 py-1.5">−{fmtMoney(calc.excessHolidayDeduction)}</div></Row>}
-            <Row label="หักมาสาย">{numInput('lateDeduction')}</Row>
-            <Row label="ประกันสังคม" hint={employee.hasSocialSecurity ? '5% ของฐาน สูงสุด 750' : 'พนักงานนี้ไม่มี ปกส.'}>{numInput('socialSecurity')}</Row>
-            <Row label="ค่าห้องพัก" hint={!existing && roomFeePrefill != null ? 'จากหน้าค่าห้อง (มิเตอร์) งวดนี้' : undefined}>{numInput('roomFee')}</Row>
-            <Row label="รับผ่านบัญชี บ.วีเอสจง แล้ว" hint="เงินที่จ่ายไปแล้ว">{numInput('paidViaCompany')}</Row>
+            {calc.excessHolidayDeduction > 0 && <EditorRow label="หักหยุดเกิน (อัตโนมัติ)"><div className="text-right text-sm text-red-600 py-1.5">−{fmtMoney(calc.excessHolidayDeduction)}</div></EditorRow>}
+            <EditorRow label="หักมาสาย">{numInput('lateDeduction')}</EditorRow>
+            <EditorRow label="ประกันสังคม" hint={employee.hasSocialSecurity ? '5% ของฐาน สูงสุด 750' : 'พนักงานนี้ไม่มี ปกส.'}>{numInput('socialSecurity')}</EditorRow>
+            <EditorRow label="ค่าห้องพัก" hint={!existing && roomFeePrefill != null ? 'จากหน้าค่าห้อง (มิเตอร์) งวดนี้' : undefined}>{numInput('roomFee')}</EditorRow>
+            <EditorRow label="รับผ่านบัญชี บ.วีเอสจง แล้ว" hint="เงินที่จ่ายไปแล้ว">{numInput('paidViaCompany')}</EditorRow>
             <div className="mt-2 pt-2 border-t border-red-100 space-y-3">
-              <ItemList title="เบิกล่วงหน้า" list={advances} setList={setAdvances} color="text-red-600" addLabel="เพิ่มการเบิก" disabled={locked} />
-              <ItemList title="หักอื่นๆ" list={otherDeductions} setList={setOtherDeductions} color="text-red-600" addLabel="เพิ่มรายการหัก" disabled={locked} />
+              <EditorItemList title="เบิกล่วงหน้า" list={advances} setList={setAdvances} color="text-red-600" addLabel="เพิ่มการเบิก" disabled={locked} />
+              <EditorItemList title="หักอื่นๆ" list={otherDeductions} setList={setOtherDeductions} color="text-red-600" addLabel="เพิ่มรายการหัก" disabled={locked} />
             </div>
           </div>
 
@@ -4609,15 +4614,15 @@ function PayrollQuickEntry({ bizEmployees, positions, payrollByEmp, itemsByPayro
                   </div>
                   {locked && <span className="text-[10px] text-emerald-700 font-medium">ปิดงวดแล้ว</span>}
                 </div>
-                <F label="คอมมิชชั่น" field="commission" />
-                <F label="ทำงานวันหยุด (วัน)" field="holidayWorkDays" hint={calc.holidayWorkPay > 0 ? `+${fmtMoney(calc.holidayWorkPay)}` : null} />
-                <F label="วันหยุดที่ใช้" field="holidayDaysTaken" hint={`โควต้า ${d.holidayQuota}${calc.excessDays > 0 ? ` • เกิน ${calc.excessDays}` : ''}`} />
+                {F({ label: 'คอมมิชชั่น', field: 'commission' })}
+                {F({ label: 'ทำงานวันหยุด (วัน)', field: 'holidayWorkDays', hint: calc.holidayWorkPay > 0 ? `+${fmtMoney(calc.holidayWorkPay)}` : null })}
+                {F({ label: 'วันหยุดที่ใช้', field: 'holidayDaysTaken', hint: `โควต้า ${d.holidayQuota}${calc.excessDays > 0 ? ` • เกิน ${calc.excessDays}` : ''}` })}
                 <div className="flex items-center justify-between gap-2 py-1">
                   <span className="text-sm text-stone-600">เบิกล่วงหน้า</span>
                   <input type="number" step="0.01" inputMode="decimal" disabled={locked} value={quickAdvance(emp.id)} onChange={(e) => setQuickAdvance(emp.id, e.target.value)} onFocus={(e) => e.target.select()} className="w-28 px-2 py-1.5 text-sm text-right border border-stone-200 rounded focus:outline-none focus:ring-2 focus:ring-emerald-500/40 disabled:bg-stone-100" />
                 </div>
-                <F label="ค่าห้องพัก" field="roomFee" />
-                <F label="รับผ่านบัญชีแล้ว" field="paidViaCompany" />
+                {F({ label: 'ค่าห้องพัก', field: 'roomFee' })}
+                {F({ label: 'รับผ่านบัญชีแล้ว', field: 'paidViaCompany' })}
                 <button onClick={() => setItemsEmp(emp)} disabled={locked} className="w-full mt-2 px-3 py-2 border border-stone-200 rounded-lg text-sm text-stone-600 hover:bg-stone-50 flex items-center justify-center gap-1.5 disabled:opacity-50">
                   <Plus className="w-3.5 h-3.5" />งานเสริม/เบิก/หักอื่นๆ {itemCount(emp.id) > 0 && <span className="px-1.5 py-0.5 bg-emerald-100 text-emerald-700 rounded text-xs">{itemCount(emp.id)}</span>}
                 </button>
@@ -4663,12 +4668,12 @@ function PayrollQuickEntry({ bizEmployees, positions, payrollByEmp, itemsByPayro
                       </button>
                     </td>
                     <td className="px-2 py-2 text-right text-stone-500 whitespace-nowrap">{fmtMoney(d.baseSalary)}</td>
-                    <td className="px-2 py-2"><Cell empId={emp.id} field="commission" col="commission" rowIdx={rowIdx} locked={locked} /></td>
-                    <td className="px-2 py-2 text-center"><Cell empId={emp.id} field="holidayWorkDays" col="holidayWorkDays" rowIdx={rowIdx} locked={locked} w="w-14" /></td>
-                    <td className="px-2 py-2 text-center"><Cell empId={emp.id} field="holidayDaysTaken" col="holidayDaysTaken" rowIdx={rowIdx} locked={locked} w="w-14" /></td>
+                    <td className="px-2 py-2">{Cell({ empId: emp.id, field: 'commission', col: 'commission', rowIdx, locked })}</td>
+                    <td className="px-2 py-2 text-center">{Cell({ empId: emp.id, field: 'holidayWorkDays', col: 'holidayWorkDays', rowIdx, locked, w: 'w-14' })}</td>
+                    <td className="px-2 py-2 text-center">{Cell({ empId: emp.id, field: 'holidayDaysTaken', col: 'holidayDaysTaken', rowIdx, locked, w: 'w-14' })}</td>
                     <td className="px-2 py-2"><input type="number" step="0.01" inputMode="decimal" data-cell={`advance-${rowIdx}`} disabled={locked} value={quickAdvance(emp.id)} onChange={(e) => setQuickAdvance(emp.id, e.target.value)} onKeyDown={(e) => onKeyNav(e, 'advance', rowIdx)} onFocus={(e) => e.target.select()} className="w-20 px-2 py-1.5 text-sm text-right border border-stone-200 rounded focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500 disabled:bg-stone-100 disabled:text-stone-400" /></td>
-                    <td className="px-2 py-2"><Cell empId={emp.id} field="roomFee" col="roomFee" rowIdx={rowIdx} locked={locked} /></td>
-                    <td className="px-2 py-2"><Cell empId={emp.id} field="paidViaCompany" col="paidViaCompany" rowIdx={rowIdx} locked={locked} /></td>
+                    <td className="px-2 py-2">{Cell({ empId: emp.id, field: 'roomFee', col: 'roomFee', rowIdx, locked })}</td>
+                    <td className="px-2 py-2">{Cell({ empId: emp.id, field: 'paidViaCompany', col: 'paidViaCompany', rowIdx, locked })}</td>
                     <td className="px-2 py-2 text-center">
                       <button onClick={() => setItemsEmp(emp)} disabled={locked} className="inline-flex items-center gap-1 px-2 py-1.5 border border-stone-200 rounded hover:bg-stone-50 text-stone-600 disabled:opacity-50">
                         <Plus className="w-3.5 h-3.5" />{ic > 0 ? <span className="px-1 bg-emerald-100 text-emerald-700 rounded text-xs">{ic}</span> : <span className="text-xs">เพิ่ม</span>}
@@ -4711,25 +4716,6 @@ function PayrollItemsModal({ employee, draft, pastBonusLabels, onApply, onClose 
     ]);
   };
 
-  const List = ({ title, list, setList, color, addLabel }) => (
-    <div>
-      <div className="flex items-center justify-between mb-1.5">
-        <span className="text-xs font-medium text-stone-600">{title}</span>
-        <button type="button" onClick={() => setList([...list, { label: '', amount: '' }])} className={`text-xs ${color} hover:underline flex items-center gap-0.5`}><Plus className="w-3 h-3" />{addLabel}</button>
-      </div>
-      <div className="space-y-1.5">
-        {list.length === 0 && <div className="text-xs text-stone-400 italic">ไม่มี</div>}
-        {list.map((it, idx) => (
-          <div key={idx} className="flex gap-2">
-            <input value={it.label} onChange={(e) => setList(list.map((x, i) => i === idx ? { ...x, label: e.target.value } : x))} placeholder="รายการ" className="flex-1 px-2 py-1.5 text-sm border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40" />
-            <input type="number" step="0.01" value={it.amount} onChange={(e) => setList(list.map((x, i) => i === idx ? { ...x, amount: e.target.value } : x))} placeholder="0.00" className="w-28 px-2 py-1.5 text-sm border border-stone-300 rounded-lg text-right focus:outline-none focus:ring-2 focus:ring-emerald-500/40" />
-            <button type="button" onClick={() => setList(list.filter((_, i) => i !== idx))} className="p-1.5 text-red-500 hover:bg-red-50 rounded"><X className="w-4 h-4" /></button>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-
   return (
     <div className="fixed inset-0 bg-stone-900/50 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[85vh] flex flex-col">
@@ -4754,11 +4740,11 @@ function PayrollItemsModal({ employee, draft, pastBonusLabels, onApply, onClose 
                 </div>
               </div>
             )}
-            <List title="งานเสริม (ล้างห้องน้ำ, ลอกท่อ ฯลฯ)" list={bonusTasks} setList={setBonusTasks} color="text-emerald-700" addLabel="เพิ่มเอง" />
+            <EditorItemList title="งานเสริม (ล้างห้องน้ำ, ลอกท่อ ฯลฯ)" list={bonusTasks} setList={setBonusTasks} color="text-emerald-700" addLabel="เพิ่มเอง" />
           </div>
           <div className="bg-red-50/40 rounded-xl p-3 space-y-3">
-            <List title="เบิกล่วงหน้า" list={advances} setList={setAdvances} color="text-red-600" addLabel="เพิ่ม" />
-            <List title="หักอื่นๆ" list={others} setList={setOthers} color="text-red-600" addLabel="เพิ่ม" />
+            <EditorItemList title="เบิกล่วงหน้า" list={advances} setList={setAdvances} color="text-red-600" addLabel="เพิ่ม" />
+            <EditorItemList title="หักอื่นๆ" list={others} setList={setOthers} color="text-red-600" addLabel="เพิ่ม" />
           </div>
         </div>
         <div className="px-5 py-3 border-t border-stone-200 bg-stone-50 flex justify-end gap-2">
