@@ -1,0 +1,14 @@
+{
+  "name": "ระบบพนักงาน มารวย",
+  "short_name": "พนักงาน",
+  "description": "ระบบจัดการพนักงานและเงินเดือน",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#ffffff",
+  "theme_color": "#064e3b",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
