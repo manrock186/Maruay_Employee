@@ -1390,15 +1390,16 @@ export default function App() {
             ops={ops}
           />
         )}
-        {view === 'recurringtasks' && profile.canManagePayroll && (
+        {view === 'recurringtasks' && (profile.isOwner || (profile.isBM && (!Array.isArray(profile.allowedViews) || profile.allowedViews.includes('recurringtasks')))) && (
           <RecurringTaskPage
             businesses={businesses}
             employees={employees}
             activeBusinessId={activeBusinessId}
+            canSeePay={profile.canManagePayroll}
             ops={ops}
           />
         )}
-        {view === 'advances' && profile.canManagePayroll && (
+        {view === 'advances' && (profile.isOwner || (profile.isBM && (!Array.isArray(profile.allowedViews) || profile.allowedViews.includes('advances')))) && (
           <AdvancePage
             businesses={businesses}
             employees={employees}
@@ -1780,8 +1781,8 @@ function Sidebar({ view, setView, profile, businesses, zones, activeBusinessId, 
     { id: 'payroll', label: 'เงินเดือน', icon: Wallet, show: profile.canManagePayroll && navAllowed('payroll') },
     { id: 'commission', label: 'คอมมิชชั่น', icon: Percent, show: profile.canManagePayroll && navAllowed('commission') },
     { id: 'roomrent', label: 'ค่าห้องพนักงาน', icon: KeyRound, show: profile.canManagePayroll && navAllowed('roomrent') },
-    { id: 'recurringtasks', label: 'งานเสริมประจำ', icon: Sparkles, show: profile.canManagePayroll && navAllowed('recurringtasks') },
-    { id: 'advances', label: 'เบิกเงิน', icon: Banknote, show: profile.canManagePayroll && navAllowed('advances') },
+    { id: 'recurringtasks', label: 'งานเสริมประจำ', icon: Sparkles, show: (isOwner || (isBM && navAllowed('recurringtasks'))) },
+    { id: 'advances', label: 'เบิกเงิน', icon: Banknote, show: (isOwner || (isBM && navAllowed('advances'))) },
     { id: 'users', label: 'ผู้ใช้ระบบ', icon: Shield, show: isOwner },
     { id: 'contractors', label: 'ช่าง/ผู้รับเหมา', icon: Wrench, show: canViewContractors, badge: contractorPendingCount },
     { id: 'settings', label: 'ตั้งค่า', icon: Settings, show: isOwner },
@@ -4085,7 +4086,7 @@ function RoomRentPage({ businesses, employees, activeBusinessId, ops }) {
 }
 
 // ============ RECURRING TASK PAGE (งานเสริมประจำ) ============
-function RecurringTaskPage({ businesses, employees, activeBusinessId, ops }) {
+function RecurringTaskPage({ businesses, employees, activeBusinessId, canSeePay = true, ops }) {
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth() + 1);
@@ -4181,10 +4182,12 @@ function RecurringTaskPage({ businesses, employees, activeBusinessId, ops }) {
         </div>
 
         {carried && tasks.length > 0 && (
-          <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">ดึงงานเสริมประจำ + คนเดิมจากเดือนก่อนมาให้แล้ว — ปรับคน/ค่าจ้างให้ตรงเดือนนี้ แล้วกดบันทึก</p>
+          <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">ดึงงานเสริมประจำ + คนเดิมจากเดือนก่อนมาให้แล้ว — ปรับ{canSeePay ? 'คน/ค่าจ้าง' : 'รายชื่อคน'}ให้ตรงเดือนนี้ แล้วกดบันทึก</p>
         )}
 
-        <p className="text-sm text-stone-500">กำหนดงานที่ต้องทำทุกเดือน (เช่น ล้างห้องน้ำ, ทำความสะอาดกลางคืน) ตั้งค่าจ้างต่อคน แล้วดึงพนักงานเข้างาน — ค่าจ้างจะไปบวกเข้า "งานเสริม" ในเงินเดือนของแต่ละคนอัตโนมัติ</p>
+        <p className="text-sm text-stone-500">{canSeePay
+          ? 'กำหนดงานที่ต้องทำทุกเดือน (เช่น ล้างห้องน้ำ, ทำความสะอาดกลางคืน) ตั้งค่าจ้างต่อคน แล้วดึงพนักงานเข้างาน — ค่าจ้างจะไปบวกเข้า "งานเสริม" ในเงินเดือนของแต่ละคนอัตโนมัติ'
+          : 'กำหนดงานที่ต้องทำทุกเดือน (เช่น ล้างห้องน้ำ, ทำความสะอาดกลางคืน) แล้วดึงพนักงานเข้างาน — ค่าจ้างของแต่ละงานจะถูกตั้งโดยผู้ดูแลเงินเดือน'}</p>
 
         {tasks.length === 0 && (
           <EmptyState icon={Sparkles} title="ยังไม่มีงานเสริมประจำ" description="เพิ่มงาน เช่น ล้างห้องน้ำ / ทำความสะอาดกลางคืน แล้วดึงพนักงานเข้างาน" action={<button onClick={addTask} className="px-4 py-2 bg-emerald-900 text-white rounded-lg text-sm font-medium">เพิ่มงานแรก</button>} />
@@ -4203,10 +4206,12 @@ function RecurringTaskPage({ businesses, employees, activeBusinessId, ops }) {
                     <label className="block text-xs text-stone-500 mb-1">ชื่องาน</label>
                     <input value={t.name} onChange={(e) => setTask(t.id, { name: e.target.value })} placeholder="เช่น ล้างห้องน้ำ" className="w-full px-3 py-2 border border-stone-300 rounded-lg" />
                   </div>
+                  {canSeePay && (
                   <div className="w-28">
                     <label className="block text-xs text-stone-500 mb-1">ค่าจ้าง/คน</label>
                     <input type="number" step="0.01" value={t.defaultPay} onChange={(e) => setTask(t.id, { defaultPay: e.target.value })} placeholder="0" className="w-full px-3 py-2 border border-stone-300 rounded-lg text-right" />
                   </div>
+                  )}
                   <div className="w-24">
                     <label className="block text-xs text-stone-500 mb-1">ต้องการ (คน)</label>
                     <input type="number" value={t.headcount} onChange={(e) => setTask(t.id, { headcount: e.target.value })} placeholder="—" className="w-full px-3 py-2 border border-stone-300 rounded-lg text-center" />
@@ -4216,15 +4221,15 @@ function RecurringTaskPage({ businesses, employees, activeBusinessId, ops }) {
 
                 <div className="flex items-center justify-between mb-1.5">
                   <span className="text-xs font-medium text-stone-600">พนักงานที่ทำงานนี้ {target > 0 ? <span className={assigned.length >= target ? 'text-emerald-600' : 'text-amber-600'}>({assigned.length}/{target})</span> : (assigned.length > 0 && <span className="text-stone-400">({assigned.length} คน)</span>)}</span>
-                  <span className="text-xs text-stone-500">รวมงานนี้ {fmtMoney(taskTotal)} ฿</span>
+                  {canSeePay && <span className="text-xs text-stone-500">รวมงานนี้ {fmtMoney(taskTotal)} ฿</span>}
                 </div>
 
                 <div className="space-y-1.5">
                   {assigned.map((a) => (
                     <div key={a.empId} className="flex items-center gap-2">
                       <span className="flex-1 text-sm text-stone-700 inline-flex items-center gap-1.5"><span className="inline-flex items-center justify-center w-5 h-5 bg-emerald-100 text-emerald-700 rounded-full text-[10px]">✓</span>{empName(a.empId)}{isOtherBiz(a.empId) && <span className="text-[10px] px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded">ต่างธุรกิจ · {bizNameOf(a.empId)}</span>}</span>
-                      <input type="number" step="0.01" value={a.amount} onChange={(e) => setAssigneeAmount(t.id, a.empId, e.target.value)} placeholder={`${Number(t.defaultPay) || 0}`} className="w-24 px-2 py-1.5 text-sm text-right border border-stone-200 rounded focus:outline-none focus:ring-2 focus:ring-emerald-500/40" />
-                      <span className="text-xs text-stone-400">฿</span>
+                      {canSeePay && <input type="number" step="0.01" value={a.amount} onChange={(e) => setAssigneeAmount(t.id, a.empId, e.target.value)} placeholder={`${Number(t.defaultPay) || 0}`} className="w-24 px-2 py-1.5 text-sm text-right border border-stone-200 rounded focus:outline-none focus:ring-2 focus:ring-emerald-500/40" />}
+                      {canSeePay && <span className="text-xs text-stone-400">฿</span>}
                       <button onClick={() => rmAssignee(t.id, a.empId)} className="p-1 hover:bg-red-50 rounded text-red-500"><X className="w-3.5 h-3.5" /></button>
                     </div>
                   ))}
@@ -4244,7 +4249,7 @@ function RecurringTaskPage({ businesses, employees, activeBusinessId, ops }) {
           <button onClick={addTask} className="w-full py-2.5 border-2 border-dashed border-stone-300 rounded-xl text-sm text-stone-500 hover:border-emerald-400 hover:text-emerald-700 flex items-center justify-center gap-1.5"><Plus className="w-4 h-4" />เพิ่มงาน</button>
         )}
 
-        {Object.keys(perEmp).length > 0 && (
+        {canSeePay && Object.keys(perEmp).length > 0 && (
           <div className="bg-white border border-stone-200 rounded-xl p-4">
             <div className="flex items-center justify-between mb-2">
               <div className="text-sm font-medium text-stone-700">ยอดที่จะบวกเข้าเงินเดือน (งานเสริม)</div>
@@ -5622,8 +5627,8 @@ function ProfileEditForm({ initial, businesses, zones, onSave, onCancel, isSelf 
     { id: 'payroll', label: 'เงินเดือน', when: role === 'business_manager' && canManagePayroll },
     { id: 'commission', label: 'คอมมิชชั่น', when: role === 'business_manager' && canManagePayroll },
     { id: 'roomrent', label: 'ค่าห้องพนักงาน', when: role === 'business_manager' && canManagePayroll },
-    { id: 'recurringtasks', label: 'งานเสริมประจำ', when: role === 'business_manager' && canManagePayroll },
-    { id: 'advances', label: 'เบิกเงิน', when: role === 'business_manager' && canManagePayroll },
+    { id: 'recurringtasks', label: 'งานเสริมประจำ', when: role === 'business_manager' },
+    { id: 'advances', label: 'เบิกเงิน', when: role === 'business_manager' },
     { id: 'contractors', label: 'ช่าง/ผู้รับเหมา', when: true, grant: true }, // มอบสิทธิ์พิเศษ (ปกติเฉพาะเจ้าของ) — ปิดเป็นค่าเริ่มต้น
   ].filter((m) => m.when);
   const showMenuPicker = ['business_manager', 'zone_manager', 'viewer'].includes(role);
