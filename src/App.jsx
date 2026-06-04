@@ -1853,7 +1853,7 @@ function Sidebar({ view, setView, profile, businesses, zones, activeBusinessId, 
           </select>
         </div>
       )}
-      <nav className="flex-1 p-3 space-y-0.5">
+      <nav className="flex-1 min-h-0 overflow-y-auto p-3 space-y-0.5">
         {NAV_ITEMS.map((item) => {
           if (item.show === false) return null;
           const Icon = item.icon;
