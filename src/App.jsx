@@ -2281,22 +2281,29 @@ function BusinessesPage({ businesses, zones, employees, positions, profile, ops,
               const isCollapsed = collapsed[biz.id];
               return (
                 <div key={biz.id} className="bg-white rounded-xl border border-stone-200 overflow-hidden">
-                  <div className="p-5 flex items-center gap-4 group hover:bg-stone-50">
-                    <button onClick={() => toggle(biz.id)} className="p-1 hover:bg-stone-200 rounded">
+                  <div className="p-4 sm:p-5 flex items-center gap-3 sm:gap-4 group hover:bg-stone-50">
+                    <button onClick={() => toggle(biz.id)} className="p-1 hover:bg-stone-200 rounded flex-shrink-0">
                       {isCollapsed ? <ChevronRight className="w-5 h-5 text-stone-500" /> : <ChevronDown className="w-5 h-5 text-stone-500" />}
                     </button>
-                    <div className="w-12 h-12 rounded-xl bg-emerald-100 flex items-center justify-center flex-shrink-0 overflow-hidden">
+                    <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-xl bg-emerald-100 flex items-center justify-center flex-shrink-0 overflow-hidden">
                       {biz.logo ? <img src={biz.logo} alt={biz.name} className="w-full h-full object-contain" /> : <Building2 className="w-6 h-6 text-emerald-800" />}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <h3 className="font-semibold text-stone-800 text-lg">{biz.name}</h3>
+                      <h3 className="font-semibold text-stone-800 text-base sm:text-lg truncate">{biz.name}</h3>
                       {biz.description && <p className="text-sm text-stone-500 line-clamp-1">{biz.description}</p>}
+                      {/* สถิติแบบย่อใต้ชื่อ — เฉพาะมือถือ (กันชื่อถูกเบียด) */}
+                      <div className="flex sm:hidden items-center gap-3 mt-0.5 text-xs text-stone-500">
+                        <span><span className="font-medium text-stone-700">{bizZones.length}</span> โซน</span>
+                        <span><span className="font-medium text-stone-700">{bizEmps.length}</span> พนักงาน</span>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-6 text-sm flex-shrink-0">
+                    {/* สถิติคอลัมน์ — เฉพาะจอใหญ่ */}
+                    <div className="hidden sm:flex items-center gap-6 text-sm flex-shrink-0">
                       <div className="text-center"><div className="text-stone-400 text-xs">โซน</div><div className="font-medium text-stone-700">{bizZones.length}</div></div>
                       <div className="text-center"><div className="text-stone-400 text-xs">พนักงาน</div><div className="font-medium text-stone-700">{bizEmps.length}</div></div>
                     </div>
-                    <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    {/* ปุ่มจัดการ — มือถือโชว์เสมอ (แตะ hover ไม่ได้), จอใหญ่ค่อยโผล่ตอน hover */}
+                    <div className="flex gap-1 flex-shrink-0 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
                       <button onClick={() => { setEditingBiz(biz); setShowBizModal(true); }} className="p-2 hover:bg-stone-200 rounded text-stone-600"><Edit2 className="w-4 h-4" /></button>
                       {isOwner && <button onClick={() => delBiz(biz.id)} className="p-2 hover:bg-red-100 rounded text-red-600"><Trash2 className="w-4 h-4" /></button>}
                     </div>
