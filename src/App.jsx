@@ -4059,8 +4059,11 @@ function RecurringTaskPage({ businesses, employees, activeBusinessId, ops }) {
   const [carried, setCarried] = useState(false);
 
   const business = businesses.find((b) => b.id === activeBusinessId);
-  const bizEmployees = useMemo(() => employees.filter((e) => isActive(e) && (e.businessId === activeBusinessId || (e.additionalBusinessIds || []).includes(activeBusinessId))), [employees, activeBusinessId]);
+  // งานเสริมประจำของธุรกิจนี้ ดึงพนักงานได้ "ทุกธุรกิจ" — ธุรกิจนี้เป็นคนจ่าย
+  const allEmployees = useMemo(() => employees.filter((e) => isActive(e)), [employees]);
   const empName = (id) => { const e = employees.find((x) => x.id === id); return e ? dispName(e) : '— ไม่พบ —'; };
+  const bizNameOf = (id) => { const e = employees.find((x) => x.id === id); return e ? (businesses.find((b) => b.id === e.businessId)?.name || '') : ''; };
+  const isOtherBiz = (id) => { const e = employees.find((x) => x.id === id); return !!e && e.businessId !== activeBusinessId && !(e.additionalBusinessIds || []).includes(activeBusinessId); };
   const newTask = () => ({ id: `t${Date.now()}${Math.floor(Math.random() * 1000)}`, name: '', defaultPay: '', headcount: '', assignments: [] });
   const mapTask = (t) => ({ ...newTask(), ...t, assignments: (t.assignments || []).map((a) => ({ empId: a.empId, amount: a.amount ?? '' })) });
 
@@ -4153,7 +4156,7 @@ function RecurringTaskPage({ businesses, employees, activeBusinessId, ops }) {
         <div className="space-y-3">
           {tasks.map((t) => {
             const assigned = (t.assignments || []).filter((a) => a.empId);
-            const available = bizEmployees.filter((e) => !assigned.some((a) => a.empId === e.id));
+            const available = allEmployees.filter((e) => !assigned.some((a) => a.empId === e.id));
             const taskTotal = assigned.reduce((s, a) => s + effAmount(t, a), 0);
             const target = Number(t.headcount) || 0;
             return (
@@ -4182,7 +4185,7 @@ function RecurringTaskPage({ businesses, employees, activeBusinessId, ops }) {
                 <div className="space-y-1.5">
                   {assigned.map((a) => (
                     <div key={a.empId} className="flex items-center gap-2">
-                      <span className="flex-1 text-sm text-stone-700 inline-flex items-center gap-1.5"><span className="inline-flex items-center justify-center w-5 h-5 bg-emerald-100 text-emerald-700 rounded-full text-[10px]">✓</span>{empName(a.empId)}</span>
+                      <span className="flex-1 text-sm text-stone-700 inline-flex items-center gap-1.5"><span className="inline-flex items-center justify-center w-5 h-5 bg-emerald-100 text-emerald-700 rounded-full text-[10px]">✓</span>{empName(a.empId)}{isOtherBiz(a.empId) && <span className="text-[10px] px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded">ต่างธุรกิจ · {bizNameOf(a.empId)}</span>}</span>
                       <input type="number" step="0.01" value={a.amount} onChange={(e) => setAssigneeAmount(t.id, a.empId, e.target.value)} placeholder={`${Number(t.defaultPay) || 0}`} className="w-24 px-2 py-1.5 text-sm text-right border border-stone-200 rounded focus:outline-none focus:ring-2 focus:ring-emerald-500/40" />
                       <span className="text-xs text-stone-400">฿</span>
                       <button onClick={() => rmAssignee(t.id, a.empId)} className="p-1 hover:bg-red-50 rounded text-red-500"><X className="w-3.5 h-3.5" /></button>
@@ -4190,8 +4193,8 @@ function RecurringTaskPage({ businesses, employees, activeBusinessId, ops }) {
                   ))}
                   {available.length > 0 && (
                     <select value="" onChange={(e) => { addAssignee(t.id, e.target.value); e.target.value = ''; }} className="text-sm px-2 py-1.5 border border-stone-200 rounded bg-white text-stone-500">
-                      <option value="">+ ดึงพนักงานเข้างานนี้</option>
-                      {available.map((e) => <option key={e.id} value={e.id}>{dispName(e)}</option>)}
+                      <option value="">+ ดึงพนักงานเข้างานนี้ (ทุกธุรกิจ)</option>
+                      {available.map((e) => <option key={e.id} value={e.id}>{dispName(e)}{businesses.find((b) => b.id === e.businessId)?.name ? ` · ${businesses.find((b) => b.id === e.businessId)?.name}` : ''}</option>)}
                     </select>
                   )}
                 </div>
@@ -4212,7 +4215,7 @@ function RecurringTaskPage({ businesses, employees, activeBusinessId, ops }) {
             </div>
             <div className="text-xs text-stone-500 space-y-0.5">
               {Object.entries(perEmp).map(([id, amt]) => (
-                <div key={id} className="flex justify-between"><span>{empName(id)}</span><span>{fmtMoney(amt)} ฿</span></div>
+                <div key={id} className="flex justify-between"><span>{empName(id)}{isOtherBiz(id) && <span className="text-amber-600"> · {bizNameOf(id)}</span>}</span><span>{fmtMoney(amt)} ฿</span></div>
               ))}
             </div>
             <p className="text-xs text-stone-500 mt-3">ยอดนี้จะไปขึ้นเป็นรายการ "งานเสริม" ในหน้าเงินเดือนงวดเดียวกันอัตโนมัติ (เฉพาะคนที่ยังไม่ได้ทำเงินเดือนงวดนี้) — ถ้าทำเงินเดือนไปแล้วให้แก้ที่หน้าเงินเดือนโดยตรง</p>
@@ -4526,6 +4529,21 @@ function PayrollPage({ businesses, zones, positions, employees, activeBusinessId
 
   const finalizedCount = payrolls.filter((p) => p.status === 'finalized').length;
 
+  // คนต่างธุรกิจที่ถูกดึงมาทำ "งานเสริมประจำ" ของธุรกิจนี้ → ธุรกิจนี้เป็นคนจ่าย แต่เขาไม่ได้อยู่ใน payroll ของธุรกิจนี้
+  const bizEmpIdSet = useMemo(() => new Set(bizEmployees.map((e) => e.id)), [bizEmployees]);
+  const externalPayouts = useMemo(() => {
+    return Object.entries(recurringTaskMap || {})
+      .filter(([id]) => !bizEmpIdSet.has(id))
+      .map(([id, items]) => {
+        const emp = employees.find((e) => e.id === id);
+        const home = emp ? (businesses.find((b) => b.id === emp.businessId)?.name || '') : '';
+        const total = (items || []).reduce((s, it) => s + (Number(it.amount) || 0), 0);
+        return { id, name: emp ? dispName(emp) : '— ไม่พบ —', home, items: items || [], total };
+      })
+      .filter((x) => x.total > 0);
+  }, [recurringTaskMap, bizEmpIdSet, employees, businesses]);
+  const externalTotal = externalPayouts.reduce((s, x) => s + x.total, 0);
+
   if (!activeBusinessId) return (
     <div className="h-full overflow-auto"><PageHeader title="เงินเดือน" /><div className="p-4 md:p-8"><EmptyState icon={Wallet} title="เลือกธุรกิจที่ sidebar" description="เงินเดือนคำนวณแยกตามธุรกิจ — เลือกธุรกิจก่อน" /></div></div>
   );
@@ -4580,10 +4598,32 @@ function PayrollPage({ businesses, zones, positions, employees, activeBusinessId
             </div>
             <div className="px-4 py-2 bg-emerald-900 text-white rounded-lg">
               <div className="text-xs text-emerald-200">ยอดจ่ายรวม</div>
-              <div className="text-sm font-semibold">{fmtMoney(totalNet)} ฿</div>
+              <div className="text-sm font-semibold">{fmtMoney(totalNet + externalTotal)} ฿</div>
             </div>
           </div>
         </div>
+
+        {externalPayouts.length > 0 && (
+          <div className="mb-4 bg-amber-50 border border-amber-200 rounded-xl p-4">
+            <div className="flex items-center justify-between mb-1.5">
+              <div className="text-sm font-medium text-amber-900 flex items-center gap-1.5"><Sparkles className="w-4 h-4" />งานเสริมประจำ — จ่ายให้พนักงานต่างธุรกิจ</div>
+              <div className="text-sm font-semibold text-amber-900">รวม {fmtMoney(externalTotal)} ฿</div>
+            </div>
+            <p className="text-xs text-amber-700 mb-2">คนเหล่านี้สังกัดธุรกิจอื่น แต่มาทำงานเสริมประจำของ {bizName} — {bizName} เป็นคนจ่าย (เงินเดือนหลักของเขายังอยู่ที่ธุรกิจต้นสังกัด)</p>
+            <div className="space-y-1">
+              {externalPayouts.map((x) => (
+                <div key={x.id} className="flex items-center justify-between text-sm bg-white rounded-lg px-3 py-2 border border-amber-100">
+                  <div className="min-w-0">
+                    <span className="text-stone-800">{x.name}</span>
+                    {x.home && <span className="text-xs text-stone-400"> · {x.home}</span>}
+                    <span className="text-[11px] text-stone-400 block truncate">{x.items.map((it) => `${it.label} ${fmtMoney(it.amount)}`).join(' • ')}</span>
+                  </div>
+                  <span className="font-semibold text-amber-900 whitespace-nowrap">{fmtMoney(x.total)} ฿</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {loading ? (
           <div className="text-center py-16 text-stone-400">กำลังโหลด...</div>
