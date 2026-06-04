@@ -6051,7 +6051,7 @@ function ExpenseRequestsView({ requests, employees, contractors, businesses, isO
 
 // ฟอร์มตั้งเบิก
 function ExpenseRequestForm({ initial, employees, contractors, businesses, onSave, onCancel }) {
-  const [payeeKind, setPayeeKind] = useState(initial?.payeeKind || 'external');
+  const [payeeKind, setPayeeKind] = useState(initial?.payeeKind || 'contractor');
   const [payeeEmployeeId, setPayeeEmployeeId] = useState(initial?.payeeEmployeeId || '');
   const [payeeContractorId, setPayeeContractorId] = useState(initial?.payeeContractorId || '');
   const [payeeName, setPayeeName] = useState(initial?.payeeName || '');
@@ -6084,7 +6084,7 @@ function ExpenseRequestForm({ initial, employees, contractors, businesses, onSav
     <div className="space-y-4">
       <FormField label="จ่ายให้ใคร" required>
         <div className="grid grid-cols-3 gap-2">
-          {[['external', 'ช่างนอก/อื่นๆ'], ['contractor', 'ช่างในระบบ'], ['employee', 'พนักงาน']].map(([k, lbl]) => (
+          {[['contractor', 'ช่างในระบบ'], ['employee', 'พนักงาน'], ['external', 'ช่างนอก/อื่นๆ']].map(([k, lbl]) => (
             <button key={k} type="button" onClick={() => setPayeeKind(k)} className={`p-2.5 rounded-lg border-2 text-center text-xs ${payeeKind === k ? 'border-emerald-600 bg-emerald-50 font-medium text-emerald-900' : 'border-stone-200 text-stone-600 hover:border-stone-300'}`}>{lbl}</button>
           ))}
         </div>
