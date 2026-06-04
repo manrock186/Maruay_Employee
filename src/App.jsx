@@ -2674,7 +2674,7 @@ function EmployeesPage({ businesses, zones, positions, employees, profile, activ
             <div>กำลังดูพนักงานจาก<strong> ทุกธุรกิจ ({businesses.length} ที่)</strong> รวมกัน — เลือกธุรกิจที่ sidebar เพื่อกรองเฉพาะธุรกิจเดียว หรือเพิ่มพนักงานใหม่</div>
           </div>
         )}
-        {isOwner && activeZoneId && (
+        {(isOwner || isBM) && activeZoneId && (
           <div className="mb-4 inline-flex items-center gap-2 px-3 py-1.5 bg-amber-100 border border-amber-200 rounded-full text-sm text-amber-800">
             <MapPin className="w-3.5 h-3.5" /><span>กรองตามโซน: <strong>{filteredZoneName}</strong></span>
             <button onClick={() => setActiveZoneId(null)} className="ml-1 p-0.5 hover:bg-amber-200 rounded-full"><X className="w-3.5 h-3.5" /></button>
@@ -2690,7 +2690,7 @@ function EmployeesPage({ businesses, zones, positions, employees, profile, activ
               <button key={v} onClick={() => setStatusFilter(v)} className={`px-3 py-2 text-sm font-medium ${statusFilter === v ? 'bg-emerald-900 text-white' : 'bg-white text-stone-600 hover:bg-stone-50'}`}>{label}</button>
             ))}
           </div>
-          {isOwner && activeBusinessId && (
+          {(isOwner || isBM) && activeBusinessId && (
             <select value={activeZoneId || 'all'} onChange={(e) => setActiveZoneId(e.target.value === 'all' ? null : e.target.value)} className="px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600 bg-white">
               <option value="all">ทุกโซน</option>
               {visibleZones.map((z) => <option key={z.id} value={z.id}>{z.name}</option>)}
@@ -2771,7 +2771,7 @@ function EmployeesPage({ businesses, zones, positions, employees, profile, activ
       {viewing && (() => {
         const v = employees.find((e) => e.id === viewing.id) || viewing;
         return (
-        <EmployeeDetailModal employee={v} salaryReload={salaryReload} zones={zones} positions={positions} employees={employees} businesses={businesses} canWrite={canWrite} canResign={canResign} canRaise={profile.canManagePayroll} ops={ops} onClose={() => setViewing(null)} onEdit={() => { setEditing(v); setShowModal(true); setViewing(null); }} onDelete={() => { del(v.id); setViewing(null); }} onResign={() => setResigningEmp(v)} onRehire={() => doRehire(v)} onRaise={() => setRaisingEmp(v)} />
+        <EmployeeDetailModal employee={v} salaryReload={salaryReload} zones={zones} positions={positions} employees={employees} businesses={businesses} canWrite={canWrite} canResign={canResign} canRaise={profile.canManagePayroll} isOwner={profile.isOwner} ops={ops} onClose={() => setViewing(null)} onEdit={() => { setEditing(v); setShowModal(true); setViewing(null); }} onDelete={() => { del(v.id); setViewing(null); }} onResign={() => setResigningEmp(v)} onRehire={() => doRehire(v)} onRaise={() => setRaisingEmp(v)} />
         );
       })()}
       {resigningEmp && (
@@ -2943,7 +2943,7 @@ function SalaryRaiseModal({ employee, ops, onClose, onSaved }) {
   );
 }
 
-function EmployeeDetailModal({ employee, salaryReload, zones, positions, employees, businesses, canWrite, canResign, canRaise, ops, onClose, onEdit, onDelete, onResign, onRehire, onRaise }) {
+function EmployeeDetailModal({ employee, salaryReload, zones, positions, employees, businesses, canWrite, canResign, canRaise, isOwner = false, ops, onClose, onEdit, onDelete, onResign, onRehire, onRaise }) {
   const zone = zones.find((z) => z.id === employee.zoneId);
   const pos = positions.find((p) => p.id === employee.positionId);
   const mgr = employees.find((e) => e.id === employee.managerId);
@@ -3180,7 +3180,7 @@ function EmployeeDetailModal({ employee, salaryReload, zones, positions, employe
               ))}
             </div>
             <div className="flex gap-2">
-              <button onClick={onDelete} className="flex items-center gap-2 px-4 py-2 text-red-600 hover:bg-red-50 rounded-lg text-sm font-medium"><Trash2 className="w-4 h-4" /> ลบ</button>
+              {isOwner && <button onClick={onDelete} className="flex items-center gap-2 px-4 py-2 text-red-600 hover:bg-red-50 rounded-lg text-sm font-medium"><Trash2 className="w-4 h-4" /> ลบ</button>}
               {!resigned && <button onClick={onEdit} className="flex items-center gap-2 px-4 py-2 bg-emerald-900 hover:bg-emerald-800 text-white rounded-lg text-sm font-medium"><Edit2 className="w-4 h-4" /> แก้ไข</button>}
             </div>
           </div>
