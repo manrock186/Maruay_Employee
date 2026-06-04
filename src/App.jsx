@@ -4354,7 +4354,7 @@ function AdvancePage({ businesses, employees, activeBusinessId, ops }) {
                   <tr>
                     <th className="text-left px-3 py-2.5 min-w-[160px]">พนักงาน</th>
                     <th className="text-left px-3 py-2.5 w-40">วันที่เบิก</th>
-                    <th className="text-right px-3 py-2.5 w-32">จำนวนเงิน</th>
+                    <th className="text-right px-3 py-2.5 w-32 min-w-[96px]">จำนวนเงิน</th>
                     <th className="text-left px-3 py-2.5">หมายเหตุ</th>
                     <th className="px-2 py-2.5 w-10"></th>
                   </tr>
@@ -4369,7 +4369,7 @@ function AdvancePage({ businesses, employees, activeBusinessId, ops }) {
                         </select>
                       </td>
                       <td className="px-3 py-2"><input type="date" value={e.date || ''} onChange={(ev) => setEntry(e.id, { date: ev.target.value })} className="w-full px-2 py-1.5 border border-stone-200 rounded" /></td>
-                      <td className="px-3 py-2"><input type="number" step="0.01" inputMode="decimal" value={e.amount} onChange={(ev) => setEntry(e.id, { amount: ev.target.value })} onFocus={(ev) => ev.target.select()} placeholder="0" className="w-full px-2 py-1.5 text-right border border-stone-200 rounded focus:outline-none focus:ring-2 focus:ring-emerald-500/40" /></td>
+                      <td className="px-3 py-2"><input type="number" step="0.01" inputMode="decimal" value={e.amount} onChange={(ev) => setEntry(e.id, { amount: ev.target.value })} onFocus={(ev) => ev.target.select()} placeholder="0" className="w-full min-w-[80px] px-2 py-1.5 text-right border border-stone-200 rounded focus:outline-none focus:ring-2 focus:ring-emerald-500/40" /></td>
                       <td className="px-3 py-2"><input value={e.note} onChange={(ev) => setEntry(e.id, { note: ev.target.value })} placeholder="เช่น เบิกค่าเทอมลูก" className="w-full px-2 py-1.5 border border-stone-200 rounded" /></td>
                       <td className="px-2 py-2 text-center"><button onClick={() => rmEntry(e.id)} className="p-1 hover:bg-red-50 rounded text-red-500"><Trash2 className="w-4 h-4" /></button></td>
                     </tr>
