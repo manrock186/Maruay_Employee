@@ -5947,7 +5947,7 @@ function ContractorsPage({ contractors, visits, expenseRequests = [], employees 
         </Modal>
       )}
       {openContractor && (
-        <ContractorDetailModal contractor={openContractor} allVisits={visits} expenseRequests={expenseRequests} businesses={businesses} ops={ops} onClose={() => setOpenContractor(null)} />
+        <ContractorDetailModal contractor={openContractor} allVisits={visits} expenseRequests={expenseRequests} businesses={businesses} isOwner={isOwner} currentUserId={currentUserId} ops={ops} onClose={() => setOpenContractor(null)} />
       )}
     </div>
   );
@@ -6004,6 +6004,7 @@ function ExpenseRequestsView({ requests, employees, contractors, businesses, isO
             const st = STATUS[r.status] || STATUS.pending;
             const biz = businesses.find((b) => b.id === r.businessId);
             const canEdit = r.status === 'pending' && (isOwner || r.requestedBy === currentUserId);
+            const canDelete = isOwner || (r.status === 'pending' && r.requestedBy === currentUserId);
             return (
               <div key={r.id} className="bg-white border border-stone-200 rounded-xl p-4">
                 <div className="flex items-start justify-between gap-3">
@@ -6023,7 +6024,7 @@ function ExpenseRequestsView({ requests, employees, contractors, businesses, isO
                   </div>
                   <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
                     {canEdit && <button onClick={() => onEdit(r)} className="p-1.5 hover:bg-stone-100 rounded text-stone-500" title="แก้ไข"><Edit2 className="w-3.5 h-3.5" /></button>}
-                    {canEdit && <button onClick={() => doDelete(r)} className="p-1.5 hover:bg-red-50 rounded text-red-500" title="ลบ"><Trash2 className="w-3.5 h-3.5" /></button>}
+                    {canDelete && <button onClick={() => doDelete(r)} className="p-1.5 hover:bg-red-50 rounded text-red-500" title="ลบ"><Trash2 className="w-3.5 h-3.5" /></button>}
                   </div>
                 </div>
                 {/* ปุ่มดำเนินการ */}
@@ -6194,7 +6195,7 @@ function ContractorForm({ initial, onSave, onCancel }) {
   );
 }
 
-function ContractorDetailModal({ contractor, allVisits, expenseRequests = [], businesses, ops, onClose }) {
+function ContractorDetailModal({ contractor, allVisits, expenseRequests = [], businesses, isOwner = false, currentUserId, ops, onClose }) {
   const myVisits = useMemo(() =>
     allVisits.filter((v) => v.contractorId === contractor.id)
       .sort((a, b) => String(b.visitDate || '').localeCompare(String(a.visitDate || ''))),
@@ -6220,6 +6221,10 @@ function ContractorDetailModal({ contractor, allVisits, expenseRequests = [], bu
   const delVisit = async (v) => {
     if (!window.confirm(`ลบประวัติวันที่ ${fmt(v.visitDate)}?\nไฟล์แนบทั้งหมดจะถูกลบและไม่สามารถกู้คืนได้`)) return;
     await ops.contractorVisit.del(v.id);
+  };
+  const delExpense = async (r) => {
+    if (!window.confirm('ลบรายการตั้งเบิกนี้? ไฟล์แนบจะถูกลบด้วย และไม่สามารถกู้คืนได้')) return;
+    await ops.expenseRequest.del(r.id);
   };
   const expPaid = myExpenses.filter((r) => r.status === 'approved' || r.status === 'paid');
   const totalCost = myVisits.reduce((s, v) => s + (Number(v.cost) || 0), 0) + expPaid.reduce((s, r) => s + (Number(r.amount) || 0), 0);
@@ -6261,18 +6266,25 @@ function ContractorDetailModal({ contractor, allVisits, expenseRequests = [], bu
                 const st = EXP_STATUS[v.status] || EXP_STATUS.pending;
                 return (
                   <div key={`e-${v.id}`} className="bg-white border border-amber-200 rounded-lg p-3">
-                    <div className="flex flex-wrap items-center gap-1.5 mb-1.5">
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-50 text-amber-800 text-xs font-medium rounded"><Receipt className="w-3 h-3" />ตั้งเบิก</span>
-                      <span className={`px-2 py-0.5 text-[11px] font-medium rounded ${st.cls}`}>{st.label}</span>
-                      {v._date && <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-stone-100 text-stone-600 text-xs rounded"><Calendar className="w-3 h-3" />{fmt(v._date)}</span>}
-                      {biz && <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-sky-50 text-sky-800 text-xs font-medium rounded"><Building2 className="w-3 h-3" />{biz.name}</span>}
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-50 text-amber-800 text-xs font-medium rounded">{fmtMoney(v.amount)} ฿</span>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-1.5 mb-1.5">
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-50 text-amber-800 text-xs font-medium rounded"><Receipt className="w-3 h-3" />ตั้งเบิก</span>
+                          <span className={`px-2 py-0.5 text-[11px] font-medium rounded ${st.cls}`}>{st.label}</span>
+                          {v._date && <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-stone-100 text-stone-600 text-xs rounded"><Calendar className="w-3 h-3" />{fmt(v._date)}</span>}
+                          {biz && <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-sky-50 text-sky-800 text-xs font-medium rounded"><Building2 className="w-3 h-3" />{biz.name}</span>}
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-50 text-amber-800 text-xs font-medium rounded">{fmtMoney(v.amount)} ฿</span>
+                        </div>
+                        <div className="text-sm text-stone-700 whitespace-pre-line">{v.workDescription}</div>
+                        {v.notes && <div className="text-xs text-stone-500 mt-1 italic whitespace-pre-line">หมายเหตุ: {v.notes}</div>}
+                        {v.status === 'rejected' && v.rejectReason && <div className="text-xs text-rose-600 mt-1">เหตุผลที่ไม่อนุมัติ: {v.rejectReason}</div>}
+                        {v.docs?.length > 0 && <div className="mt-2"><DocList paths={v.docs} /></div>}
+                        <div className="text-[11px] text-stone-400 mt-1.5">จัดการที่แท็บ "ตั้งเบิก"</div>
+                      </div>
+                      {(isOwner || (v.status === 'pending' && v.requestedBy === currentUserId)) && (
+                        <button onClick={() => delExpense(v)} className="p-1.5 hover:bg-red-50 rounded text-red-500 flex-shrink-0" title="ลบรายการตั้งเบิก"><Trash2 className="w-3.5 h-3.5" /></button>
+                      )}
                     </div>
-                    <div className="text-sm text-stone-700 whitespace-pre-line">{v.workDescription}</div>
-                    {v.notes && <div className="text-xs text-stone-500 mt-1 italic whitespace-pre-line">หมายเหตุ: {v.notes}</div>}
-                    {v.status === 'rejected' && v.rejectReason && <div className="text-xs text-rose-600 mt-1">เหตุผลที่ไม่อนุมัติ: {v.rejectReason}</div>}
-                    {v.docs?.length > 0 && <div className="mt-2"><DocList paths={v.docs} /></div>}
-                    <div className="text-[11px] text-stone-400 mt-1.5">จัดการที่แท็บ "ตั้งเบิก"</div>
                   </div>
                 );
               }
