@@ -5830,6 +5830,14 @@ function ProfileEditForm({ initial, businesses, zones, onSave, onCancel, isSelf 
 }
 
 // ============ CONTRACTORS PAGE ============
+// ส่วนแบ่งเงินของผู้รับเงินคนหนึ่งในคำขอเบิก (รองรับเงินรายคน / ข้อมูลเก่าที่มียอดรวมก้อนเดียว)
+function expenseShare(r, id) {
+  if (r && r.payeeAmounts && r.payeeAmounts[id] != null) return Number(r.payeeAmounts[id]) || 0;
+  const ids = Array.isArray(r?.payeeIds) ? r.payeeIds : [];
+  if (ids.length > 1) return (Number(r.amount) || 0) / ids.length; // ข้อมูลเก่าหลายคนไม่มียอดรายคน → เฉลี่ย
+  return Number(r?.amount) || 0;
+}
+
 function ContractorsPage({ contractors, visits, expenseRequests = [], employees = [], businesses, profile, currentUserId, ops }) {
   const [tab, setTab] = useState('expenses'); // 'expenses' | 'contractors'
   const [showForm, setShowForm] = useState(false);
@@ -5860,7 +5868,7 @@ function ContractorsPage({ contractors, visits, expenseRequests = [], employees 
       ...c,
       visitCount: my.length + myExp.length,
       lastVisit: dates.slice(-1)[0] || null,
-      totalCost: my.reduce((s, v) => s + (Number(v.cost) || 0), 0) + expPaid.reduce((s, r) => s + (Number(r.amount) || 0), 0),
+      totalCost: my.reduce((s, v) => s + (Number(v.cost) || 0), 0) + expPaid.reduce((s, r) => s + expenseShare(r, c.id), 0),
       _jobText: jobText,
       _bizIds: bizIds,
     };
@@ -6071,6 +6079,15 @@ function ExpenseRequestsView({ requests, employees, contractors, businesses, isO
                       {biz && <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-sky-50 text-sky-800 text-[11px] rounded"><Building2 className="w-3 h-3" />{biz.name}</span>}
                     </div>
                     <div className="font-semibold text-stone-800">{payeeName(r)} <span className="text-amber-700">• {fmtMoney(r.amount)} ฿</span></div>
+                    {Array.isArray(r.payeeIds) && r.payeeIds.length > 1 && r.payeeAmounts && (
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {r.payeeIds.map((id) => {
+                          const nm = r.payeeKind === 'employee' ? dispName(employees.find((e) => e.id === id) || {}) : (contractors.find((c) => c.id === id) || {}).name;
+                          if (!nm) return null;
+                          return <span key={id} className="px-1.5 py-0.5 bg-stone-100 text-stone-600 text-[11px] rounded">{nm}: {fmtMoney(expenseShare(r, id))} ฿</span>;
+                        })}
+                      </div>
+                    )}
                     <div className="text-sm text-stone-700 whitespace-pre-line mt-0.5">{r.workDescription}</div>
                     {r.notes && <div className="text-xs text-stone-500 mt-1 italic whitespace-pre-line">หมายเหตุ: {r.notes}</div>}
                     {r.status === 'rejected' && r.rejectReason && <div className="text-xs text-rose-600 mt-1">เหตุผลที่ไม่อนุมัติ: {r.rejectReason}</div>}
@@ -6112,36 +6129,55 @@ function ExpenseRequestForm({ initial, employees, contractors, businesses, onSav
     ? initial.payeeIds
     : (initial?.payeeEmployeeId ? [initial.payeeEmployeeId] : (initial?.payeeContractorId ? [initial.payeeContractorId] : []));
   const [payeeIds, setPayeeIds] = useState(initIds);
+  const initAmounts = {};
+  if (initial?.payeeAmounts && typeof initial.payeeAmounts === 'object') {
+    for (const k of Object.keys(initial.payeeAmounts)) initAmounts[k] = String(initial.payeeAmounts[k]);
+  } else if (initIds.length === 1 && initial?.amount != null) {
+    initAmounts[initIds[0]] = String(initial.amount);
+  }
+  const [payeeAmounts, setPayeeAmounts] = useState(initAmounts); // { id: "amount" }
   const [payeeName, setPayeeName] = useState(initial?.payeeName || '');
   const [businessId, setBusinessId] = useState(initial?.businessId || businesses[0]?.id || '');
   const [workDescription, setWorkDescription] = useState(initial?.workDescription || '');
-  const [amount, setAmount] = useState(initial?.amount ?? '');
+  const [amount, setAmount] = useState(initial?.amount ?? ''); // ใช้กับ "ช่างนอก/อื่นๆ" (คนเดียว)
   const [notes, setNotes] = useState(initial?.notes || '');
   const [docs, setDocs] = useState(initial?.docs || []);
   const activeEmployees = useMemo(() => employees.filter((e) => isActive(e)).sort((a, b) => (a.employeeNumber || '').localeCompare(b.employeeNumber || '')), [employees]);
-  const togglePayee = (id) => setPayeeIds((arr) => arr.includes(id) ? arr.filter((x) => x !== id) : [...arr, id]);
+  const isPerPerson = payeeKind === 'employee' || payeeKind === 'contractor';
+  const togglePayee = (id) => setPayeeIds((arr) => {
+    if (arr.includes(id)) { setPayeeAmounts((m) => { const n = { ...m }; delete n[id]; return n; }); return arr.filter((x) => x !== id); }
+    return [...arr, id];
+  });
+  const setAmtFor = (id, val) => setPayeeAmounts((m) => ({ ...m, [id]: val }));
+  const perPersonTotal = useMemo(() => payeeIds.reduce((s, id) => s + (Number(payeeAmounts[id]) || 0), 0), [payeeIds, payeeAmounts]);
 
   const submit = () => {
     if (!businessId) return alert('กรุณาเลือกตึก/ธุรกิจ');
     if (!workDescription.trim()) return alert('กรุณากรอกรายละเอียดงาน');
-    if (!(Number(amount) > 0)) return alert('กรุณาระบุจำนวนเงิน');
     let pName = payeeName.trim();
     let ids = [];
-    if (payeeKind === 'employee') {
-      ids = payeeIds.filter((id) => activeEmployees.some((e) => e.id === id));
-      if (ids.length === 0) return alert('กรุณาเลือกพนักงานอย่างน้อย 1 คน');
-      pName = ids.map((id) => dispName(employees.find((e) => e.id === id) || {})).filter(Boolean).join(', ');
-    } else if (payeeKind === 'contractor') {
-      ids = payeeIds.filter((id) => contractors.some((c) => c.id === id));
-      if (ids.length === 0) return alert('กรุณาเลือกช่างอย่างน้อย 1 คน');
-      pName = ids.map((id) => (contractors.find((c) => c.id === id) || {}).name).filter(Boolean).join(', ');
+    let total = 0;
+    let amounts = {};
+    if (isPerPerson) {
+      ids = payeeIds.filter((id) => (payeeKind === 'employee' ? activeEmployees : contractors).some((x) => x.id === id));
+      if (ids.length === 0) return alert(payeeKind === 'employee' ? 'กรุณาเลือกพนักงานอย่างน้อย 1 คน' : 'กรุณาเลือกช่างอย่างน้อย 1 คน');
+      for (const id of ids) {
+        const a = Number(payeeAmounts[id]) || 0;
+        if (!(a > 0)) return alert('กรุณากรอกจำนวนเงินของแต่ละคนให้ครบ (มากกว่า 0)');
+        amounts[id] = a; total += a;
+      }
+      const nameOf = (id) => payeeKind === 'employee' ? dispName(employees.find((e) => e.id === id) || {}) : (contractors.find((c) => c.id === id) || {}).name;
+      pName = ids.map(nameOf).filter(Boolean).join(', ');
     } else {
       if (!pName) return alert('กรุณากรอกชื่อผู้รับเงิน');
+      total = Number(amount) || 0;
+      if (!(total > 0)) return alert('กรุณาระบุจำนวนเงิน');
     }
     onSave({
-      businessId, workDescription: workDescription.trim(), amount: Number(amount) || 0,
+      businessId, workDescription: workDescription.trim(), amount: total,
       payeeKind,
       payeeIds: ids,
+      payeeAmounts: amounts,
       payeeEmployeeId: payeeKind === 'employee' ? (ids[0] || null) : null,
       payeeContractorId: payeeKind === 'contractor' ? (ids[0] || null) : null,
       payeeName: pName,
@@ -6159,29 +6195,51 @@ function ExpenseRequestForm({ initial, employees, contractors, businesses, onSav
         </div>
       </FormField>
       {payeeKind === 'employee' && (
-        <FormField label="เลือกพนักงาน (เลือกได้หลายคน)" required>
+        <FormField label="เลือกพนักงาน + จำนวนเงินต่อคน (เลือกได้หลายคน)" required>
           {payeeIds.length > 0 && <div className="mb-1.5 text-xs text-stone-500">เลือกแล้ว {payeeIds.length} คน</div>}
-          <div className="max-h-52 overflow-y-auto border border-stone-200 rounded-lg divide-y divide-stone-100">
-            {activeEmployees.map((e) => (
-              <label key={e.id} className="flex items-center gap-2.5 px-3 py-2 hover:bg-stone-50 cursor-pointer">
-                <input type="checkbox" checked={payeeIds.includes(e.id)} onChange={() => togglePayee(e.id)} className="w-4 h-4 accent-emerald-600" />
-                <span className="text-sm text-stone-700">#{e.employeeNumber} {dispName(e)}</span>
-              </label>
-            ))}
+          <div className="max-h-60 overflow-y-auto border border-stone-200 rounded-lg divide-y divide-stone-100">
+            {activeEmployees.map((e) => {
+              const checked = payeeIds.includes(e.id);
+              return (
+                <div key={e.id} className={`flex items-center gap-2.5 px-3 py-2 ${checked ? 'bg-emerald-50/40' : 'hover:bg-stone-50'}`}>
+                  <label className="flex items-center gap-2.5 cursor-pointer flex-1 min-w-0">
+                    <input type="checkbox" checked={checked} onChange={() => togglePayee(e.id)} className="w-4 h-4 accent-emerald-600" />
+                    <span className="text-sm text-stone-700 truncate">#{e.employeeNumber} {dispName(e)}</span>
+                  </label>
+                  {checked && (
+                    <div className="flex items-center gap-1 flex-shrink-0">
+                      <input type="number" min={0} step="0.01" value={payeeAmounts[e.id] ?? ''} onChange={(ev) => setAmtFor(e.id, ev.target.value)} placeholder="0" className="w-24 px-2 py-1.5 text-sm text-right border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40" />
+                      <span className="text-xs text-stone-400">฿</span>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
             {activeEmployees.length === 0 && <div className="px-3 py-2 text-xs text-stone-400">ไม่มีพนักงาน</div>}
           </div>
         </FormField>
       )}
       {payeeKind === 'contractor' && (
-        <FormField label="เลือกช่าง (เลือกได้หลายคน)" required>
+        <FormField label="เลือกช่าง + จำนวนเงินต่อคน (เลือกได้หลายคน)" required>
           {payeeIds.length > 0 && <div className="mb-1.5 text-xs text-stone-500">เลือกแล้ว {payeeIds.length} คน</div>}
-          <div className="max-h-52 overflow-y-auto border border-stone-200 rounded-lg divide-y divide-stone-100">
-            {contractors.map((c) => (
-              <label key={c.id} className="flex items-center gap-2.5 px-3 py-2 hover:bg-stone-50 cursor-pointer">
-                <input type="checkbox" checked={payeeIds.includes(c.id)} onChange={() => togglePayee(c.id)} className="w-4 h-4 accent-emerald-600" />
-                <span className="text-sm text-stone-700">{c.name}</span>
-              </label>
-            ))}
+          <div className="max-h-60 overflow-y-auto border border-stone-200 rounded-lg divide-y divide-stone-100">
+            {contractors.map((c) => {
+              const checked = payeeIds.includes(c.id);
+              return (
+                <div key={c.id} className={`flex items-center gap-2.5 px-3 py-2 ${checked ? 'bg-emerald-50/40' : 'hover:bg-stone-50'}`}>
+                  <label className="flex items-center gap-2.5 cursor-pointer flex-1 min-w-0">
+                    <input type="checkbox" checked={checked} onChange={() => togglePayee(c.id)} className="w-4 h-4 accent-emerald-600" />
+                    <span className="text-sm text-stone-700 truncate">{c.name}</span>
+                  </label>
+                  {checked && (
+                    <div className="flex items-center gap-1 flex-shrink-0">
+                      <input type="number" min={0} step="0.01" value={payeeAmounts[c.id] ?? ''} onChange={(ev) => setAmtFor(c.id, ev.target.value)} placeholder="0" className="w-24 px-2 py-1.5 text-sm text-right border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40" />
+                      <span className="text-xs text-stone-400">฿</span>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
           {contractors.length === 0 && <p className="text-xs text-amber-600 mt-1">ยังไม่มีช่างในระบบ — เพิ่มที่แท็บ "ช่าง/ผู้รับเหมา" หรือเลือก "ช่างนอก/อื่นๆ"</p>}
         </FormField>
@@ -6196,7 +6254,13 @@ function ExpenseRequestForm({ initial, employees, contractors, businesses, onSav
             {businesses.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
           </select>
         </FormField>
-        <FormField label="จำนวนเงิน (บาท)" required><input type="number" min={0} step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40" /></FormField>
+        {isPerPerson ? (
+          <FormField label="ยอดรวม (บาท)">
+            <div className="w-full px-3 py-2 border border-stone-200 rounded-lg bg-stone-50 text-right font-semibold text-stone-800">{fmtMoney(perPersonTotal)} ฿</div>
+          </FormField>
+        ) : (
+          <FormField label="จำนวนเงิน (บาท)" required><input type="number" min={0} step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40" /></FormField>
+        )}
       </div>
       <FormField label="รายละเอียดงาน" required><textarea autoFocus value={workDescription} onChange={(e) => setWorkDescription(e.target.value)} rows={3} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 resize-none" placeholder="เช่น ล้างแอร์ 5 เครื่อง ชั้น 2, ซ่อมประตูม้วนหน้าร้าน" /></FormField>
       <FormField label="หมายเหตุ"><textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 resize-none" /></FormField>
@@ -6307,7 +6371,7 @@ function ContractorDetailModal({ contractor, allVisits, expenseRequests = [], bu
     await ops.expenseRequest.del(r.id);
   };
   const expPaid = myExpenses.filter((r) => r.status === 'approved' || r.status === 'paid');
-  const totalCost = myVisits.reduce((s, v) => s + (Number(v.cost) || 0), 0) + expPaid.reduce((s, r) => s + (Number(r.amount) || 0), 0);
+  const totalCost = myVisits.reduce((s, v) => s + (Number(v.cost) || 0), 0) + expPaid.reduce((s, r) => s + expenseShare(r, contractor.id), 0);
   const EXP_STATUS = {
     pending: { label: 'รออนุมัติ', cls: 'bg-amber-100 text-amber-800' },
     approved: { label: 'อนุมัติแล้ว', cls: 'bg-emerald-100 text-emerald-800' },
@@ -6353,7 +6417,7 @@ function ContractorDetailModal({ contractor, allVisits, expenseRequests = [], bu
                           <span className={`px-2 py-0.5 text-[11px] font-medium rounded ${st.cls}`}>{st.label}</span>
                           {v._date && <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-stone-100 text-stone-600 text-xs rounded"><Calendar className="w-3 h-3" />{fmt(v._date)}</span>}
                           {biz && <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-sky-50 text-sky-800 text-xs font-medium rounded"><Building2 className="w-3 h-3" />{biz.name}</span>}
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-50 text-amber-800 text-xs font-medium rounded">{fmtMoney(v.amount)} ฿</span>
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-50 text-amber-800 text-xs font-medium rounded">{fmtMoney(expenseShare(v, contractor.id))} ฿{Array.isArray(v.payeeIds) && v.payeeIds.length > 1 ? ` / รวม ${fmtMoney(v.amount)}` : ''}</span>
                         </div>
                         <div className="text-sm text-stone-700 whitespace-pre-line">{v.workDescription}</div>
                         {v.notes && <div className="text-xs text-stone-500 mt-1 italic whitespace-pre-line">หมายเหตุ: {v.notes}</div>}
