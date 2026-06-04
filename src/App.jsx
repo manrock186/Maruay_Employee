@@ -278,6 +278,19 @@ function recurringTaskMapFromPool(pool) {
   return m;
 }
 
+// แปลงพูล "เบิกเงิน" → map: empId -> ยอดเบิกรวม (ที่จะไปหักในเงินเดือน)
+function advanceMapFromPool(pool) {
+  const m = {};
+  (pool?.entries || []).forEach((e) => {
+    if (!e || !e.empId) return;
+    const amt = Number(e.amount) || 0;
+    if (!amt) return;
+    m[e.empId] = (m[e.empId] || 0) + amt;
+  });
+  Object.keys(m).forEach((k) => { m[k] = Math.round(m[k] * 100) / 100; });
+  return m;
+}
+
 // สร้าง draft ตั้งต้นสำหรับ payroll (จาก payroll เดิม หรือ default จากโปรไฟล์พนักงาน)
 function buildPayrollDraft(emp, payroll, items, year, month, businessId) {
   if (payroll) {
@@ -681,7 +694,7 @@ export default function App() {
     if (!profile || profile.isOwner || profile.role === 'pending') return;
     if (!Array.isArray(profile.allowedViews)) return;
     const allowed = new Set([...profile.allowedViews, 'dashboard']);
-    const gated = ['businesses', 'positions', 'employees', 'orgchart', 'payroll', 'commission', 'roomrent', 'recurringtasks', 'contractors'];
+    const gated = ['businesses', 'positions', 'employees', 'orgchart', 'payroll', 'commission', 'roomrent', 'recurringtasks', 'advances', 'contractors'];
     if (gated.includes(view) && !allowed.has(view)) setView('dashboard');
   }, [view, profile]);
 
@@ -1108,6 +1121,21 @@ export default function App() {
         return fromDB(data);
       },
     },
+    advance: {
+      getByPeriod: async (businessId, year, month) => {
+        const { data, error } = await supabase.from('advance_pools').select('*')
+          .eq('business_id', businessId).eq('period_year', year).eq('period_month', month).maybeSingle();
+        if (error) { console.error(error); return null; }
+        return data ? fromDB(data) : null;
+      },
+      upsert: async (d) => {
+        const { data, error } = await supabase.from('advance_pools')
+          .upsert({ ...toDB(d), updated_at: new Date().toISOString() }, { onConflict: 'business_id,period_year,period_month' })
+          .select().single();
+        if (error) { alert('บันทึกการเบิกไม่สำเร็จ: ' + error.message); return null; }
+        return fromDB(data);
+      },
+    },
     salaryChange: {
       listByEmployee: async (employeeId) => {
         const { data, error } = await supabase.from('salary_changes').select('*')
@@ -1364,6 +1392,14 @@ export default function App() {
         )}
         {view === 'recurringtasks' && profile.canManagePayroll && (
           <RecurringTaskPage
+            businesses={businesses}
+            employees={employees}
+            activeBusinessId={activeBusinessId}
+            ops={ops}
+          />
+        )}
+        {view === 'advances' && profile.canManagePayroll && (
+          <AdvancePage
             businesses={businesses}
             employees={employees}
             activeBusinessId={activeBusinessId}
@@ -1745,6 +1781,7 @@ function Sidebar({ view, setView, profile, businesses, zones, activeBusinessId, 
     { id: 'commission', label: 'คอมมิชชั่น', icon: Percent, show: profile.canManagePayroll && navAllowed('commission') },
     { id: 'roomrent', label: 'ค่าห้องพนักงาน', icon: KeyRound, show: profile.canManagePayroll && navAllowed('roomrent') },
     { id: 'recurringtasks', label: 'งานเสริมประจำ', icon: Sparkles, show: profile.canManagePayroll && navAllowed('recurringtasks') },
+    { id: 'advances', label: 'เบิกเงิน', icon: Banknote, show: profile.canManagePayroll && navAllowed('advances') },
     { id: 'users', label: 'ผู้ใช้ระบบ', icon: Shield, show: isOwner },
     { id: 'contractors', label: 'ช่าง/ผู้รับเหมา', icon: Wrench, show: canViewContractors, badge: contractorPendingCount },
     { id: 'settings', label: 'ตั้งค่า', icon: Settings, show: isOwner },
@@ -4228,6 +4265,144 @@ function RecurringTaskPage({ businesses, employees, activeBusinessId, ops }) {
   );
 }
 
+// ============ ADVANCE PAGE (เบิกเงินระหว่างเดือน) ============
+function AdvancePage({ businesses, employees, activeBusinessId, ops }) {
+  const now = new Date();
+  const [year, setYear] = useState(now.getFullYear());
+  const [month, setMonth] = useState(now.getMonth() + 1);
+  const [entries, setEntries] = useState([]);
+  const [note, setNote] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [savedAt, setSavedAt] = useState(null);
+
+  const business = businesses.find((b) => b.id === activeBusinessId);
+  const bizEmployees = useMemo(() => employees.filter((e) => isActive(e) && (e.businessId === activeBusinessId || (e.additionalBusinessIds || []).includes(activeBusinessId))), [employees, activeBusinessId]);
+  const empName = (id) => { const e = employees.find((x) => x.id === id); return e ? dispName(e) : '— ไม่พบ —'; };
+  const todayISO = () => new Date().toISOString().slice(0, 10);
+  const newEntry = () => ({ id: `a${Date.now()}${Math.floor(Math.random() * 1000)}`, empId: '', amount: '', date: todayISO(), note: '' });
+
+  useEffect(() => {
+    if (!activeBusinessId) return;
+    let cancelled = false;
+    (async () => {
+      const pool = await ops.advance.getByPeriod(activeBusinessId, year, month);
+      if (cancelled) return;
+      if (pool) {
+        setEntries((pool.entries || []).map((e) => ({ ...newEntry(), ...e, amount: e.amount ?? '', date: e.date || '', note: e.note || '' })));
+        setNote(pool.note || ''); setSavedAt(pool.updatedAt || pool.createdAt || null);
+      } else { setEntries([]); setNote(''); setSavedAt(null); }
+    })();
+    return () => { cancelled = true; };
+  }, [activeBusinessId, year, month]);
+
+  const addEntry = () => setEntries((es) => [...es, newEntry()]);
+  const setEntry = (id, patch) => setEntries((es) => es.map((e) => e.id === id ? { ...e, ...patch } : e));
+  const rmEntry = (id) => setEntries((es) => es.filter((e) => e.id !== id));
+
+  const perEmp = useMemo(() => {
+    const m = {};
+    entries.forEach((e) => { if (!e.empId) return; const v = Number(e.amount) || 0; if (!v) return; m[e.empId] = (m[e.empId] || 0) + v; });
+    return m;
+  }, [entries]);
+  const grandTotal = Object.values(perEmp).reduce((s, v) => s + v, 0);
+
+  const save = async () => {
+    setSaving(true);
+    const clean = entries
+      .filter((e) => e.empId && Number(e.amount))
+      .map((e) => ({ id: e.id, empId: e.empId, amount: Number(e.amount) || 0, date: e.date || null, note: (e.note || '').trim() || null }));
+    const ok = await ops.advance.upsert({ businessId: activeBusinessId, periodYear: year, periodMonth: month, entries: clean, note: note.trim() || null });
+    setSaving(false);
+    if (ok) { setSavedAt(new Date().toISOString()); alert('บันทึกการเบิกแล้ว — ยอดเบิกรวมของแต่ละคนจะไปขึ้นช่อง "เบิก" ในหน้าเงินเดือนงวดเดียวกันอัตโนมัติ (เฉพาะคนที่ยังไม่ได้ทำเงินเดือน)'); }
+  };
+
+  const yearOptions = [now.getFullYear(), now.getFullYear() - 1, now.getFullYear() - 2];
+
+  if (!activeBusinessId) return (
+    <div className="h-full overflow-auto"><PageHeader title="เบิกเงิน" /><div className="p-4 md:p-8"><EmptyState icon={Banknote} title="เลือกธุรกิจที่ sidebar" description="การเบิกเงินแยกตามธุรกิจ — เลือกธุรกิจก่อน" /></div></div>
+  );
+
+  return (
+    <div className="h-full overflow-auto">
+      <PageHeader title="เบิกเงิน" subtitle={`${business?.name || ''} — งวด ${MONTH_NAMES[month - 1]} ${year + 543} (หักใน ${payMonthLabel(year, month)})`}>
+        <button onClick={save} disabled={saving} className="flex items-center gap-2 px-4 py-2 bg-emerald-900 hover:bg-emerald-800 disabled:opacity-50 text-white rounded-lg text-sm font-medium"><Check className="w-4 h-4" />{saving ? 'กำลังบันทึก...' : 'บันทึกการเบิก'}</button>
+      </PageHeader>
+      <div className="p-4 md:p-6 space-y-4">
+        <div className="flex flex-wrap items-center gap-3">
+          <select value={month} onChange={(e) => setMonth(Number(e.target.value))} className="px-3 py-2 border border-stone-300 rounded-lg bg-white">
+            {MONTH_NAMES.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
+          </select>
+          <select value={year} onChange={(e) => setYear(Number(e.target.value))} className="px-3 py-2 border border-stone-300 rounded-lg bg-white">
+            {yearOptions.map((y) => <option key={y} value={y}>{y + 543}</option>)}
+          </select>
+          {savedAt && <span className="text-xs text-emerald-700">บันทึกแล้ว</span>}
+        </div>
+
+        <p className="text-sm text-stone-500">บันทึกการเบิกเงินระหว่างเดือนของพนักงาน (ใครเบิกเท่าไหร่ วันไหน) — ยอดเบิกรวมของแต่ละคนจะไปหักในช่อง "เบิก" ของเงินเดือนงวดนี้อัตโนมัติ</p>
+
+        {entries.length === 0 && (
+          <EmptyState icon={Banknote} title="ยังไม่มีรายการเบิก" description="กดเพิ่มรายการ แล้วเลือกพนักงาน + จำนวนเงิน + วันที่" action={<button onClick={addEntry} className="px-4 py-2 bg-emerald-900 text-white rounded-lg text-sm font-medium">เพิ่มรายการแรก</button>} />
+        )}
+
+        {entries.length > 0 && (
+          <div className="bg-white border border-stone-200 rounded-xl overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-stone-50 text-stone-500 text-xs">
+                  <tr>
+                    <th className="text-left px-3 py-2.5 min-w-[160px]">พนักงาน</th>
+                    <th className="text-left px-3 py-2.5 w-40">วันที่เบิก</th>
+                    <th className="text-right px-3 py-2.5 w-32">จำนวนเงิน</th>
+                    <th className="text-left px-3 py-2.5">หมายเหตุ</th>
+                    <th className="px-2 py-2.5 w-10"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {entries.map((e) => (
+                    <tr key={e.id} className="border-t border-stone-100">
+                      <td className="px-3 py-2">
+                        <select value={e.empId} onChange={(ev) => setEntry(e.id, { empId: ev.target.value })} className="w-full px-2 py-1.5 border border-stone-200 rounded bg-white">
+                          <option value="">— เลือกพนักงาน —</option>
+                          {bizEmployees.map((emp) => <option key={emp.id} value={emp.id}>{dispName(emp)}</option>)}
+                        </select>
+                      </td>
+                      <td className="px-3 py-2"><input type="date" value={e.date || ''} onChange={(ev) => setEntry(e.id, { date: ev.target.value })} className="w-full px-2 py-1.5 border border-stone-200 rounded" /></td>
+                      <td className="px-3 py-2"><input type="number" step="0.01" inputMode="decimal" value={e.amount} onChange={(ev) => setEntry(e.id, { amount: ev.target.value })} onFocus={(ev) => ev.target.select()} placeholder="0" className="w-full px-2 py-1.5 text-right border border-stone-200 rounded focus:outline-none focus:ring-2 focus:ring-emerald-500/40" /></td>
+                      <td className="px-3 py-2"><input value={e.note} onChange={(ev) => setEntry(e.id, { note: ev.target.value })} placeholder="เช่น เบิกค่าเทอมลูก" className="w-full px-2 py-1.5 border border-stone-200 rounded" /></td>
+                      <td className="px-2 py-2 text-center"><button onClick={() => rmEntry(e.id)} className="p-1 hover:bg-red-50 rounded text-red-500"><Trash2 className="w-4 h-4" /></button></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {entries.length > 0 && (
+          <button onClick={addEntry} className="w-full py-2.5 border-2 border-dashed border-stone-300 rounded-xl text-sm text-stone-500 hover:border-emerald-400 hover:text-emerald-700 flex items-center justify-center gap-1.5"><Plus className="w-4 h-4" />เพิ่มรายการเบิก</button>
+        )}
+
+        {Object.keys(perEmp).length > 0 && (
+          <div className="bg-white border border-stone-200 rounded-xl p-4">
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-sm font-medium text-stone-700">ยอดเบิกรวมที่จะหักในเงินเดือน</div>
+              <div className="text-sm font-semibold text-red-600">รวม {fmtMoney(grandTotal)} ฿</div>
+            </div>
+            <div className="text-xs text-stone-500 space-y-0.5">
+              {Object.entries(perEmp).map(([id, amt]) => (
+                <div key={id} className="flex justify-between"><span>{empName(id)}</span><span className="text-red-600">−{fmtMoney(amt)} ฿</span></div>
+              ))}
+            </div>
+            <p className="text-xs text-stone-500 mt-3">ยอดนี้จะไปขึ้นช่อง "เบิก" ในหน้าเงินเดือนงวดเดียวกันอัตโนมัติ (เฉพาะคนที่ยังไม่ได้ทำเงินเดือนงวดนี้) — ถ้าทำเงินเดือนไปแล้วให้แก้ที่หน้าเงินเดือนโดยตรง</p>
+          </div>
+        )}
+
+        <FormField label="หมายเหตุงวดนี้"><textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} className="w-full px-3 py-2 border border-stone-300 rounded-lg resize-none max-w-2xl" /></FormField>
+      </div>
+    </div>
+  );
+}
+
 // ============ COMMISSION PAGE (คอมมิชชั่น) ============
 function CommissionPage({ businesses, employees, positions, activeBusinessId, ops }) {
   const now = new Date();
@@ -4472,6 +4647,7 @@ function PayrollPage({ businesses, zones, positions, employees, activeBusinessId
   const [commissionPool, setCommissionPool] = useState(null);
   const [roomRentPool, setRoomRentPool] = useState(null);
   const [recurringTaskPool, setRecurringTaskPool] = useState(null);
+  const [advancePool, setAdvancePool] = useState(null);
 
   // พนักงานในธุรกิจนี้ — คนทำงานอยู่ + คนลาออกที่ยังมีงวดค้างจ่ายในเดือนนี้
   const payrollEmpIds = useMemo(() => new Set(payrolls.map((p) => p.employeeId)), [payrolls]);
@@ -4502,7 +4678,9 @@ function PayrollPage({ businesses, zones, positions, employees, activeBusinessId
       if (cancelled) return;
       const rtPool = await ops.recurringTask.getByPeriod(activeBusinessId, year, month);
       if (cancelled) return;
-      setPayrolls(ps); setItems(its); setCommissionPool(pool); setRoomRentPool(rrPool); setRecurringTaskPool(rtPool); setLoading(false);
+      const advPool = await ops.advance.getByPeriod(activeBusinessId, year, month);
+      if (cancelled) return;
+      setPayrolls(ps); setItems(its); setCommissionPool(pool); setRoomRentPool(rrPool); setRecurringTaskPool(rtPool); setAdvancePool(advPool); setLoading(false);
     })();
     return () => { cancelled = true; };
   }, [activeBusinessId, year, month, reload]);
@@ -4518,6 +4696,7 @@ function PayrollPage({ businesses, zones, positions, employees, activeBusinessId
   }, [commissionPool]);
   const roomRentMap = useMemo(() => roomRentMapFromPool(roomRentPool), [roomRentPool]);
   const recurringTaskMap = useMemo(() => recurringTaskMapFromPool(recurringTaskPool), [recurringTaskPool]);
+  const advanceMap = useMemo(() => advanceMapFromPool(advancePool), [advancePool]);
 
   const totalNet = useMemo(() => {
     return bizEmployees.reduce((sum, emp) => {
@@ -4632,7 +4811,7 @@ function PayrollPage({ businesses, zones, positions, employees, activeBusinessId
         ) : mode === 'quick' ? (
           <PayrollQuickEntry
             bizEmployees={bizEmployees} positions={positions}
-            payrollByEmp={payrollByEmp} itemsByPayroll={itemsByPayroll} commissionMap={commissionMap} roomRentMap={roomRentMap} recurringTaskMap={recurringTaskMap}
+            payrollByEmp={payrollByEmp} itemsByPayroll={itemsByPayroll} commissionMap={commissionMap} roomRentMap={roomRentMap} recurringTaskMap={recurringTaskMap} advanceMap={advanceMap}
             year={year} month={month} businessId={activeBusinessId} ops={ops}
             onSaved={() => setReload((r) => r + 1)}
             onOpenDetail={(emp) => setEditingEmp(emp)}
@@ -4692,6 +4871,7 @@ function PayrollPage({ businesses, zones, positions, employees, activeBusinessId
           commissionPrefill={commissionMap[editingEmp.id] || 0}
           roomFeePrefill={roomRentMap[editingEmp.id]}
           bonusPrefill={recurringTaskMap[editingEmp.id] || []}
+          advancePrefill={advanceMap[editingEmp.id] || 0}
           ops={ops}
           onClose={() => setEditingEmp(null)}
           onSaved={() => { setEditingEmp(null); setReload((r) => r + 1); }}
@@ -4828,7 +5008,7 @@ function EditorItemList({ title, list, setList, color, addLabel, disabled, price
 }
 
 // ============ PAYROLL EDITOR MODAL ============
-function PayrollEditor({ employee, existing, existingItems, year, month, businessId, businessName, commissionPrefill, roomFeePrefill, bonusPrefill, ops, onClose, onSaved }) {
+function PayrollEditor({ employee, existing, existingItems, year, month, businessId, businessName, commissionPrefill, roomFeePrefill, bonusPrefill, advancePrefill, ops, onClose, onSaved }) {
   const isFinalized = existing?.status === 'finalized';
   const [unlocked, setUnlocked] = useState(false);
   const locked = isFinalized && !unlocked;
@@ -4850,7 +5030,11 @@ function PayrollEditor({ employee, existing, existingItems, year, month, busines
       ? existingItems.filter((i) => i.kind === 'bonus_task').map((i) => ({ label: i.label, amount: i.amount }))
       : (bonusPrefill || []).map((t) => ({ label: t.label, amount: t.amount }))
   );
-  const [advances, setAdvances] = useState(existingItems.filter((i) => i.kind === 'advance').map((i) => ({ label: i.label, amount: i.amount })));
+  const [advances, setAdvances] = useState(
+    existing
+      ? existingItems.filter((i) => i.kind === 'advance').map((i) => ({ label: i.label, amount: i.amount }))
+      : (advancePrefill ? [{ label: 'เบิกล่วงหน้า', amount: advancePrefill }] : [])
+  );
   const [otherDeductions, setOtherDeductions] = useState(existingItems.filter((i) => i.kind === 'other_deduction').map((i) => ({ label: i.label, amount: i.amount })));
   const [priceMaps, setPriceMaps] = useState({});
   useEffect(() => { let c = false; (async () => { const m = ops.payrollItem.recentPrices ? await ops.payrollItem.recentPrices() : {}; if (!c) setPriceMaps(m || {}); })(); return () => { c = true; }; }, []);
@@ -5003,7 +5187,7 @@ function PayrollEditor({ employee, existing, existingItems, year, month, busines
 }
 
 // ============ PAYROLL QUICK ENTRY (Spreadsheet / Cards) ============
-function PayrollQuickEntry({ bizEmployees, positions, payrollByEmp, itemsByPayroll, commissionMap, roomRentMap, recurringTaskMap, year, month, businessId, ops, onSaved, onOpenDetail }) {
+function PayrollQuickEntry({ bizEmployees, positions, payrollByEmp, itemsByPayroll, commissionMap, roomRentMap, recurringTaskMap, advanceMap, year, month, businessId, ops, onSaved, onOpenDetail }) {
   const isMobile = useIsMobile();
   const [drafts, setDrafts] = useState({});
   const [touched, setTouched] = useState(() => new Set());
@@ -5048,10 +5232,14 @@ function PayrollQuickEntry({ bizEmployees, positions, payrollByEmp, itemsByPayro
       if (!p && recurringTaskMap && (recurringTaskMap[emp.id] || []).length) {
         d[emp.id].items = [...(d[emp.id].items || []), ...recurringTaskMap[emp.id].map((t) => ({ kind: 'bonus_task', label: t.label, amount: t.amount }))];
       }
+      // เบิกเงินระหว่างเดือน → เติมยอดรวมเข้าช่อง "เบิก" (label 'เบิกล่วงหน้า') ให้คนที่ยังไม่ได้ทำเงินเดือน
+      if (!p && advanceMap && advanceMap[emp.id]) {
+        d[emp.id].items = [...(d[emp.id].items || []).filter((i) => !(i.kind === 'advance' && i.label === 'เบิกล่วงหน้า')), { kind: 'advance', label: 'เบิกล่วงหน้า', amount: advanceMap[emp.id] }];
+      }
     });
     setDrafts(d);
     setTouched(new Set());
-  }, [bizEmployees, payrollByEmp, itemsByPayroll, commissionMap, roomRentMap, recurringTaskMap]);
+  }, [bizEmployees, payrollByEmp, itemsByPayroll, commissionMap, roomRentMap, recurringTaskMap, advanceMap]);
 
   const upd = (empId, field, value) => {
     setDrafts((prev) => ({ ...prev, [empId]: { ...prev[empId], [field]: value } }));
@@ -5435,6 +5623,7 @@ function ProfileEditForm({ initial, businesses, zones, onSave, onCancel, isSelf 
     { id: 'commission', label: 'คอมมิชชั่น', when: role === 'business_manager' && canManagePayroll },
     { id: 'roomrent', label: 'ค่าห้องพนักงาน', when: role === 'business_manager' && canManagePayroll },
     { id: 'recurringtasks', label: 'งานเสริมประจำ', when: role === 'business_manager' && canManagePayroll },
+    { id: 'advances', label: 'เบิกเงิน', when: role === 'business_manager' && canManagePayroll },
     { id: 'contractors', label: 'ช่าง/ผู้รับเหมา', when: true, grant: true }, // มอบสิทธิ์พิเศษ (ปกติเฉพาะเจ้าของ) — ปิดเป็นค่าเริ่มต้น
   ].filter((m) => m.when);
   const showMenuPicker = ['business_manager', 'zone_manager', 'viewer'].includes(role);
