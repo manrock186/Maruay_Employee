@@ -63,59 +63,6 @@ const applyTheme = (theme) => {
 // ============ PAYROLL HELPERS ============
 const MONTH_NAMES = ['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน', 'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
 
-// ============ บันทึกการอัปเดต (What's New) — เรียงใหม่สุดบนสุด, v ต้องเพิ่มขึ้นเรื่อยๆ ============
-const CHANGELOG = [
-  { v: 8, date: '3 มิ.ย. 2569', scopes: ['payroll'], title: 'จำราคารายการที่เคยกรอก', items: [
-    'เพิ่มงานเสริม/เบิก/หักในหน้าเงินเดือน: ถ้าเคยกรอกชื่อรายการไหนมาก่อน ระบบจะเติมราคาล่าสุดให้อัตโนมัติ',
-    'มีรายการชื่อที่เคยใช้ให้เลือก (พิมพ์แล้วขึ้นให้เลือก) และยังแก้ไขราคาได้ทุกครั้ง',
-  ] },
-  { v: 7, date: '3 มิ.ย. 2569', scopes: ['contractors'], title: 'แจ้งเตือนการตั้งเบิก', items: [
-    'เมื่อมีคนตั้งเบิก เจ้าของจะได้รับแจ้งเตือน "มีคำขอเบิกรออนุมัติ" ทันที',
-    'เมื่อเจ้าของอนุมัติ/ไม่อนุมัติ ผู้ตั้งเบิกจะได้รับแจ้งเตือนผลทุกครั้ง',
-    'กดที่แจ้งเตือนเพื่อไปหน้าตั้งเบิกได้เลย',
-  ] },
-  { v: 6, date: '3 มิ.ย. 2569', scopes: ['contractors'], title: 'ระบบตั้งเบิก (อนุมัติก่อนจ่าย)', items: [
-    'เพิ่มแท็บ "ตั้งเบิก" ในหน้าช่าง/ผู้รับเหมา — ขอเบิกค่าใช้จ่ายงานพิเศษได้',
-    'จ่ายให้ช่างนอก ช่างในระบบ หรือพนักงานก็ได้ (งานพิเศษนอกเงินเดือน)',
-    'ต้องให้เจ้าของ "อนุมัติ" ก่อน แล้วทำเครื่องหมาย "จ่ายแล้ว" ได้',
-    'มี badge แจ้งจำนวนรายการรออนุมัติบนเมนู',
-  ] },
-  { v: 5, date: '3 มิ.ย. 2569', scopes: ['owner', 'contractors'], title: 'สิทธิ์เมนูรายคน + แก้บั๊กช่าง', items: [
-    'เพิ่ม "สิทธิ์เข้าถึงเมนู" รายคนในหน้าผู้ใช้ระบบ — เลือกได้ว่าใครเห็นเมนูไหน',
-    'มอบสิทธิ์เข้าถึง "ช่าง/ผู้รับเหมา" ให้ผู้ใช้คนอื่นได้ (ปกติเฉพาะเจ้าของ)',
-    'แก้บั๊ก: บันทึกประวัติช่าง/ผู้รับเหมาแล้วแสดงผลทันที ไม่ต้องรีโหลด',
-  ] },
-  { v: 4, date: '3 มิ.ย. 2569', scopes: ['payroll'], title: 'กรอกเงินเดือนลื่นขึ้น', items: [
-    'แก้บั๊กช่องกรอกเงินเดือนเด้งหลุดโฟกัสตอนพิมพ์ — พิมพ์รัวได้ไม่ต้องคลิกซ้ำ',
-    'หน้ากรอกเร็ว: เอา "สาย" ออก เพิ่ม "เบิกล่วงหน้า" และ "ค่าห้องพัก"',
-    'งานเสริม: เลือกจากรายการที่เคยทำได้ (เช่น ล้างห้องน้ำ)',
-  ] },
-  { v: 3, date: '2 มิ.ย. 2569', scopes: ['payroll'], title: 'แก้ไขงวดที่ปิดแล้ว + พิมพ์สลิป', items: [
-    'แก้ไขเงินเดือนงวดที่ปิดแล้วได้ (เผื่อคิดผิด) แล้วเลือกคงปิดงวดหรือเปิดเป็นร่าง',
-    'ฟอร์มพิมพ์สลิปเงินเดือนรายคน + พิมพ์ทีละหลายคนได้',
-  ] },
-  { v: 2, date: '1 มิ.ย. 2569', scopes: ['payroll'], title: 'คอมมิชชั่น 2 ก้อน + ซ่อนเงินเดือน', items: [
-    'เพิ่มคอมมิชชั่นก้อนที่ 2 (รายได้ร้านค้า) รวมกับคอมเดิมเป็นยอดเดียว',
-    'สิทธิ์ "ไม่เห็นเงินเดือน" ซ่อนทุกอย่างที่เป็นตัวเงินจริงจัง',
-  ] },
-  { v: 1, date: '31 พ.ค. 2569', scopes: ['payroll'], title: 'รองรับพนักงานหลายธุรกิจ', items: [
-    'พนักงาน 1 คนทำได้หลายธุรกิจ — แยกตำแหน่ง แยกเงินเดือน แยกสลิป',
-  ] },
-];
-const LATEST_UPDATE_V = CHANGELOG.reduce((m, c) => Math.max(m, c.v), 0);
-// แสดงรายการอัปเดตตามสิทธิ์: 'all' ทุกคน, 'payroll' คนเห็นเงินเดือน, 'owner' เจ้าของ, 'contractors' คนเข้าถึงช่าง/ตั้งเบิก
-function changelogVisibleTo(entry, profile) {
-  const sc = entry.scopes;
-  if (!sc || sc.includes('all')) return true;
-  const canContractors = !!(profile?.isOwner || (Array.isArray(profile?.allowedViews) && profile.allowedViews.includes('contractors')));
-  return sc.some((s) =>
-    (s === 'payroll' && profile?.canManagePayroll) ||
-    (s === 'owner' && profile?.isOwner) ||
-    (s === 'contractors' && canContractors)
-  );
-}
-function visibleChangelog(profile) { return CHANGELOG.filter((c) => changelogVisibleTo(c, profile)); }
-
 // ป้ายเดือนที่จ่ายเงิน (งวดทำงานเดือน month → จ่ายต้นเดือนถัดไป)
 function payMonthLabel(year, month) {
   const d = new Date(Number(year), Number(month), 1);
@@ -633,8 +580,6 @@ export default function App() {
   const [activeBusinessId, setActiveBusinessId] = useState(null);
   const [activeZoneId, setActiveZoneId] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(() => typeof window !== 'undefined' && window.innerWidth >= 1024);
-  const [showWhatsNew, setShowWhatsNew] = useState(false);
-  const whatsNewShownRef = useRef(false);
 
   // ---- AUTH ----
   useEffect(() => {
@@ -697,18 +642,6 @@ export default function App() {
     const gated = ['businesses', 'positions', 'employees', 'orgchart', 'payroll', 'commission', 'roomrent', 'recurringtasks', 'advances', 'contractors'];
     if (gated.includes(view) && !allowed.has(view)) setView('dashboard');
   }, [view, profile]);
-
-  // ---- เด้ง "มีอะไรใหม่" อัตโนมัติครั้งแรกที่เปิด ถ้ามีอัปเดตที่ยังไม่เห็น (ตามสิทธิ์) ----
-  useEffect(() => {
-    if (!profile || profile.role === 'pending') return;
-    if (whatsNewShownRef.current) return;
-    const lastSeen = Number(profile.lastSeenUpdate) || 0;
-    const unseen = visibleChangelog(profile).filter((c) => c.v > lastSeen);
-    if (unseen.length > 0) {
-      whatsNewShownRef.current = true;
-      setShowWhatsNew(true);
-    }
-  }, [profile]);
 
   // ---- LOAD ALL DATA + REALTIME ----
   useEffect(() => {
@@ -851,12 +784,6 @@ export default function App() {
   const refreshNotifications = async () => {
     const { data } = await supabase.from('notifications').select('*').order('created_at', { ascending: false });
     if (data) setNotifications(fromDB(data));
-  };
-  // ทำเครื่องหมายว่าเห็นอัปเดตล่าสุดแล้ว
-  const markUpdatesSeen = async () => {
-    if (!session?.user?.id) return;
-    setProfile((prev) => prev ? { ...prev, lastSeenUpdate: LATEST_UPDATE_V } : prev);
-    await supabase.from('user_profiles').update({ last_seen_update: LATEST_UPDATE_V }).eq('id', session.user.id);
   };
   const openZoneEmployees = (bid, zid) => {
     setActiveBusinessId(bid); setActiveZoneId(zid); setView('employees');
@@ -1136,6 +1063,13 @@ export default function App() {
         return fromDB(data);
       },
     },
+    audit: {
+      list: async ({ limit = 300 } = {}) => {
+        const { data, error } = await supabase.from('audit_log').select('*').order('created_at', { ascending: false }).limit(limit);
+        if (error) { console.error(error); return []; }
+        return fromDB(data) || [];
+      },
+    },
     salaryChange: {
       listByEmployee: async (employeeId) => {
         const { data, error } = await supabase.from('salary_changes').select('*')
@@ -1278,16 +1212,6 @@ export default function App() {
           <div className="w-7 h-7 rounded-md bg-amber-500 flex items-center justify-center lg:hidden"><Users className="w-4 h-4 text-emerald-950" strokeWidth={2.5} /></div>
           <span className="font-semibold text-stone-700 text-sm lg:hidden">ระบบพนักงาน</span>
           <div className="flex-1" />
-          {(() => {
-            const unseen = visibleChangelog(profile).filter((c) => c.v > (Number(profile.lastSeenUpdate) || 0)).length;
-            return (
-              <button onClick={() => setShowWhatsNew(true)} className="relative flex items-center gap-1.5 px-3 py-1.5 rounded-lg hover:bg-amber-50 text-stone-600 hover:text-amber-700 text-sm font-medium transition-colors" title="มีอะไรใหม่">
-                <Sparkles className="w-4 h-4" />
-                <span className="hidden sm:inline">มีอะไรใหม่</span>
-                {unseen > 0 && <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 bg-rose-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">{unseen}</span>}
-              </button>
-            );
-          })()}
           <NotificationBell
             variant="light"
             notifications={notifications}
@@ -1416,6 +1340,9 @@ export default function App() {
             currentUserId={session.user.id}
           />
         )}
+        {view === 'auditlog' && profile.isOwner && (
+          <AuditLogPage businesses={businesses} ops={ops} />
+        )}
         {view === 'contractors' && (profile.isOwner || (Array.isArray(profile.allowedViews) && profile.allowedViews.includes('contractors'))) && (
           <ContractorsPage
             contractors={contractors}
@@ -1440,61 +1367,110 @@ export default function App() {
         )}
         </div>
       </main>
-      {showWhatsNew && (
-        <WhatsNewModal
-          profile={profile}
-          lastSeen={Number(profile.lastSeenUpdate) || 0}
-          onClose={() => { setShowWhatsNew(false); markUpdatesSeen(); }}
-        />
-      )}
     </div>
   );
 }
 
-// ============ WHAT'S NEW (มีอะไรใหม่) ============
-function WhatsNewModal({ profile, lastSeen, onClose }) {
-  const entries = visibleChangelog(profile);
+// ============ AUDIT LOG (ประวัติการแก้ไข — เจ้าของดูได้) ============
+const AUDIT_TABLE_LABELS = {
+  businesses: 'ธุรกิจ', zones: 'โซน', positions: 'ตำแหน่ง', employees: 'พนักงาน',
+  payrolls: 'เงินเดือน', commission_pools: 'คอมมิชชั่น', room_rent_pools: 'ค่าห้องพนักงาน',
+  recurring_task_pools: 'งานเสริมประจำ', advance_pools: 'เบิกเงิน', contractors: 'ช่าง/ผู้รับเหมา',
+  contractor_visits: 'ประวัติการมาทำงาน', expense_requests: 'ตั้งเบิก', salary_changes: 'ปรับเงินเดือน',
+  user_profiles: 'ผู้ใช้ระบบ',
+};
+const AUDIT_ACTION = {
+  INSERT: { label: 'เพิ่ม', cls: 'bg-emerald-100 text-emerald-800' },
+  UPDATE: { label: 'แก้ไข', cls: 'bg-amber-100 text-amber-800' },
+  DELETE: { label: 'ลบ', cls: 'bg-rose-100 text-rose-700' },
+};
+const AUDIT_ROLE = { owner: 'เจ้าของ', business_manager: 'หัวหน้าธุรกิจ', zone_manager: 'หัวหน้าโซน', viewer: 'ผู้ดู', pending: 'รออนุมัติ' };
+
+function AuditLogPage({ businesses, ops }) {
+  const [entries, setEntries] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
+  const [actionFilter, setActionFilter] = useState('all'); // all | INSERT | UPDATE | DELETE
+  const [tableFilter, setTableFilter] = useState('all');
+
+  const load = async () => {
+    setLoading(true);
+    const rows = await ops.audit.list({ limit: 400 });
+    setEntries(rows); setLoading(false);
+  };
+  useEffect(() => { load(); }, []);
+
+  const bizName = (id) => businesses.find((b) => b.id === id)?.name || '';
+  const fmtDT = (s) => { try { return new Date(s).toLocaleString('th-TH', { day: '2-digit', month: 'short', year: '2-digit', hour: '2-digit', minute: '2-digit' }); } catch { return s; } };
+  const describe = (e) => {
+    const d = e.data || {};
+    if (e.label) return e.label;
+    if (d.period_year && d.period_month) return `งวด ${MONTH_NAMES[(d.period_month || 1) - 1]} ${(d.period_year || 0) + 543}`;
+    if (d.business_id && bizName(d.business_id)) return bizName(d.business_id);
+    return e.row_id ? `#${String(e.row_id).slice(0, 8)}` : '';
+  };
+
+  const tablesPresent = useMemo(() => [...new Set(entries.map((e) => e.tableName))], [entries]);
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return entries.filter((e) => {
+      if (actionFilter !== 'all' && e.action !== actionFilter) return false;
+      if (tableFilter !== 'all' && e.tableName !== tableFilter) return false;
+      if (!q) return true;
+      return `${e.actorName || ''} ${e.label || ''} ${AUDIT_TABLE_LABELS[e.tableName] || e.tableName} ${describe(e)}`.toLowerCase().includes(q);
+    });
+  }, [entries, search, actionFilter, tableFilter]);
+
   return (
-    <div className="fixed inset-0 bg-stone-900/50 backdrop-blur-sm z-[60] flex items-end sm:items-center justify-center sm:p-4" onClick={onClose}>
-      <div className="bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl w-full sm:max-w-md max-h-[85vh] sm:max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
-        <div className="px-5 py-4 border-b border-stone-200 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="w-9 h-9 rounded-lg bg-amber-100 flex items-center justify-center"><Sparkles className="w-5 h-5 text-amber-600" /></div>
-            <div>
-              <div className="font-semibold text-stone-800">มีอะไรใหม่</div>
-              <div className="text-xs text-stone-500">อัปเดตล่าสุดของระบบ</div>
-            </div>
+    <div className="h-full overflow-auto">
+      <PageHeader title="ประวัติการแก้ไข" subtitle="บันทึกว่าใครเพิ่ม/แก้ไข/ลบข้อมูลอะไร เมื่อไหร่ (เฉพาะเจ้าของเห็น)">
+        <button onClick={load} className="flex items-center gap-2 px-3 py-2 border border-stone-300 rounded-lg text-sm text-stone-700 hover:bg-stone-50"><Clock className="w-4 h-4" />รีเฟรช</button>
+      </PageHeader>
+      <div className="p-4 md:p-6 space-y-4">
+        <div className="flex flex-col sm:flex-row gap-3">
+          <div className="relative flex-1 max-w-md">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-stone-400" />
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="ค้นหา ชื่อผู้ทำ / รายการ" className="w-full pl-9 pr-3 py-2 border border-stone-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500/40" />
           </div>
-          <button onClick={onClose} className="p-1 hover:bg-stone-100 rounded text-stone-500"><X className="w-5 h-5" /></button>
+          <select value={tableFilter} onChange={(e) => setTableFilter(e.target.value)} className="px-3 py-2 border border-stone-300 rounded-lg bg-white text-sm">
+            <option value="all">ทุกหัวข้อ</option>
+            {tablesPresent.map((t) => <option key={t} value={t}>{AUDIT_TABLE_LABELS[t] || t}</option>)}
+          </select>
         </div>
-        <div className="p-4 sm:p-5 overflow-auto overscroll-contain space-y-4">
-          {entries.length === 0 && <div className="text-center text-stone-400 text-sm py-8">ยังไม่มีอัปเดตสำหรับสิทธิ์ของคุณ</div>}
-          {entries.map((c) => {
-            const isNew = c.v > lastSeen;
-            return (
-              <div key={c.v} className={`rounded-xl border p-3.5 ${isNew ? 'border-amber-300 bg-amber-50/50' : 'border-stone-200'}`}>
-                <div className="flex items-center justify-between gap-2 mb-2">
-                  <div className="font-medium text-stone-800 text-sm flex items-center gap-2">
-                    {c.title}
-                    {isNew && <span className="px-1.5 py-0.5 bg-rose-500 text-white text-[10px] font-bold rounded">ใหม่</span>}
+        <div className="flex gap-1.5">
+          {['all', 'INSERT', 'UPDATE', 'DELETE'].map((a) => (
+            <button key={a} onClick={() => setActionFilter(a)} className={`px-3 py-1.5 text-xs font-medium rounded-lg border ${actionFilter === a ? 'bg-emerald-900 text-white border-emerald-900' : 'bg-white text-stone-600 border-stone-200 hover:bg-stone-50'}`}>
+              {a === 'all' ? 'ทั้งหมด' : AUDIT_ACTION[a].label}
+            </button>
+          ))}
+        </div>
+
+        {loading ? (
+          <div className="text-center text-stone-400 py-12 text-sm">กำลังโหลด...</div>
+        ) : filtered.length === 0 ? (
+          <EmptyState icon={Clock} title="ยังไม่มีประวัติ" description="เมื่อมีการเพิ่ม/แก้ไข/ลบข้อมูล จะถูกบันทึกไว้ที่นี่" />
+        ) : (
+          <div className="space-y-1.5">
+            {filtered.map((e) => {
+              const act = AUDIT_ACTION[e.action] || { label: e.action, cls: 'bg-stone-100 text-stone-700' };
+              return (
+                <div key={e.id} className="flex items-start gap-3 bg-white border border-stone-200 rounded-lg px-3 py-2.5">
+                  <span className={`px-2 py-0.5 text-[11px] font-medium rounded shrink-0 mt-0.5 ${act.cls}`}>{act.label}</span>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm text-stone-800">
+                      <span className="font-medium">{AUDIT_TABLE_LABELS[e.tableName] || e.tableName}</span>
+                      {describe(e) && <span className="text-stone-500"> — {describe(e)}</span>}
+                    </div>
+                    <div className="text-[11px] text-stone-400 mt-0.5">
+                      โดย {e.actorName || '— ไม่ทราบผู้ใช้ —'}{e.actorRole && AUDIT_ROLE[e.actorRole] ? ` (${AUDIT_ROLE[e.actorRole]})` : ''} • {fmtDT(e.createdAt)}
+                    </div>
                   </div>
-                  <span className="text-[11px] text-stone-400 flex-shrink-0">{c.date}</span>
                 </div>
-                <ul className="space-y-1">
-                  {c.items.map((it, i) => (
-                    <li key={i} className="flex items-start gap-2 text-sm text-stone-600">
-                      <Check className="w-3.5 h-3.5 text-emerald-600 mt-0.5 flex-shrink-0" />
-                      <span>{it}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            );
-          })}
-        </div>
-        <div className="px-5 py-3 border-t border-stone-200 bg-stone-50 flex justify-end">
-          <button onClick={onClose} className="px-5 py-2 bg-emerald-900 hover:bg-emerald-800 text-white rounded-lg text-sm font-medium">รับทราบ</button>
-        </div>
+              );
+            })}
+          </div>
+        )}
+        <p className="text-xs text-stone-400">แสดงรายการล่าสุดสูงสุด 400 รายการ • ครอบคลุม: ธุรกิจ โซน ตำแหน่ง พนักงาน เงินเดือน คอมมิชชั่น ค่าห้อง งานเสริมประจำ เบิกเงิน ช่าง ตั้งเบิก ปรับเงินเดือน และผู้ใช้ระบบ</p>
       </div>
     </div>
   );
@@ -1784,6 +1760,7 @@ function Sidebar({ view, setView, profile, businesses, zones, activeBusinessId, 
     { id: 'recurringtasks', label: 'งานเสริมประจำ', icon: Sparkles, show: (isOwner || (isBM && navAllowed('recurringtasks'))) },
     { id: 'advances', label: 'เบิกเงิน', icon: Banknote, show: (isOwner || (isBM && navAllowed('advances'))) },
     { id: 'users', label: 'ผู้ใช้ระบบ', icon: Shield, show: isOwner },
+    { id: 'auditlog', label: 'ประวัติการแก้ไข', icon: Clock, show: isOwner },
     { id: 'contractors', label: 'ช่าง/ผู้รับเหมา', icon: Wrench, show: canViewContractors, badge: contractorPendingCount },
     { id: 'settings', label: 'ตั้งค่า', icon: Settings, show: isOwner },
   ];
