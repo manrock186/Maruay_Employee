@@ -892,9 +892,27 @@ export default function App() {
       desired.push({ dedupeKey: `pending_raise:${sc.id}`, businessId: sc.businessId, zoneId: null, type: 'pending_raise', severity: 'info', title: 'ปรับเงินเดือนรอมีผล', body: `${empName(sc.employeeId)} → ${fmtMoney(sc.newSalary)} ฿ (มีผล ${monthLabel})` });
     });
 
+    // 8) งานเสริมประจำขาดคน — มีคนที่ถูกมอบหมายงานเสริมประจำ "ลาออก" (เฉพาะงวดเดือนปัจจุบัน)
+    {
+      const yr = today.getFullYear(), mo = today.getMonth() + 1;
+      const activeIds = new Set(active.map((e) => e.id));
+      const { data: rtPools } = await supabase.from('recurring_task_pools').select('id,business_id,tasks').eq('period_year', yr).eq('period_month', mo);
+      (rtPools || []).forEach((pool) => {
+        const tasks = Array.isArray(pool.tasks) ? pool.tasks : [];
+        tasks.forEach((t) => {
+          const assignments = Array.isArray(t.assignments) ? t.assignments : [];
+          const goneNames = assignments.filter((a) => a.empId && !activeIds.has(a.empId)).map((a) => empName(a.empId)).filter(Boolean);
+          if (goneNames.length > 0) {
+            const bn = bizName(pool.business_id);
+            desired.push({ dedupeKey: `recurring_short:${pool.id}:${t.id}`, businessId: pool.business_id, zoneId: null, type: 'recurring_task_short', severity: 'warning', title: 'งานเสริมประจำขาดคน', body: `${t.name || 'งานเสริม'}${bn ? ` (${bn})` : ''} — ${goneNames.join(', ')} ลาออกแล้ว ต้องหาคนแทน` });
+          }
+        });
+      });
+    }
+
     // reconcile: ลบของเก่าที่ไม่อยู่ในชุดปัจจุบัน + insert ที่ขาด
     // ลบเฉพาะแจ้งเตือนชนิด "คำนวณจากสถานะ" (derived) — ไม่แตะแจ้งเตือนแบบ event (เช่น ตั้งเบิก expense_*)
-    const DERIVED_TYPES = ['pending_user', 'permit_expiry', 'passport_expiry', 'idcard_expiry', 'birthday', 'vacancy', 'understaffed', 'overstaffed', 'payroll_incomplete', 'pending_raise'];
+    const DERIVED_TYPES = ['pending_user', 'permit_expiry', 'passport_expiry', 'idcard_expiry', 'birthday', 'vacancy', 'understaffed', 'overstaffed', 'payroll_incomplete', 'pending_raise', 'recurring_task_short'];
     const { data: existing } = await supabase.from('notifications').select('id,dedupe_key,type');
     const existKeys = new Set((existing || []).map((n) => n.dedupe_key));
     const desiredKeys = new Set(desired.map((d) => d.dedupeKey));
@@ -1225,6 +1243,7 @@ export default function App() {
               else if (n.type === 'expense_pending' || n.type === 'expense_approved' || n.type === 'expense_rejected') { if (n.businessId) changeBusiness(n.businessId); setView('contractors'); }
               else if (n.type === 'payroll_incomplete' || n.type === 'pending_raise') { if (n.businessId) changeBusiness(n.businessId); setView(n.type === 'payroll_incomplete' ? 'payroll' : 'employees'); }
               else if (n.type === 'permit_expiry' || n.type === 'passport_expiry' || n.type === 'idcard_expiry' || n.type === 'birthday' || n.type === 'vacancy') { if (n.businessId) changeBusiness(n.businessId); setView('employees'); }
+              else if (n.type === 'recurring_task_short') { if (n.businessId) changeBusiness(n.businessId); setView('recurringtasks'); }
               else { if (n.businessId) changeBusiness(n.businessId); setView('positions'); }
             }}
           />
@@ -1604,6 +1623,7 @@ const NOTI_META = {
   overstaffed:        { icon: Users, color: 'text-sky-600 bg-sky-100' },
   payroll_incomplete: { icon: Wallet, color: 'text-amber-600 bg-amber-100' },
   pending_raise:      { icon: TrendingUp, color: 'text-emerald-600 bg-emerald-100' },
+  recurring_task_short: { icon: Sparkles, color: 'text-amber-600 bg-amber-100' },
   expense_pending:    { icon: Receipt, color: 'text-amber-600 bg-amber-100' },
   expense_approved:   { icon: CheckCircle2, color: 'text-emerald-600 bg-emerald-100' },
   expense_rejected:   { icon: X, color: 'text-rose-600 bg-rose-100' },
