@@ -5831,34 +5831,49 @@ function ProfileEditForm({ initial, businesses, zones, onSave, onCancel, isSelf 
 
 // ============ CONTRACTORS PAGE ============
 function ContractorsPage({ contractors, visits, expenseRequests = [], employees = [], businesses, profile, currentUserId, ops }) {
-  const [tab, setTab] = useState('contractors'); // 'contractors' | 'expenses'
+  const [tab, setTab] = useState('expenses'); // 'expenses' | 'contractors'
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null);
   const [openContractor, setOpenContractor] = useState(null);
   const [search, setSearch] = useState('');
+  const [bizFilter, setBizFilter] = useState('all');
   const [showExpForm, setShowExpForm] = useState(false);
   const [editingExp, setEditingExp] = useState(null);
   const isOwner = !!profile?.isOwner;
-  const pendingExpenseCount = useMemo(() => expenseRequests.filter((r) => r.status === 'pending').length, [expenseRequests]);
+
+  // จำกัดเฉพาะธุรกิจที่ผู้จัดการดูแล (เจ้าของเห็นทุกธุรกิจ)
+  const allowedBizIds = useMemo(() => (isOwner ? null : new Set(profile?.businessIds || [])), [isOwner, profile]);
+  const scopedBusinesses = useMemo(() => (allowedBizIds ? businesses.filter((b) => allowedBizIds.has(b.id)) : businesses), [businesses, allowedBizIds]);
+  const scopedVisits = useMemo(() => (allowedBizIds ? visits.filter((v) => allowedBizIds.has(v.businessId)) : visits), [visits, allowedBizIds]);
+  const scopedExpenses = useMemo(() => (allowedBizIds ? expenseRequests.filter((r) => allowedBizIds.has(r.businessId)) : expenseRequests), [expenseRequests, allowedBizIds]);
+
+  const pendingExpenseCount = useMemo(() => scopedExpenses.filter((r) => r.status === 'pending').length, [scopedExpenses]);
 
   const enriched = useMemo(() => contractors.map((c) => {
-    const my = visits.filter((v) => v.contractorId === c.id);
-    const myExp = expenseRequests.filter((r) => r.payeeKind === 'contractor' && r.payeeContractorId === c.id);
+    const my = scopedVisits.filter((v) => v.contractorId === c.id);
+    const myExp = scopedExpenses.filter((r) => r.payeeKind === 'contractor' && (Array.isArray(r.payeeIds) && r.payeeIds.length ? r.payeeIds.includes(c.id) : r.payeeContractorId === c.id));
     const expPaid = myExp.filter((r) => r.status === 'approved' || r.status === 'paid');
     const dates = [...my.map((v) => v.visitDate), ...myExp.map((r) => String(r.createdAt || '').slice(0, 10))].filter(Boolean).sort();
+    const jobText = [...my.map((v) => v.workDescription || ''), ...myExp.map((r) => r.workDescription || '')].join(' ');
+    const bizIds = [...new Set([...my.map((v) => v.businessId), ...myExp.map((r) => r.businessId)].filter(Boolean))];
     return {
       ...c,
       visitCount: my.length + myExp.length,
       lastVisit: dates.slice(-1)[0] || null,
       totalCost: my.reduce((s, v) => s + (Number(v.cost) || 0), 0) + expPaid.reduce((s, r) => s + (Number(r.amount) || 0), 0),
+      _jobText: jobText,
+      _bizIds: bizIds,
     };
-  }), [contractors, visits, expenseRequests]);
+  }), [contractors, scopedVisits, scopedExpenses]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return enriched;
-    return enriched.filter((c) => `${c.name} ${(Array.isArray(c.specialty) ? c.specialty.join(' ') : (c.specialty || ''))} ${c.phone || ''}`.toLowerCase().includes(q));
-  }, [enriched, search]);
+    return enriched.filter((c) => {
+      if (bizFilter !== 'all' && !c._bizIds.includes(bizFilter)) return false;
+      if (!q) return true;
+      return `${c.name} ${(Array.isArray(c.specialty) ? c.specialty.join(' ') : (c.specialty || ''))} ${c.phone || ''} ${c._jobText}`.toLowerCase().includes(q);
+    });
+  }, [enriched, search, bizFilter]);
 
   const saveContractor = async (data) => {
     if (editing?.id) await ops.contractor.update(editing.id, data);
@@ -5877,28 +5892,36 @@ function ContractorsPage({ contractors, visits, expenseRequests = [], employees 
 
   return (
     <div className="h-full overflow-auto">
-      <PageHeader title="ช่าง/ผู้รับเหมา" subtitle={tab === 'contractors' ? `${contractors.length} คน • ${visits.length} ครั้งที่เคยมาทำงาน` : `${expenseRequests.length} รายการเบิก${pendingExpenseCount > 0 ? ` • รออนุมัติ ${pendingExpenseCount}` : ''}`}>
+      <PageHeader title="ช่าง/ผู้รับเหมา" subtitle={tab === 'contractors' ? `${contractors.length} คน • ${scopedVisits.length} ครั้งที่เคยมาทำงาน` : `${scopedExpenses.length} รายการเบิก${pendingExpenseCount > 0 ? ` • รออนุมัติ ${pendingExpenseCount}` : ''}`}>
         {tab === 'contractors'
           ? <button onClick={() => { setEditing({}); setShowForm(true); }} className="flex items-center gap-2 px-4 py-2 bg-emerald-900 hover:bg-emerald-800 text-white rounded-lg text-sm font-medium"><Plus className="w-4 h-4" />เพิ่มช่าง</button>
           : <button onClick={() => { setEditingExp({}); setShowExpForm(true); }} className="flex items-center gap-2 px-4 py-2 bg-emerald-900 hover:bg-emerald-800 text-white rounded-lg text-sm font-medium"><Plus className="w-4 h-4" />ตั้งเบิกใหม่</button>}
       </PageHeader>
       <div className="px-4 md:px-8 pt-4">
         <div className="flex gap-1 border-b border-stone-200">
-          <button onClick={() => setTab('contractors')} className={`px-4 py-2.5 text-sm font-medium border-b-2 -mb-px ${tab === 'contractors' ? 'border-emerald-700 text-emerald-800' : 'border-transparent text-stone-500 hover:text-stone-700'}`}>ช่าง/ผู้รับเหมา</button>
           <button onClick={() => setTab('expenses')} className={`px-4 py-2.5 text-sm font-medium border-b-2 -mb-px flex items-center gap-1.5 ${tab === 'expenses' ? 'border-emerald-700 text-emerald-800' : 'border-transparent text-stone-500 hover:text-stone-700'}`}>
             ตั้งเบิก
             {pendingExpenseCount > 0 && <span className="min-w-[18px] h-[18px] px-1 bg-rose-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">{pendingExpenseCount}</span>}
           </button>
+          <button onClick={() => setTab('contractors')} className={`px-4 py-2.5 text-sm font-medium border-b-2 -mb-px ${tab === 'contractors' ? 'border-emerald-700 text-emerald-800' : 'border-transparent text-stone-500 hover:text-stone-700'}`}>ช่าง/ผู้รับเหมา</button>
         </div>
       </div>
 
       {tab === 'expenses' ? (
-        <ExpenseRequestsView requests={expenseRequests} employees={employees} contractors={contractors} businesses={businesses} isOwner={isOwner} currentUserId={currentUserId} ops={ops} onNew={() => { setEditingExp({}); setShowExpForm(true); }} onEdit={(r) => { setEditingExp(r); setShowExpForm(true); }} />
+        <ExpenseRequestsView requests={scopedExpenses} employees={employees} contractors={contractors} businesses={scopedBusinesses} isOwner={isOwner} currentUserId={currentUserId} ops={ops} onNew={() => { setEditingExp({}); setShowExpForm(true); }} onEdit={(r) => { setEditingExp(r); setShowExpForm(true); }} />
       ) : (
       <div className="p-4 md:p-8">
-        <div className="mb-4 relative max-w-md">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-stone-400" />
-          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="ค้นหา ชื่อ/ประเภทช่าง/เบอร์" className="w-full pl-9 pr-3 py-2 border border-stone-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500/40" />
+        <div className="mb-4 flex flex-col sm:flex-row gap-3">
+          <div className="relative flex-1 max-w-md">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-stone-400" />
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="ค้นหา ชื่อ/ประเภทช่าง/เบอร์/รายละเอียดงาน" className="w-full pl-9 pr-3 py-2 border border-stone-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500/40" />
+          </div>
+          {scopedBusinesses.length > 1 && (
+            <select value={bizFilter} onChange={(e) => setBizFilter(e.target.value)} className="px-3 py-2 border border-stone-300 rounded-lg bg-white text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/40">
+              <option value="all">ทุกธุรกิจ</option>
+              {scopedBusinesses.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+            </select>
+          )}
         </div>
         {filtered.length === 0 ? (
           <EmptyState icon={Wrench} title={search ? 'ไม่พบรายการ' : 'ยังไม่มีช่าง'} description={search ? 'ลองเปลี่ยนคำค้น' : 'เพิ่มช่าง/ผู้รับเหมาที่เคยติดต่อทำงาน เช่น ช่างแอร์ ช่างประตูม้วน ช่างกระจก'} action={!search ? <button onClick={() => { setEditing({}); setShowForm(true); }} className="px-4 py-2 bg-emerald-900 text-white rounded-lg text-sm font-medium">เพิ่มช่างคนแรก</button> : null} />
@@ -5943,11 +5966,11 @@ function ContractorsPage({ contractors, visits, expenseRequests = [], employees 
       )}
       {showExpForm && (
         <Modal title={editingExp?.id ? 'แก้ไขคำขอเบิก' : 'ตั้งเบิกค่าใช้จ่าย'} onClose={() => { setShowExpForm(false); setEditingExp(null); }}>
-          <ExpenseRequestForm initial={editingExp} employees={employees} contractors={contractors} businesses={businesses} onSave={saveExpense} onCancel={() => { setShowExpForm(false); setEditingExp(null); }} />
+          <ExpenseRequestForm initial={editingExp} employees={employees} contractors={contractors} businesses={scopedBusinesses} onSave={saveExpense} onCancel={() => { setShowExpForm(false); setEditingExp(null); }} />
         </Modal>
       )}
       {openContractor && (
-        <ContractorDetailModal contractor={openContractor} allVisits={visits} expenseRequests={expenseRequests} businesses={businesses} isOwner={isOwner} currentUserId={currentUserId} ops={ops} onClose={() => setOpenContractor(null)} />
+        <ContractorDetailModal contractor={openContractor} allVisits={scopedVisits} expenseRequests={scopedExpenses} businesses={scopedBusinesses} isOwner={isOwner} currentUserId={currentUserId} ops={ops} onClose={() => setOpenContractor(null)} />
       )}
     </div>
   );
@@ -5956,9 +5979,18 @@ function ContractorsPage({ contractors, visits, expenseRequests = [], employees 
 // แสดงรายการคำขอเบิก + อนุมัติ/ปฏิเสธ/จ่าย
 function ExpenseRequestsView({ requests, employees, contractors, businesses, isOwner, currentUserId, ops, onNew, onEdit }) {
   const [filter, setFilter] = useState('all'); // all | pending | approved | paid | rejected
+  const [search, setSearch] = useState('');
+  const [bizFilter, setBizFilter] = useState('all');
   const payeeName = (r) => {
-    if (r.payeeKind === 'employee') { const e = employees.find((x) => x.id === r.payeeEmployeeId); return e ? dispName(e) : (r.payeeName || '—'); }
-    if (r.payeeKind === 'contractor') { const c = contractors.find((x) => x.id === r.payeeContractorId); return c ? c.name : (r.payeeName || '—'); }
+    const ids = Array.isArray(r.payeeIds) ? r.payeeIds : [];
+    if (r.payeeKind === 'employee') {
+      if (ids.length) return ids.map((id) => { const e = employees.find((x) => x.id === id); return e ? dispName(e) : null; }).filter(Boolean).join(', ') || (r.payeeName || '—');
+      const e = employees.find((x) => x.id === r.payeeEmployeeId); return e ? dispName(e) : (r.payeeName || '—');
+    }
+    if (r.payeeKind === 'contractor') {
+      if (ids.length) return ids.map((id) => { const c = contractors.find((x) => x.id === id); return c ? c.name : null; }).filter(Boolean).join(', ') || (r.payeeName || '—');
+      const c = contractors.find((x) => x.id === r.payeeContractorId); return c ? c.name : (r.payeeName || '—');
+    }
     return r.payeeName || '—';
   };
   const STATUS = {
@@ -5968,7 +6000,19 @@ function ExpenseRequestsView({ requests, employees, contractors, businesses, isO
     rejected: { label: 'ไม่อนุมัติ', cls: 'bg-rose-100 text-rose-700' },
   };
   const KIND = { employee: 'พนักงาน', contractor: 'ช่าง', external: 'ช่างนอก/อื่นๆ' };
-  const list = useMemo(() => (filter === 'all' ? requests : requests.filter((r) => r.status === filter)), [requests, filter]);
+  const list = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return requests.filter((r) => {
+      if (filter !== 'all' && r.status !== filter) return false;
+      if (bizFilter !== 'all' && r.businessId !== bizFilter) return false;
+      if (!q) return true;
+      return `${payeeName(r)} ${r.workDescription || ''} ${r.notes || ''}`.toLowerCase().includes(q);
+    });
+  }, [requests, filter, bizFilter, search, employees, contractors]);
+  const bizWithItems = useMemo(() => {
+    const ids = new Set(requests.map((r) => r.businessId).filter(Boolean));
+    return businesses.filter((b) => ids.has(b.id));
+  }, [requests, businesses]);
   const totalApprovedUnpaid = useMemo(() => requests.filter((r) => r.status === 'approved').reduce((s, r) => s + (Number(r.amount) || 0), 0), [requests]);
 
   const doReject = async (r) => {
@@ -5991,6 +6035,18 @@ function ExpenseRequestsView({ requests, employees, contractors, businesses, isO
           <Wallet className="w-4 h-4" />อนุมัติแล้วรอจ่าย รวม <b>{fmtMoney(totalApprovedUnpaid)} ฿</b>
         </div>
       )}
+      <div className="flex flex-col sm:flex-row gap-3">
+        <div className="relative flex-1 max-w-md">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-stone-400" />
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="ค้นหา ชื่อผู้รับเงิน/รายละเอียดงาน" className="w-full pl-9 pr-3 py-2 border border-stone-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500/40" />
+        </div>
+        {bizWithItems.length > 1 && (
+          <select value={bizFilter} onChange={(e) => setBizFilter(e.target.value)} className="px-3 py-2 border border-stone-300 rounded-lg bg-white text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/40">
+            <option value="all">ทุกธุรกิจ</option>
+            {bizWithItems.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+          </select>
+        )}
+      </div>
       <div className="flex flex-wrap gap-1.5">
         {[['all', 'ทั้งหมด'], ['pending', 'รออนุมัติ'], ['approved', 'อนุมัติแล้ว'], ['paid', 'จ่ายแล้ว'], ['rejected', 'ไม่อนุมัติ']].map(([k, lbl]) => (
           <button key={k} onClick={() => setFilter(k)} className={`px-3 py-1.5 rounded-full text-xs font-medium border ${filter === k ? 'bg-emerald-900 text-white border-emerald-900' : 'bg-white border-stone-300 text-stone-600 hover:bg-stone-50'}`}>{lbl}</button>
@@ -6052,8 +6108,10 @@ function ExpenseRequestsView({ requests, employees, contractors, businesses, isO
 // ฟอร์มตั้งเบิก
 function ExpenseRequestForm({ initial, employees, contractors, businesses, onSave, onCancel }) {
   const [payeeKind, setPayeeKind] = useState(initial?.payeeKind || 'contractor');
-  const [payeeEmployeeId, setPayeeEmployeeId] = useState(initial?.payeeEmployeeId || '');
-  const [payeeContractorId, setPayeeContractorId] = useState(initial?.payeeContractorId || '');
+  const initIds = Array.isArray(initial?.payeeIds) && initial.payeeIds.length
+    ? initial.payeeIds
+    : (initial?.payeeEmployeeId ? [initial.payeeEmployeeId] : (initial?.payeeContractorId ? [initial.payeeContractorId] : []));
+  const [payeeIds, setPayeeIds] = useState(initIds);
   const [payeeName, setPayeeName] = useState(initial?.payeeName || '');
   const [businessId, setBusinessId] = useState(initial?.businessId || businesses[0]?.id || '');
   const [workDescription, setWorkDescription] = useState(initial?.workDescription || '');
@@ -6061,20 +6119,31 @@ function ExpenseRequestForm({ initial, employees, contractors, businesses, onSav
   const [notes, setNotes] = useState(initial?.notes || '');
   const [docs, setDocs] = useState(initial?.docs || []);
   const activeEmployees = useMemo(() => employees.filter((e) => isActive(e)).sort((a, b) => (a.employeeNumber || '').localeCompare(b.employeeNumber || '')), [employees]);
+  const togglePayee = (id) => setPayeeIds((arr) => arr.includes(id) ? arr.filter((x) => x !== id) : [...arr, id]);
 
   const submit = () => {
     if (!businessId) return alert('กรุณาเลือกตึก/ธุรกิจ');
     if (!workDescription.trim()) return alert('กรุณากรอกรายละเอียดงาน');
     if (!(Number(amount) > 0)) return alert('กรุณาระบุจำนวนเงิน');
     let pName = payeeName.trim();
-    if (payeeKind === 'employee') { if (!payeeEmployeeId) return alert('กรุณาเลือกพนักงาน'); pName = dispName(employees.find((e) => e.id === payeeEmployeeId) || {}); }
-    else if (payeeKind === 'contractor') { if (!payeeContractorId) return alert('กรุณาเลือกช่าง'); pName = (contractors.find((c) => c.id === payeeContractorId) || {}).name || ''; }
-    else { if (!pName) return alert('กรุณากรอกชื่อผู้รับเงิน'); }
+    let ids = [];
+    if (payeeKind === 'employee') {
+      ids = payeeIds.filter((id) => activeEmployees.some((e) => e.id === id));
+      if (ids.length === 0) return alert('กรุณาเลือกพนักงานอย่างน้อย 1 คน');
+      pName = ids.map((id) => dispName(employees.find((e) => e.id === id) || {})).filter(Boolean).join(', ');
+    } else if (payeeKind === 'contractor') {
+      ids = payeeIds.filter((id) => contractors.some((c) => c.id === id));
+      if (ids.length === 0) return alert('กรุณาเลือกช่างอย่างน้อย 1 คน');
+      pName = ids.map((id) => (contractors.find((c) => c.id === id) || {}).name).filter(Boolean).join(', ');
+    } else {
+      if (!pName) return alert('กรุณากรอกชื่อผู้รับเงิน');
+    }
     onSave({
       businessId, workDescription: workDescription.trim(), amount: Number(amount) || 0,
       payeeKind,
-      payeeEmployeeId: payeeKind === 'employee' ? payeeEmployeeId : null,
-      payeeContractorId: payeeKind === 'contractor' ? payeeContractorId : null,
+      payeeIds: ids,
+      payeeEmployeeId: payeeKind === 'employee' ? (ids[0] || null) : null,
+      payeeContractorId: payeeKind === 'contractor' ? (ids[0] || null) : null,
       payeeName: pName,
       notes: notes.trim() || null, docs,
     });
@@ -6085,24 +6154,35 @@ function ExpenseRequestForm({ initial, employees, contractors, businesses, onSav
       <FormField label="จ่ายให้ใคร" required>
         <div className="grid grid-cols-3 gap-2">
           {[['contractor', 'ช่างในระบบ'], ['employee', 'พนักงาน'], ['external', 'ช่างนอก/อื่นๆ']].map(([k, lbl]) => (
-            <button key={k} type="button" onClick={() => setPayeeKind(k)} className={`p-2.5 rounded-lg border-2 text-center text-xs ${payeeKind === k ? 'border-emerald-600 bg-emerald-50 font-medium text-emerald-900' : 'border-stone-200 text-stone-600 hover:border-stone-300'}`}>{lbl}</button>
+            <button key={k} type="button" onClick={() => { setPayeeKind(k); setPayeeIds([]); }} className={`p-2.5 rounded-lg border-2 text-center text-xs ${payeeKind === k ? 'border-emerald-600 bg-emerald-50 font-medium text-emerald-900' : 'border-stone-200 text-stone-600 hover:border-stone-300'}`}>{lbl}</button>
           ))}
         </div>
       </FormField>
       {payeeKind === 'employee' && (
-        <FormField label="เลือกพนักงาน" required>
-          <select value={payeeEmployeeId} onChange={(e) => setPayeeEmployeeId(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500/40">
-            <option value="">— เลือกพนักงาน —</option>
-            {activeEmployees.map((e) => <option key={e.id} value={e.id}>#{e.employeeNumber} {dispName(e)}</option>)}
-          </select>
+        <FormField label="เลือกพนักงาน (เลือกได้หลายคน)" required>
+          {payeeIds.length > 0 && <div className="mb-1.5 text-xs text-stone-500">เลือกแล้ว {payeeIds.length} คน</div>}
+          <div className="max-h-52 overflow-y-auto border border-stone-200 rounded-lg divide-y divide-stone-100">
+            {activeEmployees.map((e) => (
+              <label key={e.id} className="flex items-center gap-2.5 px-3 py-2 hover:bg-stone-50 cursor-pointer">
+                <input type="checkbox" checked={payeeIds.includes(e.id)} onChange={() => togglePayee(e.id)} className="w-4 h-4 accent-emerald-600" />
+                <span className="text-sm text-stone-700">#{e.employeeNumber} {dispName(e)}</span>
+              </label>
+            ))}
+            {activeEmployees.length === 0 && <div className="px-3 py-2 text-xs text-stone-400">ไม่มีพนักงาน</div>}
+          </div>
         </FormField>
       )}
       {payeeKind === 'contractor' && (
-        <FormField label="เลือกช่าง" required>
-          <select value={payeeContractorId} onChange={(e) => setPayeeContractorId(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500/40">
-            <option value="">— เลือกช่าง —</option>
-            {contractors.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
+        <FormField label="เลือกช่าง (เลือกได้หลายคน)" required>
+          {payeeIds.length > 0 && <div className="mb-1.5 text-xs text-stone-500">เลือกแล้ว {payeeIds.length} คน</div>}
+          <div className="max-h-52 overflow-y-auto border border-stone-200 rounded-lg divide-y divide-stone-100">
+            {contractors.map((c) => (
+              <label key={c.id} className="flex items-center gap-2.5 px-3 py-2 hover:bg-stone-50 cursor-pointer">
+                <input type="checkbox" checked={payeeIds.includes(c.id)} onChange={() => togglePayee(c.id)} className="w-4 h-4 accent-emerald-600" />
+                <span className="text-sm text-stone-700">{c.name}</span>
+              </label>
+            ))}
+          </div>
           {contractors.length === 0 && <p className="text-xs text-amber-600 mt-1">ยังไม่มีช่างในระบบ — เพิ่มที่แท็บ "ช่าง/ผู้รับเหมา" หรือเลือก "ช่างนอก/อื่นๆ"</p>}
         </FormField>
       )}
@@ -6201,7 +6281,7 @@ function ContractorDetailModal({ contractor, allVisits, expenseRequests = [], bu
       .sort((a, b) => String(b.visitDate || '').localeCompare(String(a.visitDate || ''))),
     [allVisits, contractor.id]);
   const myExpenses = useMemo(() =>
-    expenseRequests.filter((r) => r.payeeKind === 'contractor' && r.payeeContractorId === contractor.id),
+    expenseRequests.filter((r) => r.payeeKind === 'contractor' && (Array.isArray(r.payeeIds) && r.payeeIds.length ? r.payeeIds.includes(contractor.id) : r.payeeContractorId === contractor.id)),
     [expenseRequests, contractor.id]);
   // รวมประวัติ: การมาทำงาน (visit) + ตั้งเบิก (expense) เรียงตามวันที่ใหม่สุด
   const history = useMemo(() => {
