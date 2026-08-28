@@ -648,6 +648,13 @@ function PushToggle({ userId }) {
   );
 }
 
+// ============ PAY-COLUMN STRIP (คนที่ไม่มีสิทธิ์เห็นเงินเดือน) ============
+// RLS เป็น row-level ตัดคอลัมน์ไม่ได้ → ต้องตัดฝั่ง client ทุกทางที่ข้อมูลเข้ามา
+// (โหลดครั้งแรก / realtime / sync หลังบันทึก)
+const EMP_PAY_FIELDS = ['baseSalary', 'holidayQuota', 'hasSocialSecurity', 'roomFee', 'salarySplit', 'commissionPct', 'probationSalary'];
+function stripEmployeePay(r) { if (r) EMP_PAY_FIELDS.forEach((k) => { delete r[k]; }); return r; }
+function stripPositionPay(r) { if (r) delete r.standardSalary; return r; }
+
 // ============ MAIN APP ============
 export default function App() {
   const [session, setSession] = useState(null);
@@ -732,6 +739,13 @@ export default function App() {
     const gated = ['businesses', 'positions', 'employees', 'orgchart', 'payroll', 'commission', 'roomrent', 'recurringtasks', 'advances'];
     if (gated.includes(view) && !allowed.has(view)) setView('dashboard');
   }, [view, profile]);
+
+  // สิทธิ์ดูเงินเดือนอาจเปลี่ยนระหว่างใช้งาน (owner กดให้/ยึดคืน) โดย role ไม่เปลี่ยน
+  // → เก็บใน ref เพื่อให้ closure ที่อยู่ใน useEffect เห็นค่าล่าสุดเสมอ
+  const canPayRef = useRef(false);
+  canPayRef.current = !!profile?.canManagePayroll;
+  // นับจำนวนครั้งที่ state ถูกแก้จากการบันทึกในเครื่อง → ใช้ทิ้งผลลัพธ์ refetch ที่มาช้ากว่า
+  const writeEpochRef = useRef(0);
 
   // ---- LOAD ALL DATA + REALTIME ----
   useEffect(() => {
@@ -824,8 +838,8 @@ export default function App() {
       return out;
     };
     // ตัดข้อมูลตัวเงินสำหรับคนที่ไม่มีสิทธิ์เห็นเงินเดือน (กันรั่วผ่าน realtime — RLS เป็น row-level ไม่ตัดคอลัมน์)
-    const stripEmpPay = (r) => { if (!profile.canManagePayroll && r) { delete r.baseSalary; delete r.holidayQuota; delete r.hasSocialSecurity; delete r.roomFee; delete r.salarySplit; delete r.commissionPct; delete r.probationSalary; } return r; };
-    const stripPosPay = (r) => { if (!profile.canManagePayroll && r) { delete r.standardSalary; } return r; };
+    const stripEmpPay = (r) => (canPayRef.current ? r : stripEmployeePay(r));
+    const stripPosPay = (r) => (canPayRef.current ? r : stripPositionPay(r));
     const handle = (setter, transform) => (payload) => {
       const { eventType, new: nv, old: ov } = payload;
       const map = (row) => (transform ? transform(fromDB(row)) : fromDB(row));
@@ -839,6 +853,42 @@ export default function App() {
         setter((prev) => prev.filter((r) => r.id !== ov.id));
       }
     };
+    // ---- กันข้อมูลค้าง: realtime อาจหลุดตอนพักหน้าจอ/เน็ตสะดุด หรือเครื่องอื่นเป็นคนแก้ ----
+    // ดึงข้อมูลหลักใหม่เมื่อกลับมาที่แท็บ และเมื่อ realtime ต่อกลับมาได้
+    let subscribedOnce = false;
+    let lastRefetch = Date.now();
+    let refetchSeq = 0;
+    let retriesLeft = 3;
+    const refetchCore = async (force) => {
+      // ข้อมูลพนักงานมีรูป base64 ติดมาด้วย → กันดึงถี่เกินไป (เปลืองเน็ตบนมือถือ)
+      if (!force && Date.now() - lastRefetch < 30000) return;
+      lastRefetch = Date.now();
+      const seq = ++refetchSeq;
+      const epoch = writeEpochRef.current;
+      const [b2, z2, p2, e2] = await Promise.all([
+        supabase.from('businesses').select('*').order('created_at'),
+        supabase.from('zones').select('*').order('created_at'),
+        supabase.from('positions').select('*').order('created_at'),
+        supabase.from('employees').select('*').order('created_at'),
+      ]);
+      if (cancelled || seq !== refetchSeq) return;
+      // ทิ้งผลลัพธ์ถ้ามีการบันทึกในเครื่องระหว่างรอ (ไม่งั้นข้อมูลเก่าจะทับสิ่งที่เพิ่งกดบันทึก)
+      // แล้วลองใหม่ ไม่ใช่ปล่อยหาย — ไม่งั้นการอัปเดตจากเครื่องอื่นจะตกหล่น
+      if (epoch !== writeEpochRef.current) {
+        lastRefetch = 0;
+        if (retriesLeft > 0) { retriesLeft -= 1; setTimeout(() => { if (!cancelled) refetchCore(true); }, 2000); }
+        return;
+      }
+      retriesLeft = 3;
+      const canPay = canPayRef.current;
+      if (b2.data) setBusinesses(fromDB(b2.data));
+      if (z2.data) setZones(fromDB(z2.data));
+      if (p2.data) { const rows = fromDB(p2.data); if (!canPay) rows.forEach(stripPositionPay); setPositions(rows); }
+      if (e2.data) { const rows = fromDB(e2.data); if (!canPay) rows.forEach(stripEmployeePay); setEmployees(rows); }
+    };
+    const onVisible = () => { if (document.visibilityState === 'visible') refetchCore(); };
+    document.addEventListener('visibilitychange', onVisible);
+
     const ch = supabase
       .channel('app')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'businesses' }, handle(setBusinesses))
@@ -852,9 +902,12 @@ export default function App() {
         if (eventType === 'INSERT') setNotiReads((prev) => prev.some((r) => r.notificationId === nv.notification_id && r.userId === nv.user_id) ? prev : [...prev, fromDB(nv)]);
         else if (eventType === 'DELETE') setNotiReads((prev) => prev.filter((r) => !(r.notificationId === ov.notification_id && r.userId === ov.user_id)));
       })
-      .subscribe();
+      .subscribe((status) => {
+        // ครั้งแรกไม่ต้องดึงซ้ำ (โหลดไปแล้ว) แต่ถ้า realtime หลุดแล้วต่อกลับมาได้ ให้ดึงใหม่
+        if (status === 'SUBSCRIBED') { if (subscribedOnce) refetchCore(true); subscribedOnce = true; }
+      });
 
-    return () => { cancelled = true; supabase.removeChannel(ch); };
+    return () => { cancelled = true; document.removeEventListener('visibilitychange', onVisible); supabase.removeChannel(ch); };
   }, [profile?.id, profile?.role]);
 
   // ---- HANDLERS ----
@@ -1011,20 +1064,70 @@ export default function App() {
     return fallback + (error?.message || '');
   };
 
+  // ---- SYNC LOCAL STATE ----
+  // อัปเดต state ทันทีหลังบันทึก ไม่รอ realtime (realtime อาจหลุด/ช้า/ถูก RLS กรอง
+  // ทำให้ผู้ใช้กด "บันทึก" แล้วหน้าจอไม่เปลี่ยน ทั้งที่ข้อมูลเข้า DB แล้ว)
+  const localSetters = { businesses: setBusinesses, zones: setZones, positions: setPositions, employees: setEmployees, user_profiles: setProfiles, notifications: setNotifications };
+  const localTransform = (table, row) => {
+    if (canPayRef.current) return row;
+    if (table === 'employees') return stripEmployeePay(row);
+    if (table === 'positions') return stripPositionPay(row);
+    return row;
+  };
+  const syncLocal = (table, action, row, id) => {
+    const setter = localSetters[table];
+    if (!setter) return;
+    // นับเฉพาะตารางที่ refetchCore ดึงจริง ไม่งั้นการบันทึก payroll_items จะไปล้ม refetch ทิ้งเปล่าๆ
+    writeEpochRef.current += 1;
+    if (action === 'delete') {
+      setter((prev) => prev.filter((r) => r.id !== id));
+      // DB มี ON DELETE CASCADE / SET NULL → ต้องทำตามใน state ไม่งั้นหน้าจอจะยังนับของที่ถูกลบไปแล้ว
+      if (table === 'businesses') {
+        setZones((prev) => prev.filter((z) => z.businessId !== id));
+        setPositions((prev) => prev.filter((p) => p.businessId !== id));
+        setEmployees((prev) => prev.filter((e) => e.businessId !== id));
+        setNotifications((prev) => prev.filter((n) => n.businessId !== id));
+      } else if (table === 'zones') {
+        setEmployees((prev) => prev.map((e) => (e.zoneId === id ? { ...e, zoneId: null } : e)));
+        setNotifications((prev) => prev.filter((n) => n.zoneId !== id));
+      } else if (table === 'positions') {
+        setPositions((prev) => prev.map((p) => (p.parentId === id ? { ...p, parentId: null } : p)));
+        setEmployees((prev) => prev.map((e) => (e.positionId === id ? { ...e, positionId: null } : e)));
+      } else if (table === 'employees') {
+        setEmployees((prev) => prev.map((e) => (e.managerId === id ? { ...e, managerId: null } : e)));
+      }
+      return;
+    }
+    if (!row?.id) return;
+    setter((prev) => {
+      const exists = prev.some((r) => r.id === row.id);
+      // merge กับของเดิม เพื่อไม่ทิ้ง field ที่ .select() ไม่คืนมา (เช่น email ของ user_profiles)
+      if (exists) return prev.map((r) => (r.id === row.id ? localTransform(table, { ...r, ...row }) : r));
+      return [...prev, localTransform(table, { ...row })];
+    });
+  };
+
   // CRUD: generic
   const insertRow = async (table, data) => {
     const { data: row, error } = await supabase.from(table).insert(toDB(data)).select().single();
     if (error) { alert(friendlyDBError(error, 'บันทึกไม่สำเร็จ: ')); return null; }
-    return fromDB(row);
+    const fresh = fromDB(row);
+    syncLocal(table, 'insert', fresh);
+    return fresh;
   };
   const updateRow = async (table, id, data) => {
-    const { error } = await supabase.from(table).update(toDB(data)).eq('id', id);
+    // .select() สำคัญ: ถ้า RLS บล็อก Postgres จะไม่ error แต่จะแก้ 0 แถว
+    // ถ้าไม่ขอแถวกลับมา จะดูเหมือนบันทึกสำเร็จทั้งที่ไม่มีอะไรเปลี่ยน
+    const { data: rows, error } = await supabase.from(table).update(toDB(data)).eq('id', id).select();
     if (error) { alert(friendlyDBError(error, 'แก้ไขไม่สำเร็จ: ')); return false; }
+    if (!rows || rows.length === 0) { alert('แก้ไขไม่สำเร็จ: ไม่พบข้อมูลนี้ หรือคุณไม่มีสิทธิ์แก้ไข (ลองรีเฟรชหน้าแล้วทำใหม่)'); return false; }
+    syncLocal(table, 'update', fromDB(rows[0]));
     return true;
   };
   const deleteRow = async (table, id) => {
     const { error } = await supabase.from(table).delete().eq('id', id);
     if (error) { alert('ลบไม่สำเร็จ: ' + error.message); return false; }
+    syncLocal(table, 'delete', null, id);
     return true;
   };
 
