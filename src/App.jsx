@@ -9,49 +9,20 @@ import {
   Wallet, Banknote, Calculator, Receipt, Minus, TrendingUp, TrendingDown, Bell, BellRing, Check, CheckCheck, Hash, Menu, Wrench, Percent, Sparkles, GripVertical
 } from 'lucide-react';
 import { supabase, fromDB, toDB } from './supabase.js';
-import { dispName, NATIONALITIES, natLabel, natFlag, isForeign, RESIGN_REASONS, resignLabel, isActive, SALARY_REASONS, salaryReasonLabel, THEMES, applyTheme } from './lib/format.js';
+import { dispName, NATIONALITIES, natLabel, natFlag, isForeign, RESIGN_REASONS, resignLabel, isActive, SALARY_REASONS, salaryReasonLabel, applyTheme } from './lib/format.js';
 import { isProbationPeriod, probationCycle, effectiveBaseSalary, daysInMonth, prorationFactor, payrollBaseSalary } from './lib/probation.js';
 import { hasSalarySplit, businessPositionId, businessBaseSalary, payrollBaseSalaryForBiz } from './lib/business.js';
 import { roomTotal, roomUnits, roomRentMapFromPool, recurringTaskMapFromPool, advanceMapFromPool } from './lib/pools.js';
 import { MONTH_NAMES, payMonthLabel, fmtMoney, fmt, calcSocialSecurity, computePayroll, buildPayrollDraft } from './lib/payroll.js';
 import { printPayslip, printPayslips, printPayrollRegister } from './lib/print.js';
 import { uploadDocument, deleteDocument, getDocumentUrl, resizeImage } from './lib/storage.js';
-import { pushSupported, getPushSubscription, enablePush, disablePush } from './lib/push.js';
 import { sortByOrder, orderRowsToMap, applySubsetOrder, NO_DEPT, employeeDepartment, allDepartments, stripEmployeePay, stripPositionPay } from './lib/order.js';
 import { useIsMobile, useDragReorder, dragClass, rowDragClass, cellDropClass } from './lib/hooks.js';
-
-
-// ปุ่มเปิด/ปิดแจ้งเตือนเข้าเครื่อง (อยู่ใน sidebar — เฉพาะเจ้าของ/หัวหน้าธุรกิจ)
-function PushToggle({ userId }) {
-  const [supported] = useState(() => pushSupported());
-  const [ready, setReady] = useState(false);
-  const [enabled, setEnabled] = useState(false);
-  const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      if (!supported) { if (!cancelled) setReady(true); return; }
-      const sub = await getPushSubscription();
-      if (!cancelled) { setEnabled(!!sub && Notification.permission === 'granted'); setReady(true); }
-    })();
-    return () => { cancelled = true; };
-  }, [supported]);
-  if (!supported) return null;
-  const toggle = async () => {
-    setBusy(true);
-    try {
-      if (enabled) { await disablePush(); setEnabled(false); }
-      else { const ok = await enablePush(userId); setEnabled(ok); }
-    } finally { setBusy(false); }
-  };
-  return (
-    <button onClick={toggle} disabled={busy || !ready} className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-emerald-100/80 hover:bg-emerald-900 hover:text-white transition-colors disabled:opacity-50">
-      {enabled ? <BellRing className="w-4 h-4 text-amber-400" /> : <Bell className="w-4 h-4" />}
-      <span className="flex-1 text-left">{busy ? 'กำลังตั้งค่า...' : enabled ? 'แจ้งเตือนเข้าเครื่อง: เปิด' : 'เปิดแจ้งเตือนเข้าเครื่อง'}</span>
-      {enabled && <Check className="w-4 h-4 text-emerald-400" />}
-    </button>
-  );
-}
+import { Modal, FormField, FormActions, EmptyState, PageHeader, LoadingScreen, Avatar, PillRadio, InfoItem, DetailBlock, EditorRow } from './ui/index.jsx';
+import { AuthScreen } from './components/AuthScreen.jsx';
+import { PendingScreen } from './components/PendingScreen.jsx';
+import { NotificationBell } from './components/NotificationBell.jsx';
+import { Sidebar } from './components/Sidebar.jsx';
 
 
 // ============ MAIN APP ============
@@ -1051,408 +1022,6 @@ function AuditLogPage({ businesses, ops }) {
   );
 }
 
-// ============ LOADING ============
-function LoadingScreen({ msg = 'กำลังโหลด...' }) {
-  return (
-    <div className="min-h-screen flex items-center justify-center bg-stone-50">
-      <div className="text-stone-500">{msg}</div>
-    </div>
-  );
-}
-
-// ============ AUTH SCREEN ============
-function AuthScreen() {
-  const [mode, setMode] = useState('login'); // 'login' | 'signup'
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [name, setName] = useState('');
-  const [showPw, setShowPw] = useState(false);
-  const [error, setError] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [info, setInfo] = useState('');
-
-  const handleSubmit = async () => {
-    setError(''); setInfo(''); setBusy(true);
-    try {
-      if (mode === 'login') {
-        const { error } = await supabase.auth.signInWithPassword({ email, password });
-        if (error) throw error;
-      } else {
-        const { error } = await supabase.auth.signUp({
-          email, password,
-          options: { data: { name: name || email.split('@')[0] } },
-        });
-        if (error) throw error;
-        setInfo('สมัครสำเร็จ! ถ้า Supabase ตั้งให้ยืนยันอีเมล กรุณาเช็คอีเมล มิฉะนั้นเข้าสู่ระบบได้เลย');
-      }
-    } catch (e) {
-      setError(e.message || 'เกิดข้อผิดพลาด');
-    } finally { setBusy(false); }
-  };
-
-  return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-emerald-950 via-emerald-900 to-stone-900 p-6">
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute -top-40 -right-40 w-96 h-96 bg-amber-500/10 rounded-full blur-3xl" />
-        <div className="absolute -bottom-40 -left-40 w-96 h-96 bg-emerald-500/10 rounded-full blur-3xl" />
-      </div>
-      <div className="w-full max-w-md relative">
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-amber-500 mb-4 shadow-lg shadow-amber-500/30">
-            <Users className="w-8 h-8 text-emerald-950" strokeWidth={2.5} />
-          </div>
-          <h1 className="text-4xl font-bold text-white tracking-tight">ระบบจัดการพนักงาน</h1>
-          <p className="text-emerald-200/70 mt-2 text-sm">Employee Management System</p>
-        </div>
-        <div onKeyDown={(e) => e.key === 'Enter' && handleSubmit()} className="bg-white/95 backdrop-blur rounded-2xl shadow-2xl p-8 border border-white/20">
-          <div className="flex gap-1 p-1 bg-stone-100 rounded-lg mb-6">
-            <button onClick={() => setMode('login')} className={`flex-1 py-2 text-sm font-medium rounded-md transition-all ${mode === 'login' ? 'bg-white text-emerald-900 shadow-sm' : 'text-stone-500'}`}>เข้าสู่ระบบ</button>
-            <button onClick={() => setMode('signup')} className={`flex-1 py-2 text-sm font-medium rounded-md transition-all ${mode === 'signup' ? 'bg-white text-emerald-900 shadow-sm' : 'text-stone-500'}`}>สมัครสมาชิก</button>
-          </div>
-          <div className="space-y-4">
-            {mode === 'signup' && (
-              <div>
-                <label className="block text-sm font-medium text-stone-700 mb-1.5">ชื่อ-นามสกุล</label>
-                <input value={name} onChange={(e) => setName(e.target.value)} className="w-full px-3 py-2.5 bg-stone-50 border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600" placeholder="คุณ A" />
-              </div>
-            )}
-            <div>
-              <label className="block text-sm font-medium text-stone-700 mb-1.5">อีเมล</label>
-              <div className="relative">
-                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-stone-400" />
-                <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full pl-10 pr-3 py-2.5 bg-stone-50 border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600" placeholder="you@example.com" />
-              </div>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-stone-700 mb-1.5">รหัสผ่าน</label>
-              <div className="relative">
-                <KeyRound className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-stone-400" />
-                <input type={showPw ? 'text' : 'password'} value={password} onChange={(e) => setPassword(e.target.value)} className="w-full pl-10 pr-10 py-2.5 bg-stone-50 border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600" placeholder="••••••••" />
-                <button onClick={() => setShowPw(!showPw)} className="absolute right-3 top-1/2 -translate-y-1/2 text-stone-400 hover:text-stone-600">
-                  {showPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </button>
-              </div>
-              {mode === 'signup' && <p className="text-xs text-stone-500 mt-1">อย่างน้อย 6 ตัวอักษร</p>}
-            </div>
-            {error && <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg"><AlertCircle className="w-4 h-4 flex-shrink-0" /><span>{error}</span></div>}
-            {info && <div className="flex items-center gap-2 text-sm text-emerald-700 bg-emerald-50 px-3 py-2 rounded-lg"><CheckCircle2 className="w-4 h-4 flex-shrink-0" /><span>{info}</span></div>}
-            <button onClick={handleSubmit} disabled={busy} className="w-full py-2.5 bg-emerald-900 hover:bg-emerald-800 disabled:opacity-50 text-white font-medium rounded-lg transition-colors shadow-lg shadow-emerald-900/20">
-              {busy ? 'กำลังดำเนินการ...' : mode === 'login' ? 'เข้าสู่ระบบ' : 'สมัครสมาชิก'}
-            </button>
-          </div>
-          {mode === 'signup' && (
-            <div className="mt-5 text-xs text-stone-500 text-center">
-              คนแรกที่สมัครจะเป็นเจ้าของระบบโดยอัตโนมัติ <br />คนถัดไปจะรอเจ้าของอนุมัติ
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ============ PENDING SCREEN ============
-function PendingScreen({ profile }) {
-  return (
-    <div className="min-h-screen flex items-center justify-center bg-stone-50 p-6">
-      <div className="max-w-md text-center">
-        <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-amber-100 mb-4">
-          <Clock className="w-8 h-8 text-amber-700" />
-        </div>
-        <h2 className="text-xl font-semibold text-stone-800">รออนุมัติ</h2>
-        <p className="text-stone-600 mt-2">บัญชีของคุณ ({profile.name}) ได้รับการสร้างแล้ว แต่ยังรอเจ้าของระบบอนุมัติและกำหนดสิทธิ์</p>
-        <button onClick={() => supabase.auth.signOut()} className="mt-6 px-4 py-2 text-sm text-stone-700 hover:bg-stone-200 rounded-lg">ออกจากระบบ</button>
-      </div>
-    </div>
-  );
-}
-
-// ============ NOTIFICATION BELL ============
-const NOTI_META = {
-  pending_user:       { icon: UserCircle, color: 'text-amber-600 bg-amber-100' },
-  permit_expiry:      { icon: CreditCard, color: 'text-red-600 bg-red-100' },
-  passport_expiry:    { icon: BookOpen, color: 'text-red-600 bg-red-100' },
-  idcard_expiry:      { icon: Shield, color: 'text-red-600 bg-red-100' },
-  birthday:           { icon: Calendar, color: 'text-pink-600 bg-pink-100' },
-  vacancy:            { icon: Award, color: 'text-amber-600 bg-amber-100' },
-  understaffed:       { icon: Users, color: 'text-rose-600 bg-rose-100' },
-  overstaffed:        { icon: Users, color: 'text-sky-600 bg-sky-100' },
-  payroll_incomplete: { icon: Wallet, color: 'text-amber-600 bg-amber-100' },
-  pending_raise:      { icon: TrendingUp, color: 'text-emerald-600 bg-emerald-100' },
-  recurring_task_short: { icon: Sparkles, color: 'text-amber-600 bg-amber-100' },
-  expense_pending:    { icon: Receipt, color: 'text-amber-600 bg-amber-100' },
-  expense_approved:   { icon: CheckCircle2, color: 'text-emerald-600 bg-emerald-100' },
-  expense_rejected:   { icon: X, color: 'text-rose-600 bg-rose-100' },
-};
-function timeAgo(ts) {
-  const s = Math.floor((Date.now() - new Date(ts)) / 1000);
-  if (s < 60) return 'เมื่อสักครู่';
-  if (s < 3600) return `${Math.floor(s / 60)} นาทีที่แล้ว`;
-  if (s < 86400) return `${Math.floor(s / 3600)} ชม.ที่แล้ว`;
-  return `${Math.floor(s / 86400)} วันที่แล้ว`;
-}
-function NotificationBell({ notifications, notiReads, userId, canManagePayroll, ops, onJump, variant = 'dark' }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef(null);
-  const readSet = useMemo(() => new Set(notiReads.filter((r) => r.userId === userId).map((r) => r.notificationId)), [notiReads, userId]);
-  // ซ่อนการแจ้งเตือนที่เกี่ยวกับเงินเดือน จากผู้ที่ไม่มีสิทธิ์ดูเงินเดือน + ซ่อนแจ้งเตือนตั้งเบิกเก่า (ยกเลิกฟีเจอร์ช่าง/ตั้งเบิกแล้ว)
-  const PAYROLL_NOTI = ['payroll_incomplete', 'pending_raise'];
-  const EXPENSE_NOTI = ['expense_pending', 'expense_approved', 'expense_rejected'];
-  const visibleNoti = useMemo(() => notifications.filter((n) => {
-    if (!canManagePayroll && PAYROLL_NOTI.includes(n.type)) return false;
-    if (EXPENSE_NOTI.includes(n.type)) return false;
-    return true;
-  }), [notifications, canManagePayroll]);
-  const sorted = useMemo(() => [...visibleNoti].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)), [visibleNoti]);
-  const unread = sorted.filter((n) => !readSet.has(n.id));
-  const unreadCount = unread.length;
-
-  useEffect(() => {
-    const onClick = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
-    document.addEventListener('mousedown', onClick);
-    return () => document.removeEventListener('mousedown', onClick);
-  }, []);
-
-  const clickNoti = (n) => {
-    if (!readSet.has(n.id)) ops.notification.markRead(n.id, userId);
-    if (onJump) onJump(n);
-    setOpen(false);
-  };
-
-  return (
-    <div className="relative" ref={ref}>
-      <button onClick={() => setOpen((o) => !o)} className={`relative p-2 rounded-lg transition-colors ${variant === 'light' ? 'hover:bg-stone-100 text-stone-600' : 'hover:bg-emerald-900 text-emerald-100/90'}`} title="การแจ้งเตือน">
-        {unreadCount > 0 ? <BellRing className="w-5 h-5" /> : <Bell className="w-5 h-5" />}
-        {unreadCount > 0 && (
-          <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">{unreadCount > 99 ? '99+' : unreadCount}</span>
-        )}
-      </button>
-      {open && (
-        <div className={`absolute ${variant === 'light' ? 'right-0' : 'left-0'} top-full mt-2 w-[340px] max-w-[90vw] bg-white rounded-xl shadow-2xl border border-stone-200 z-[70] overflow-hidden`}>
-          <div className="px-4 py-3 border-b border-stone-200 flex items-center justify-between bg-stone-50">
-            <div className="font-semibold text-stone-800 text-sm">การแจ้งเตือน {unreadCount > 0 && <span className="text-red-500">({unreadCount})</span>}</div>
-            {unreadCount > 0 && (
-              <button onClick={() => ops.notification.markAllRead(unread.map((n) => n.id), userId)} className="flex items-center gap-1 text-xs text-emerald-700 hover:text-emerald-900 font-medium"><CheckCheck className="w-3.5 h-3.5" />อ่านทั้งหมด</button>
-            )}
-          </div>
-          <div className="max-h-[420px] overflow-auto">
-            {sorted.length === 0 ? (
-              <div className="px-4 py-10 text-center text-stone-400 text-sm"><Bell className="w-8 h-8 mx-auto mb-2 opacity-40" />ไม่มีการแจ้งเตือน</div>
-            ) : (
-              sorted.map((n) => {
-                const meta = NOTI_META[n.type] || { icon: Bell, color: 'text-stone-600 bg-stone-100' };
-                const Icon = meta.icon;
-                const isUnread = !readSet.has(n.id);
-                return (
-                  <button key={n.id} onClick={() => clickNoti(n)} className={`w-full text-left px-4 py-3 flex items-start gap-3 border-b border-stone-100 hover:bg-stone-50 transition-colors ${isUnread ? 'bg-emerald-50/40' : ''}`}>
-                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${meta.color}`}><Icon className="w-4 h-4" /></div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className={`text-sm truncate ${isUnread ? 'font-semibold text-stone-800' : 'font-medium text-stone-600'}`}>{n.title}</span>
-                        {isUnread && <span className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0" />}
-                      </div>
-                      {n.body && <div className="text-xs text-stone-500 mt-0.5 break-words">{n.body}</div>}
-                      <div className="text-[11px] text-stone-400 mt-1">{timeAgo(n.createdAt)}</div>
-                    </div>
-                  </button>
-                );
-              })
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ============ THEME PICKER ============
-function ThemePicker({ current, onSelect }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef(null);
-  useEffect(() => {
-    const onClick = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
-    document.addEventListener('mousedown', onClick);
-    return () => document.removeEventListener('mousedown', onClick);
-  }, []);
-  const cur = THEMES.find((t) => t.value === current) || THEMES[0];
-  return (
-    <div className="relative" ref={ref}>
-      <button onClick={() => setOpen((o) => !o)} className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-emerald-100/80 hover:bg-emerald-900 hover:text-white transition-colors">
-        <div className="flex -space-x-1">
-          <span className="w-4 h-4 rounded-full border border-emerald-950" style={{ background: cur.primary }} />
-          <span className="w-4 h-4 rounded-full border border-emerald-950" style={{ background: cur.accent }} />
-        </div>
-        <span className="flex-1 text-left">ธีม: {cur.label}</span>
-        <ChevronDown className={`w-4 h-4 transition-transform ${open ? 'rotate-180' : ''}`} />
-      </button>
-      {open && (
-        <div className="absolute bottom-full left-0 mb-2 w-full bg-white rounded-xl shadow-2xl border border-stone-200 z-[70] overflow-hidden p-1.5">
-          <div className="px-2 py-1.5 text-xs font-medium text-stone-400">เลือกธีมสี</div>
-          {THEMES.map((t) => {
-            const active = t.value === current;
-            return (
-              <button key={t.value} onClick={() => { onSelect(t.value); setOpen(false); }} className={`w-full flex items-center gap-3 px-2 py-2 rounded-lg text-left transition-colors ${active ? 'bg-stone-100' : 'hover:bg-stone-50'}`}>
-                <div className="flex -space-x-1 flex-shrink-0">
-                  <span className="w-5 h-5 rounded-full border-2 border-white shadow-sm" style={{ background: t.primary }} />
-                  <span className="w-5 h-5 rounded-full border-2 border-white shadow-sm" style={{ background: t.accent }} />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium text-stone-800">{t.label}</div>
-                  <div className="text-[11px] text-stone-500">{t.desc}</div>
-                </div>
-                {active && <Check className="w-4 h-4 text-emerald-600 flex-shrink-0" />}
-              </button>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ============ SIDEBAR ============
-function Sidebar({ view, setView, profile, businesses, zones, activeBusinessId, setActiveBusinessId, notiBell, onThemeChange, open, onClose }) {
-  const isOwner = profile.isOwner;
-  const isBM = profile.isBM;
-  const isZM = profile.isZM;
-  const isViewer = profile.isViewer;
-  const canManageBiz = isOwner || isBM;
-  const roleLabel = isOwner ? 'เจ้าของระบบ' : isBM ? 'หัวหน้าธุรกิจ' : isZM ? 'หัวหน้าโซน' : isViewer ? 'ผู้ดู' : 'รออนุมัติ';
-  const RoleIcon = isOwner ? Crown : isViewer ? Eye : User;
-  // สิทธิ์เข้าถึงเมนูรายคน (ทับ role เดิม — จำกัดได้ ไม่เกินสิทธิ์ role) — เจ้าของไม่ถูกจำกัด, "ภาพรวม" เข้าได้เสมอ
-  const allowedViewSet = (!isOwner && Array.isArray(profile.allowedViews)) ? new Set([...profile.allowedViews, 'dashboard']) : null;
-  const navAllowed = (id) => (allowedViewSet ? allowedViewSet.has(id) : true);
-  const NAV_ITEMS = [
-    { id: 'dashboard', label: 'ภาพรวม', icon: Home },
-    { id: 'businesses', label: 'ธุรกิจและโซน', icon: Building2, show: canManageBiz && navAllowed('businesses') },
-    { id: 'positions', label: 'ตำแหน่ง', icon: Award, show: navAllowed('positions') },
-    { id: 'employees', label: 'พนักงาน', icon: Users, show: navAllowed('employees') },
-    { id: 'orgchart', label: 'แผนผังองค์กร', icon: Network, show: navAllowed('orgchart') },
-    { id: 'payroll', label: 'เงินเดือน', icon: Wallet, show: profile.canManagePayroll && navAllowed('payroll') },
-    { id: 'commission', label: 'คอมมิชชั่น', icon: Percent, show: profile.canManagePayroll && navAllowed('commission') },
-    { id: 'roomrent', label: 'ค่าห้องพนักงาน', icon: KeyRound, show: profile.canManagePayroll && navAllowed('roomrent') },
-    { id: 'recurringtasks', label: 'งานเสริมประจำ', icon: Sparkles, show: (isOwner || (isBM && navAllowed('recurringtasks'))) },
-    { id: 'advances', label: 'เบิกเงิน', icon: Banknote, show: (isOwner || (isBM && navAllowed('advances'))) },
-    { id: 'users', label: 'ผู้ใช้ระบบ', icon: Shield, show: isOwner },
-    { id: 'auditlog', label: 'ประวัติการแก้ไข', icon: Clock, show: isOwner },
-    { id: 'settings', label: 'ตั้งค่า', icon: Settings, show: isOwner },
-  ];
-
-  // ธุรกิจที่ user เลือกได้
-  const accessibleBiz = (() => {
-    if (isOwner) return businesses;
-    if (isBM) return businesses.filter((b) => (profile.businessIds || []).includes(b.id));
-    if (isZM) {
-      const bizIds = new Set((zones || []).filter((z) => (profile.zoneIds || []).includes(z.id)).map((z) => z.businessId));
-      return businesses.filter((b) => bizIds.has(b.id));
-    }
-    if (isViewer) {
-      const hasScope = profile.businessIds.length > 0 || profile.zoneIds.length > 0;
-      if (!hasScope) return businesses;
-      const bizIds = new Set([
-        ...profile.businessIds,
-        ...(zones || []).filter((z) => profile.zoneIds.includes(z.id)).map((z) => z.businessId),
-      ]);
-      return businesses.filter((b) => bizIds.has(b.id));
-    }
-    return businesses;
-  })();
-
-  const navClick = (id) => {
-    setView(id);
-    if (typeof window !== 'undefined' && window.matchMedia('(max-width: 1023px)').matches) onClose?.();
-  };
-
-  return (
-    <aside className={`w-64 bg-emerald-950 text-emerald-50 flex flex-col h-screen z-50 transition-transform duration-200 ease-out
-      fixed inset-y-0 left-0 ${open ? 'translate-x-0' : '-translate-x-full'}
-      lg:static lg:z-auto lg:translate-x-0 ${open ? 'lg:flex' : 'lg:hidden'}`}>
-      <div className="p-5 border-b border-emerald-900">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-lg bg-amber-500 flex items-center justify-center">
-            <Users className="w-5 h-5 text-emerald-950" strokeWidth={2.5} />
-          </div>
-          <div className="flex-1">
-            <div className="font-semibold text-white text-sm">ระบบพนักงาน</div>
-            <div className="text-xs text-emerald-300/70">Employee System</div>
-          </div>
-          {notiBell}
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-emerald-900 text-emerald-100/80 lg:hidden" aria-label="ปิดเมนู"><X className="w-5 h-5" /></button>
-        </div>
-      </div>
-      {(() => {
-        const activeBiz = activeBusinessId ? businesses.find((b) => b.id === activeBusinessId) : null;
-        if (!activeBiz) return null;
-        return (
-          <div className="px-3 pt-3">
-            <div className="flex items-center gap-2.5 px-2.5 py-2 bg-emerald-900/60 rounded-lg">
-              <div className="w-9 h-9 rounded-lg bg-white/95 flex items-center justify-center flex-shrink-0 overflow-hidden">
-                {activeBiz.logo ? <img src={activeBiz.logo} alt={activeBiz.name} className="w-full h-full object-contain" /> : <Building2 className="w-5 h-5 text-emerald-800" />}
-              </div>
-              <div className="min-w-0">
-                <div className="text-[10px] text-emerald-300/70">ธุรกิจที่กำลังดู</div>
-                <div className="text-sm text-white font-medium truncate">{activeBiz.name}</div>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
-      {accessibleBiz.length > 1 && (
-        <div className="p-3 border-b border-emerald-900">
-          <label className="block text-xs text-emerald-300/70 mb-1.5 px-1">เปลี่ยนธุรกิจ</label>
-          <select value={activeBusinessId || ''} onChange={(e) => setActiveBusinessId(e.target.value)} className="w-full px-3 py-2 bg-emerald-900 border border-emerald-800 rounded-lg text-sm text-white focus:outline-none focus:border-amber-500">
-            {isOwner && <option value="">🌐 ทุกธุรกิจ (ภาพรวม)</option>}
-            {accessibleBiz.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-          </select>
-        </div>
-      )}
-      <nav className="flex-1 min-h-0 overflow-y-auto p-3 space-y-0.5">
-        {NAV_ITEMS.map((item) => {
-          if (item.show === false) return null;
-          const Icon = item.icon;
-          const active = view === item.id;
-          return (
-            <button key={item.id} onClick={() => navClick(item.id)} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all ${active ? 'bg-amber-500 text-emerald-950 font-medium shadow-lg shadow-amber-500/20' : 'text-emerald-100/80 hover:bg-emerald-900 hover:text-white'}`}>
-              <Icon className="w-4 h-4" />
-              <span className="flex-1 text-left">{item.label}</span>
-              {item.badge > 0 && <span className={`min-w-[18px] h-[18px] px-1 text-[10px] font-bold rounded-full flex items-center justify-center ${active ? 'bg-emerald-950 text-amber-400' : 'bg-rose-500 text-white'}`}>{item.badge}</span>}
-            </button>
-          );
-        })}
-      </nav>
-      <div className="p-3 border-t border-emerald-900">
-        <div className="flex items-center gap-3 px-3 py-2 mb-2">
-          <div className="w-9 h-9 rounded-full bg-emerald-800 flex items-center justify-center">
-            <RoleIcon className={`w-4 h-4 ${isOwner ? 'text-amber-400' : 'text-emerald-200'}`} />
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="text-sm text-white truncate">{profile.name || 'ผู้ใช้'}</div>
-            <div className="text-xs text-emerald-300/70">{roleLabel}</div>
-          </div>
-        </div>
-        <ThemePicker current={profile.theme} onSelect={onThemeChange} />
-        {(isOwner || isBM) && <PushToggle userId={profile.id} />}
-        <button onClick={() => supabase.auth.signOut()} className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-emerald-100/80 hover:bg-emerald-900 hover:text-white transition-colors">
-          <LogOut className="w-4 h-4" />
-          <span>ออกจากระบบ</span>
-        </button>
-      </div>
-    </aside>
-  );
-}
-
-// ============ PAGE HEADER ============
-function PageHeader({ title, subtitle, children }) {
-  return (
-    <div className="bg-white border-b border-stone-200 px-4 sm:px-8 py-4 sm:py-5 flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
-      <div className="min-w-0">
-        <h1 className="text-xl sm:text-3xl font-bold text-stone-800 tracking-tight truncate">{title}</h1>
-        {subtitle && <p className="text-[13px] sm:text-[15px] text-stone-500 mt-0.5 sm:mt-1">{subtitle}</p>}
-      </div>
-      <div className="flex items-center gap-2 flex-shrink-0">{children}</div>
-    </div>
-  );
-}
 
 // ============ DASHBOARD ============
 function Dashboard({ profile, businesses, zones, employees, positions, activeBusinessId, setView }) {
@@ -1678,13 +1247,6 @@ function Dashboard({ profile, businesses, zones, employees, positions, activeBus
       </div>
     </div>
   );
-}
-
-// ============ AVATAR ============
-function Avatar({ photo, name, size = 40 }) {
-  const initials = (name || '?').split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase();
-  if (photo) return <img src={photo} alt={name} style={{ width: size, height: size }} className="rounded-full object-cover border-2 border-white shadow-sm flex-shrink-0" />;
-  return <div style={{ width: size, height: size, fontSize: size * 0.35 }} className="rounded-full bg-gradient-to-br from-emerald-700 to-emerald-900 text-white font-medium flex items-center justify-center flex-shrink-0">{initials}</div>;
 }
 
 // ============ BUSINESSES + ZONES PAGE ============
@@ -2932,23 +2494,6 @@ function EmployeeIDCard({ employee, business, zone, position, onClose }) {
   );
 }
 
-function InfoItem({ icon: Icon, label, value, hint }) {
-  return (
-    <div className="flex items-start gap-2.5">
-      <Icon className="w-4 h-4 text-stone-400 mt-0.5 flex-shrink-0" />
-      <div className="min-w-0"><div className="text-xs text-stone-500">{label}</div><div className="text-sm text-stone-800 break-words">{value || <span className="text-stone-400">—</span>}{hint && <span className="text-stone-500 text-xs ml-1.5">({hint})</span>}</div></div>
-    </div>
-  );
-}
-
-function DetailBlock({ icon: Icon, label, value, mono }) {
-  return (
-    <div className="bg-stone-50 rounded-lg p-4">
-      <div className="flex items-center gap-2 mb-1.5"><Icon className="w-4 h-4 text-stone-500" /><div className="text-xs font-medium text-stone-600">{label}</div></div>
-      <div className={`text-sm text-stone-800 whitespace-pre-wrap ${mono ? 'font-mono' : ''}`}>{value}</div>
-    </div>
-  );
-}
 
 function EmployeeForm({ initial, zones, positions, allPositions, employees, businesses, onSave, onCancel, lockedZoneId, allowedZoneIds, businessId, isOwner, canEditPay }) {
   const [name, setName] = useState(initial?.name || '');
@@ -3272,14 +2817,6 @@ function EmployeeForm({ initial, zones, positions, allPositions, employees, busi
   );
 }
 
-function PillRadio({ selected, onClick, icon: Icon, children }) {
-  return (
-    <button type="button" onClick={onClick} className={`flex items-center justify-center gap-2 px-3 py-2.5 text-sm rounded-lg border-2 transition-all ${selected ? 'border-emerald-600 bg-emerald-50 text-emerald-900 font-medium' : 'border-stone-200 bg-white text-stone-600 hover:border-stone-300'}`}>
-      {Icon && <Icon className={`w-4 h-4 ${selected ? 'text-emerald-700' : 'text-stone-400'}`} />}
-      {children}
-    </button>
-  );
-}
 
 function DocList({ paths }) {
   const list = Array.isArray(paths) ? paths : [];
@@ -4570,14 +4107,6 @@ function PrintSlipsModal({ business, bizEmployees, payrollByEmp, itemsByPayroll,
 }
 
 // ============ STABLE INPUT COMPONENTS (ระดับโมดูล — กันช่องกรอกเสียโฟกัสตอนพิมพ์) ============
-function EditorRow({ label, children, hint }) {
-  return (
-    <div className="flex items-center justify-between gap-3 py-1.5">
-      <div className="text-sm text-stone-600">{label}{hint && <span className="block text-[11px] text-stone-400">{hint}</span>}</div>
-      <div className="w-36">{children}</div>
-    </div>
-  );
-}
 function EditorItemList({ title, list, setList, color, addLabel, disabled, priceMap = {} }) {
   const dlId = useRef('dl-' + Math.random().toString(36).slice(2, 9)).current;
   const knownLabels = Object.keys(priceMap || {});
@@ -5641,41 +5170,3 @@ function SettingsPage({ expiryWarnMonths, birthdayNotify, birthdayWarnDays, ops,
   );
 }
 
-// ============ REUSABLE UI ============
-function Modal({ title, children, onClose, wide }) {
-  return (
-    <div className="fixed inset-0 bg-stone-900/50 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center sm:p-4">
-      <div className={`bg-white shadow-2xl w-full ${wide ? 'sm:max-w-3xl' : 'sm:max-w-md'} max-h-[92vh] sm:max-h-[90vh] flex flex-col rounded-t-2xl sm:rounded-2xl`}>
-        <div className="px-4 sm:px-6 py-4 border-b border-stone-200 flex items-center justify-between flex-shrink-0">
-          <h2 className="font-semibold text-stone-800 truncate pr-2">{title}</h2>
-          <button onClick={onClose} className="p-2 -mr-1 hover:bg-stone-100 rounded-lg text-stone-500 flex-shrink-0"><X className="w-5 h-5" /></button>
-        </div>
-        <div className="p-4 sm:p-6 overflow-auto overscroll-contain">{children}</div>
-      </div>
-    </div>
-  );
-}
-
-function FormField({ label, required, children }) {
-  return <div><label className="block text-sm font-medium text-stone-700 mb-1.5">{label}{required && <span className="text-red-500"> *</span>}</label>{children}</div>;
-}
-
-function FormActions({ onCancel, onSubmit, submitLabel }) {
-  return (
-    <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 pt-2">
-      <button onClick={onCancel} className="px-4 py-2.5 text-stone-700 hover:bg-stone-100 rounded-lg text-sm font-medium border border-stone-200 sm:border-0">ยกเลิก</button>
-      <button onClick={onSubmit} className="flex items-center justify-center gap-2 px-4 py-2.5 bg-emerald-900 hover:bg-emerald-800 text-white rounded-lg text-sm font-medium"><Save className="w-4 h-4" /> {submitLabel || 'บันทึก'}</button>
-    </div>
-  );
-}
-
-function EmptyState({ icon: Icon, title, description, action }) {
-  return (
-    <div className="text-center py-16">
-      <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-stone-100 mb-4"><Icon className="w-8 h-8 text-stone-400" /></div>
-      <h3 className="text-lg font-semibold text-stone-700">{title}</h3>
-      {description && <p className="text-sm text-stone-500 mt-1 mb-5 max-w-md mx-auto">{description}</p>}
-      {action}
-    </div>
-  );
-}

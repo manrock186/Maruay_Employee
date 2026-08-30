@@ -56,11 +56,15 @@ Repo นี้ **public** — ห้ามเขียนชื่อ ชื่�
 ให้ใช้ **จำนวน / ตำแหน่ง / แผนก / id** แทน (เช่น "พนักงาน 8 คน สายช่าง" ไม่ใช่รายชื่อ)
 git history ลบด้วย `git revert` ไม่ได้ ต้อง rewrite + force push ซึ่งกระทบทุกคนที่ clone ไปแล้ว
 
-## โครงสร้างโค้ด (หลัง refactor step 1)
+## โครงสร้างโค้ด (หลัง refactor step 2)
 ```
 src/
-  App.jsx      state + ops + routing + component ทั้งหมด (~5,700 บรรทัด — รอ step 2-3)
+  App.jsx      state + ops + routing + page component (~5,200 บรรทัด — รอ step 3)
   supabase.js  client + fromDB/toDB
+  ui/index.jsx    Modal, FormField, FormActions, EmptyState, PageHeader, LoadingScreen,
+                  Avatar, PillRadio, InfoItem, DetailBlock, EditorRow — ไม่ import โมดูลอื่นเลย
+  components/     PushToggle, AuthScreen, PendingScreen, NotificationBell, ThemePicker, Sidebar
+                  (Sidebar → ThemePicker + PushToggle)
   lib/         logic ล้วน ไม่มี JSX · ไม่มี circular import
     format.js     dispName, สัญชาติ, เหตุผลลาออก/ปรับเงินเดือน, ธีม
     probation.js  ทดลองงาน + proration
@@ -75,7 +79,13 @@ src/
 ```
 
 ## Lint — รันทุกครั้งหลังย้ายโค้ด
-`npm run lint` (ESLint flat config, เปิด `no-undef`)
-จับเคส "ย้ายฟังก์ชันออกไปเป็นโมดูลแล้วลืม import" ซึ่ง `npm run build` **จับไม่ได้**
-(undefined global เป็น runtime error ไม่ใช่ build error) — ตอน refactor step 1 จับได้จริง 1 จุด
+`npm run lint` (ESLint flat config) เปิด 2 กฎ **ต้องมีทั้งคู่**:
+- `no-undef` — จับ "ย้ายฟังก์ชันแล้วลืม import" (step 1 จับได้ 1 จุด)
+- `react/jsx-no-undef` — จับ "ลืม import **component**" ซึ่ง `no-undef` **จับไม่ได้**
+  เพราะชื่อที่อยู่ในตำแหน่ง JSX element (`<Foo />`) ไม่ถูกนับเป็น reference
+  step 2 เกือบหลุด: `Sidebar` เรียก `<ThemePicker/>` `<PushToggle/>` โดยไม่ได้ import
+  → lint เงียบ + `npm run build` ผ่าน + bundle ยัง tree-shake โมดูลทั้งสองทิ้ง
+  → ถ้า deploy = **จอขาวทุกหน้าหลังล็อกอิน**
+
+`npm run build` ไม่ใช่ safety net: rollup ถือว่า identifier ที่ไม่รู้จักเป็น global
 

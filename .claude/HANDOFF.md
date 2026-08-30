@@ -6,6 +6,38 @@
 
 ---
 
+## 2026-08-30 (4) — Refactor step 2: แยก `src/ui/` + `src/components/`
+
+**ทำอะไร** — ย้าย presentational component ออกจาก `App.jsx` (โค้ด byte-identical ไม่แก้ตรรกะ)
+- `src/ui/index.jsx` — Modal, FormField, FormActions, EmptyState, PageHeader, LoadingScreen,
+  Avatar, PillRadio, InfoItem, DetailBlock, EditorRow (ไม่ import โมดูลอื่นในโปรเจกต์เลย)
+- `src/components/` — PushToggle, AuthScreen, PendingScreen, NotificationBell (+ NOTI_META, timeAgo),
+  ThemePicker, Sidebar
+- `src/App.jsx` 5,681 → 5,176 บรรทัด · bundle เท่าเดิม (code-split อยู่ step 4)
+
+**⚠️ บทเรียนสำคัญ — เกือบ deploy จอขาวทั้งแอป**
+สคริปต์ที่สร้าง import อัตโนมัติไม่ได้ใส่ "ชื่อ component ด้วยกันเอง" ในตารางสัญลักษณ์
+→ `Sidebar` เรียก `<ThemePicker/>` และ `<PushToggle/>` โดยไม่ได้ import
+→ **`npm run lint` เงียบ** (`no-undef` ไม่นับชื่อในตำแหน่ง JSX element เป็น reference)
+→ **`npm run build` ผ่าน** (rollup ถือว่าเป็น global) แถม tree-shake สองโมดูลนั้นทิ้งทั้งไฟล์
+→ ถ้า push ไป = ทุกคนที่ล็อกอินเจอ `ReferenceError` จอขาว 100% ทุกหน้า
+
+subagent review จับได้ก่อน · แก้แล้ว + **เพิ่มกฎ `react/jsx-no-undef`** (eslint-plugin-react)
+ทดสอบกฎแล้วว่าฟ้องจริง (ลอง comment import ออก → error) และเงียบเมื่อ import ครบ
+**ห้ามเชื่อ `npm run build` เป็น safety net ของการย้ายโค้ด — ต้องรัน `npm run lint`**
+
+**ตรวจแล้ว:** lint (2 กฎ) + build ผ่าน · subagent เทียบ 58 declaration ของ HEAD เดิม —
+19 ย้ายออก 39 อยู่ต่อ ไม่หาย/ไม่ซ้ำ/ไม่มีของแปลกปลอม · body byte-identical ทุกตัว ·
+diff ของ App.jsx เป็น "ลบอย่างเดียว + เพิ่ม import 6 บรรทัด" → call site/props/default ไม่เปลี่ยนโดยปริยาย ·
+ไม่มี circular · ไม่มี component ไหน import กลับเข้า App.jsx · ตรวจไอคอนใน NOTI_META/NAV_ITEMS ครบ
+
+**ยังไม่ได้เทสของจริง** — ต้องเทสหลัง deploy (โค้ดยังไม่ขึ้น production ตอน review)
+จุดที่ต้องกดจริง: ล็อกอิน · sidebar (ธีม + ปุ่มแจ้งเตือน) · กระดิ่งแจ้งเตือน · modal ทุกหน้า
+
+**งานค้าง:** step 3 แยก `src/pages/` · step 4 `React.lazy`
+
+---
+
 ## 2026-08-30 (3) — Refactor step 1: แยก `src/lib/` (logic ล้วน)
 
 **ทำอะไร** — ย้าย helper ระดับโมดูลออกจาก `App.jsx` เป็น 10 ไฟล์ใน `src/lib/`

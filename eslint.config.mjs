@@ -1,3 +1,5 @@
+import react from 'eslint-plugin-react';
+
 export default [
   {
     files: ['src/**/*.{js,jsx}'],
@@ -13,6 +15,14 @@ export default [
         Blob:'readonly', fetch:'readonly', localStorage:'readonly', matchMedia:'readonly',
       },
     },
-    rules: { 'no-undef': 'error' },
+    plugins: { react },
+    settings: { react: { version: 'detect' } },
+    rules: {
+      'no-undef': 'error',
+      // สำคัญ: no-undef ไม่จับชื่อ component ที่อยู่ในตำแหน่ง JSX element (<Foo />)
+      // เคยหลุดมาแล้วตอน refactor step 2 — Sidebar เรียก <ThemePicker/> โดยไม่ได้ import
+      // build ก็ผ่าน เพราะ rollup มองว่าเป็น global → จอขาวทั้งแอปหลังล็อกอิน
+      'react/jsx-no-undef': 'error',
+    },
   },
 ];
