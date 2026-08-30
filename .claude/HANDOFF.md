@@ -6,6 +6,35 @@
 
 ---
 
+## 2026-08-30 (3) — Refactor step 1: แยก `src/lib/` (logic ล้วน)
+
+**ทำอะไร** — ย้าย helper ระดับโมดูลออกจาก `App.jsx` เป็น 10 ไฟล์ใน `src/lib/`
+โค้ดที่ย้ายเป็น **byte-identical** ไม่แก้ตรรกะแม้บรรทัดเดียว (เพิ่มแค่บรรทัด import/export)
+`src/App.jsx` 6,444 → 5,681 บรรทัด · bundle เท่าเดิม (668 kB — ยังไม่ได้ code-split, อยู่ step 4)
+
+โครงสร้าง + กราฟ dependency (ไม่มี circular) เขียนไว้ใน `.claude/DEV_SETUP.md` แล้ว
+
+**เพิ่ม ESLint** (`eslint.config.mjs` + `npm run lint`) เปิดกฎ `no-undef`
+เหตุผล: `npm run build` **จับไม่ได้** ว่าย้ายฟังก์ชันออกไปแล้วลืม import — undefined global
+เป็น runtime error ไม่ใช่ build error · รอบนี้จับได้จริง 1 จุด (`business.js` ลืม import `isProbationPeriod`
+ซึ่งถ้าหลุดไป production หน้าเงินเดือนจะพังตอนคำนวณคนที่อยู่หลายธุรกิจ)
+**ให้รัน `npm run lint` ทุกครั้งหลังย้ายโค้ดใน step ถัดๆ ไป**
+
+**PII** — เพิ่มกฎ "ห้ามใส่ PII ในไฟล์ที่ commit" ใน DEV_SETUP + กวาดทั้ง repo ด้วยรายชื่อเล่นจริงจาก DB
+เจอและแก้ 2 จุดที่เป็น placeholder ในหน้าค่าห้องพนักงาน (ใช้ชื่อเล่นพนักงานจริงเป็นตัวอย่าง)
+เหลือ `"เช่น สมชาย ใจดี"` ในฟอร์มพนักงาน — เป็นชื่อสมมติมาตรฐานแบบ John Doe ไม่ได้อ้างถึงพนักงานคนใด จึงคงไว้
+
+**ตรวจแล้ว:** `npm run lint` + `npm run build` ผ่าน · subagent review เทียบ symbol ทั้ง 128 ตัวกับ HEAD เดิม
+(ไม่หาย/ไม่ซ้ำ/ไม่มีของแปลกปลอม) · เทียบ body แบบ multiset ว่า byte-identical · ยืนยันไม่มี circular / TDZ /
+ไม่มีฟังก์ชันไหนเคย closure ทับ state ใน `App()` · ตรวจว่า eslint globals ไม่ได้บังชื่อในโปรเจกต์
+
+**งานค้าง (refactor)**
+- step 2: แยก `src/ui/` (Modal, FormField, FormActions, EmptyState, Avatar, PageHeader, LoadingScreen, PillRadio) + `src/components/` (Sidebar, NotificationBell, ThemePicker, PushToggle)
+- step 3: แยก `src/pages/` ทีละหน้า → `App.jsx` เหลือ state + ops + routing
+- step 4: `React.lazy` หน้าที่หนัก → คาด bundle หลักเหลือ ~250-300 kB
+
+---
+
 ## 2026-08-30 (2) — เทสบน production + แก้ 2 จุดที่เจอ
 
 **เทสจริงบน https://maruay-employee.vercel.app ผ่าน Claude in Chrome** (คืนค่า display_order + positions.department

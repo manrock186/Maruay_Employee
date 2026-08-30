@@ -49,3 +49,33 @@ Multi-tenant: scope ด้วย `business_id` + `zone_id`. RLS ใช้ SECURI
 ## TODO / ไอเดียพัฒนาต่อ
 - `src/App.jsx` เป็นไฟล์ยักษ์ไฟล์เดียว → candidate สำหรับ refactor (code-split, แยก component)
 - (เพิ่มรายการที่นี่เมื่อคิดออก)
+
+## ⚠️ ห้ามใส่ PII ในไฟล์ที่ commit
+Repo นี้ **public** — ห้ามเขียนชื่อ ชื่อเล่น เบอร์โทร เลขบัตร หรือข้อมูลระบุตัวตนของพนักงานจริง
+ลงในโค้ด คอมเมนต์ placeholder `HANDOFF.md` `DEV_SETUP.md` หรือ commit message
+ให้ใช้ **จำนวน / ตำแหน่ง / แผนก / id** แทน (เช่น "พนักงาน 8 คน สายช่าง" ไม่ใช่รายชื่อ)
+git history ลบด้วย `git revert` ไม่ได้ ต้อง rewrite + force push ซึ่งกระทบทุกคนที่ clone ไปแล้ว
+
+## โครงสร้างโค้ด (หลัง refactor step 1)
+```
+src/
+  App.jsx      state + ops + routing + component ทั้งหมด (~5,700 บรรทัด — รอ step 2-3)
+  supabase.js  client + fromDB/toDB
+  lib/         logic ล้วน ไม่มี JSX · ไม่มี circular import
+    format.js     dispName, สัญชาติ, เหตุผลลาออก/ปรับเงินเดือน, ธีม
+    probation.js  ทดลองงาน + proration
+    business.js   1 คนหลายสังกัด (ตำแหน่ง/เงินเดือนแยกตามธุรกิจ)   → probation
+    pools.js      คอมมิชชั่น / ค่าห้อง / งานเสริมประจำ / เบิกล่วงหน้า
+    payroll.js    คำนวณเงินเดือน + buildPayrollDraft              → probation, business, pools
+    print.js      สลิป + รายงานรวม                                → format, payroll
+    storage.js    อัปโหลด/ลบ/signed URL เอกสาร + ย่อรูป
+    push.js       web push (VAPID, subscribe/unsubscribe)
+    order.js      ลำดับที่ลากจัดเอง + แผนก + ตัดคอลัมน์เงิน          → business
+    hooks.js      useIsMobile, useDragReorder + คลาสตอนลาก
+```
+
+## Lint — รันทุกครั้งหลังย้ายโค้ด
+`npm run lint` (ESLint flat config, เปิด `no-undef`)
+จับเคส "ย้ายฟังก์ชันออกไปเป็นโมดูลแล้วลืม import" ซึ่ง `npm run build` **จับไม่ได้**
+(undefined global เป็น runtime error ไม่ใช่ build error) — ตอน refactor step 1 จับได้จริง 1 จุด
+
