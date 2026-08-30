@@ -6,6 +6,42 @@
 
 ---
 
+## 2026-08-28 (2) — หน้าเงินเดือน: จัดกลุ่มตามโซน + ลากสลับลำดับ (จำลำดับไว้)
+
+**ทำอะไร**
+- หน้าเงินเดือนจัดกลุ่มพนักงานตาม **โซน** มีหัวข้อโซนคั่น ทั้งโหมด "กรอกเร็ว" และ "รายคน"
+  คนที่ไม่มีโซน (หรือโซนอยู่คนละธุรกิจ) ไปกลุ่ม "ไม่ระบุโซน" ท้ายสุด
+- **ลากสลับลำดับได้**: คนภายในโซนเดียวกัน + สลับลำดับตัวโซนเอง (ข้ามโซนไม่ได้ — โซนของคนแก้ที่หน้าพนักงาน)
+  · เดสก์ท็อป: ลากไอคอนจุดหน้าชื่อ · มือถือ: แตะค้าง 350ms ที่หัวการ์ด (ปัดนิ้วก่อนครบ = เลื่อนหน้าจอปกติ)
+- ลำดับ **ทุกคนเห็นเหมือนกัน และใช้ทุกหน้า** (state `employees`/`zones` ถูกเรียงที่ต้นทางครั้งเดียว)
+
+**DB — ใช้ migration `add_display_order_table` (apply บน production แล้ว)**
+ตารางใหม่ `public.display_order (kind, ref_id, position, updated_at)` PK = (kind, ref_id)
+- RLS: อ่านได้ทุกคนที่ล็อกอิน / เขียนได้ owner + business_manager + zone_manager
+- อยู่ใน `supabase_realtime` publication → จัดลำดับที่เครื่องหนึ่ง เครื่องอื่นเห็นทันที
+- seed ลำดับเริ่มต้นจาก created_at แล้ว (32 คน / 3 โซน) หน้าจอจึงไม่สลับตอน deploy
+- **ทำไมไม่ใช้ `employees.sort_order`:** trigger `log_audit` เก็บ row เต็มทุก UPDATE (มีรูป base64 ~56KB/คน)
+  → ลากทีเดียว audit_log บวมเป็น MB + realtime ยิง payload หนักไปทุกเครื่อง
+- DDL เพิ่มไว้ใน `SUPABASE_SETUP.sql` แล้ว
+
+**โค้ด** (`src/App.jsx`)
+- `sortByOrder` / `orderRowsToMap` / `applySubsetOrder` — module-level
+- `employeesRaw`/`zonesRaw` = state ดิบ, `employees`/`zones` = useMemo ที่เรียงแล้ว (ชื่อเดิม โค้ดที่เหลือไม่ต้องแก้)
+- `useDragReorder` — เขียนเองด้วย Pointer Events ไม่เพิ่ม dependency (HTML5 DnD ใช้บนมือถือไม่ได้)
+  · long-press 350ms + ขยับเกิน 8px ก่อนครบ = ยกเลิก (ผู้ใช้ตั้งใจสกrolล)
+  · บล็อกสกrolลระหว่างลากด้วย native `touchmove` (passive:false) ผูกตั้งแต่ `pointerdown` — ผูกทีหลังไม่ทัน
+    browser ตัดสินใจไปแล้ว จะได้ `cancelable=false`
+  · `touch-action:none` ใส่เฉพาะไอคอนจุด (เป้าเล็ก) ไม่ใส่พื้นที่ใหญ่ ไม่งั้นแถบนั้นสกrolลไม่ได้
+- `ops.displayOrder.set/reorder` — optimistic + upsert เฉพาะแถวที่เปลี่ยน + rollback ถ้า error
+
+**ตรวจแล้ว:** review 3 รอบด้วย subagent เจอและแก้ไปทั้งหมด 9 จุด ที่สำคัญ:
+conditional hook ใน PayrollPage (React crash ตอนเลือก "ทุกธุรกิจ"), ลากแล้วค่าที่พิมพ์ค้างหาย,
+touchmove listener ค้างถาวรทำให้ทั้งแอปสกrolลไม่ได้, timer/userSelect ค้างตอน unmount
+
+**งานค้าง:** refactor `src/App.jsx` (ตอนนี้ ~6,300 บรรทัด) · UI/UX จุดอื่นรอ user ระบุ
+
+---
+
 ## 2026-08-28 — แก้บั๊ก "กดบันทึกแล้วหน้าจอไม่เปลี่ยน"
 
 **อาการ:** หน้า "แก้ไขข้อมูลพนักงาน" (และหน้าอื่นที่ใช้ ops.*.update) กดบันทึกแล้ว UI ไม่อัปเดต

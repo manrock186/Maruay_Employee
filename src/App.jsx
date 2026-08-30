@@ -6,7 +6,7 @@ import {
   Eye, EyeOff, Network, Save, ChevronDown, ChevronUp, User,
   KeyRound, AlertCircle, CheckCircle2, Crown, Award, MapPinned, Clock,
   Globe, CreditCard, BookOpen, FileText, ExternalLink, Paperclip,
-  Wallet, Banknote, Calculator, Receipt, Minus, TrendingUp, TrendingDown, Bell, BellRing, Check, CheckCheck, Hash, Menu, Wrench, Percent, Sparkles
+  Wallet, Banknote, Calculator, Receipt, Minus, TrendingUp, TrendingDown, Bell, BellRing, Check, CheckCheck, Hash, Menu, Wrench, Percent, Sparkles, GripVertical
 } from 'lucide-react';
 import { supabase, fromDB, toDB } from './supabase.js';
 
@@ -648,6 +648,142 @@ function PushToggle({ userId }) {
   );
 }
 
+// ============ DISPLAY ORDER (ลำดับที่ผู้ใช้ลากจัดเอง) ============
+// เรียงตาม position ใน display_order; ตัวที่ยังไม่มีลำดับ (เพิ่งสร้าง) ไปต่อท้ายตามลำดับเดิม
+function sortByOrder(list, map) {
+  if (!list?.length) return list;
+  const pos = map || {};
+  return list
+    .map((r, i) => ({ r, i, p: pos[r.id] }))
+    .sort((a, b) => {
+      const ap = a.p == null ? Infinity : a.p;
+      const bp = b.p == null ? Infinity : b.p;
+      return ap === bp ? a.i - b.i : ap - bp;
+    })
+    .map((x) => x.r);
+}
+// รายการ [{kind, refId, position}] → { employee: {id: pos}, zone: {id: pos} }
+function orderRowsToMap(rows) {
+  const out = { employee: {}, zone: {} };
+  (rows || []).forEach((r) => { if (out[r.kind]) out[r.kind][r.refId] = r.position; });
+  return out;
+}
+
+// เอาลำดับใหม่ของ "บางส่วน" (เช่น คนในโซนเดียว) ใส่กลับเข้าลำดับรวม
+// โดยยึดตำแหน่งสลอตเดิมไว้ กลุ่มอื่นจึงไม่ขยับ
+function applySubsetOrder(fullIds, subsetNewOrder) {
+  const present = new Set(fullIds);
+  const subset = subsetNewOrder.filter((id) => present.has(id)); // ตัด id ที่ถูกลบไปแล้วออก
+  const inSubset = new Set(subset);
+  let k = 0;
+  return fullIds.map((id) => (inSubset.has(id) ? subset[k++] : id));
+}
+
+// ============ DRAG TO REORDER (กดค้างแล้วลาก) ============
+// ทำเองด้วย Pointer Events ไม่ใช้ไลบรารี — HTML5 drag-and-drop ใช้บนมือถือไม่ได้
+// มือถือ: แตะค้าง 350ms (ถ้าขยับก่อนครบ = ตั้งใจสกrolล → ยกเลิก) · เดสก์ท็อป: กดค้างหรือลากที่ไอคอนจุด
+function useDragReorder(ids, onCommit, groupOf) {
+  const [dragId, setDragId] = useState(null);
+  const [overId, setOverId] = useState(null);
+  const st = useRef({ timer: null, sx: 0, sy: 0, el: null, pid: null, id: null, dragging: false, over: null });
+
+  // React ผูก touchmove ที่ root แบบ passive → preventDefault ใน onPointerMove ไม่พอ ต้องเป็น native passive:false
+  // และต้องผูกตั้งแต่ pointerdown (ซึ่งยิงก่อน touchstart) — ถ้าไปผูกตอนลากจริง browser ตัดสินใจไปแล้วว่า
+  // gesture นี้สกrolลได้ ทำให้ touchmove ที่ตามมา cancelable=false → preventDefault ไม่มีผล
+  // ref เดียวตลอดอายุ hook: ถ้าสร้างใหม่ทุก render จะ removeEventListener ไม่ตรงตัว แล้วค้างถาวร
+  const blockScrollRef = useRef((e) => { if (st.current.dragging) e.preventDefault(); });
+
+  const reset = () => {
+    const r = st.current;
+    document.removeEventListener('touchmove', blockScrollRef.current);
+    if (r.timer) { clearTimeout(r.timer); r.timer = null; }
+    if (r.el && r.pid != null) { try { r.el.releasePointerCapture(r.pid); } catch { /* ปล่อยไม่ได้ก็ไม่เป็นไร */ } }
+    document.body.style.userSelect = '';
+    st.current = { timer: null, sx: 0, sy: 0, el: null, pid: null, id: null, dragging: false, over: null };
+    setDragId(null); setOverId(null);
+  };
+
+  // ถ้า component ถูกถอดกลางกดค้าง (เช่น หมุนจอ → สลับ card/table) timer จะยิงต่อ
+  // แล้วไม่มีใครเรียก reset → userSelect:none ค้างทั้งแอป
+  useEffect(() => () => {
+    const r = st.current;
+    if (r.timer) clearTimeout(r.timer);
+    document.removeEventListener('touchmove', blockScrollRef.current);
+    document.body.style.userSelect = '';
+  }, []);
+
+  const onPointerDown = (e, id, immediate) => {
+    if (e.button != null && e.button !== 0) return;
+    if (st.current.timer || st.current.dragging) return; // สองนิ้วจับสองที่พร้อมกัน → ยึดอันแรกไว้
+    const el = e.currentTarget;
+    const r = st.current;
+    r.sx = e.clientX; r.sy = e.clientY; r.el = el; r.pid = e.pointerId; r.id = id; r.dragging = false; r.over = id;
+    // ผูกตั้งแต่ตอนนี้ (ก่อน touchstart) แต่ข้างในเช็ค st.current.dragging → ปัดนิ้วเลื่อนหน้าจอปกติไม่โดนบล็อก
+    document.addEventListener('touchmove', blockScrollRef.current, { passive: false });
+    const activate = () => {
+      r.timer = null; r.dragging = true;
+      document.body.style.userSelect = 'none';
+      try { el.setPointerCapture(r.pid); } catch { /* บาง browser ไม่รองรับ */ }
+      if (navigator.vibrate) { try { navigator.vibrate(15); } catch { /* ไม่รองรับก็ข้าม */ } }
+      setDragId(id); setOverId(id);
+    };
+    if (immediate) activate();
+    else r.timer = setTimeout(activate, 350);
+  };
+
+  const onPointerMove = (e) => {
+    const r = st.current;
+    if (!r.dragging) {
+      // ขยับก่อนครบเวลา = ผู้ใช้ตั้งใจเลื่อนหน้าจอ ไม่ใช่ลาก
+      if (r.timer && (Math.abs(e.clientX - r.sx) > 8 || Math.abs(e.clientY - r.sy) > 8)) { clearTimeout(r.timer); r.timer = null; r.id = null; }
+      return;
+    }
+    e.preventDefault();
+    const hit = document.elementFromPoint(e.clientX, e.clientY)?.closest('[data-drag-id]');
+    const id = hit?.getAttribute('data-drag-id');
+    if (!id || !ids.includes(id) || id === r.over) return;
+    // ย้ายข้ามกลุ่มไม่ได้ (โซนของพนักงานเปลี่ยนที่หน้าข้อมูลพนักงานเท่านั้น)
+    if (groupOf && groupOf(id) !== groupOf(r.id)) return;
+    r.over = id; setOverId(id);
+  };
+
+  const onPointerUp = () => {
+    const r = st.current;
+    const from = r.dragging ? r.id : null;
+    const to = r.over;
+    reset();
+    if (!from || !to || from === to) return;
+    const fi = ids.indexOf(from), ti = ids.indexOf(to);
+    if (fi < 0 || ti < 0) return;
+    if (groupOf && groupOf(from) !== groupOf(to)) return;
+    const next = ids.filter((x) => x !== from);
+    next.splice(ti > fi ? next.indexOf(to) + 1 : next.indexOf(to), 0, from);
+    onCommit(next);
+  };
+
+  // ตัวจับ: immediate=true สำหรับไอคอนจุด (ลากได้ทันที), false = ต้องกดค้าง
+  // ใส่ที่ "พื้นที่ที่ปลอดภัยจะกดค้าง" (เช่น ช่องชื่อ) ไม่ใช่ทั้งแถว เพราะแถวมีช่องกรอกเลข
+  const bindHandle = (id, immediate = false) => ({
+    onPointerDown: (e) => onPointerDown(e, id, immediate),
+    onPointerMove,
+    onPointerUp,
+    onPointerCancel: reset,
+    onContextMenu: (e) => { if (st.current.dragging) e.preventDefault(); },
+    // ไอคอนจุด = เป้าเล็ก ปิด touch-action ได้เลย · พื้นที่กดค้าง (เช่น หัวการ์ด) ปล่อยให้สกrolลได้ตามปกติ
+    // การบล็อกสกrolลตอนลากจริง ใช้ blockScrollRef (native touchmove) แทน ไม่งั้นแถบนี้จะเลื่อนหน้าจอไม่ได้เลย
+    style: immediate ? { touchAction: 'none', cursor: 'grab' } : { cursor: 'grab' },
+  });
+
+  return { dragId, overId, bindHandle, dragging: !!dragId };
+}
+
+// สไตล์ขณะลาก — div/การ์ดใช้ ring ได้ แต่ <tr> ใช้ไม่ได้ (box-shadow บน table row เพี้ยนหลาย browser)
+// จึงแยก: แถวใช้ opacity, ตัวชี้จุดวางไปอยู่ที่ช่องแรกเป็นแถบสีด้านซ้าย
+const dragClass = (id, dragId, overId) =>
+  dragId === id ? 'opacity-40' : (dragId && overId === id ? 'ring-2 ring-emerald-400 ring-inset' : '');
+const rowDragClass = (id, dragId) => (dragId === id ? 'opacity-40' : '');
+const cellDropClass = (id, dragId, overId) => (dragId && dragId !== id && overId === id ? 'shadow-[inset_3px_0_0_0_#059669]' : '');
+
 // ============ PAY-COLUMN STRIP (คนที่ไม่มีสิทธิ์เห็นเงินเดือน) ============
 // RLS เป็น row-level ตัดคอลัมน์ไม่ได้ → ต้องตัดฝั่ง client ทุกทางที่ข้อมูลเข้ามา
 // (โหลดครั้งแรก / realtime / sync หลังบันทึก)
@@ -664,12 +800,18 @@ export default function App() {
 
   const [view, setView] = useState('dashboard');
   const [businesses, setBusinesses] = useState([]);
-  const [zones, setZones] = useState([]);
+  const [zonesRaw, setZones] = useState([]);
   const [positions, setPositions] = useState([]);
-  const [employees, setEmployees] = useState([]);
+  const [employeesRaw, setEmployees] = useState([]);
+  const [orderMap, setOrderMap] = useState({ employee: {}, zone: {} });
   const [profiles, setProfiles] = useState([]);
   const [notifications, setNotifications] = useState([]);
   const [notiReads, setNotiReads] = useState([]); // [{notificationId, userId}]
+
+  // ลำดับที่ผู้ใช้ลากจัดเอง (เก็บใน display_order) — จัดครั้งเดียวตรงนี้
+  // ตัวแปร employees/zones ที่โค้ดข้างล่างใช้ทั้งหมดจึงเรียงตามที่จัดไว้ ทุกหน้าเหมือนกัน
+  const employees = useMemo(() => sortByOrder(employeesRaw, orderMap.employee), [employeesRaw, orderMap.employee]);
+  const zones = useMemo(() => sortByOrder(zonesRaw, orderMap.zone), [zonesRaw, orderMap.zone]);
   const [expiryWarnMonths, setExpiryWarnMonths] = useState(2); // เตือนก่อนเอกสารหมดอายุกี่เดือน (ตั้งค่าทั้งระบบ)
   const [birthdayNotify, setBirthdayNotify] = useState(true);  // เปิด/ปิด แจ้งเตือนวันเกิด
   const [birthdayWarnDays, setBirthdayWarnDays] = useState(7); // เตือนวันเกิดล่วงหน้ากี่วัน
@@ -754,7 +896,7 @@ export default function App() {
     let cancelled = false;
     setDataLoading(true);
     (async () => {
-      const [b, z, p, e, up, noti, reads, settingsRow] = await Promise.all([
+      const [b, z, p, e, up, noti, reads, settingsRow, orderRows] = await Promise.all([
         supabase.from('businesses').select('*').order('created_at'),
         supabase.from('zones').select('*').order('created_at'),
         supabase.from('positions').select('*').order('created_at'),
@@ -765,6 +907,7 @@ export default function App() {
         supabase.from('notifications').select('*').order('created_at', { ascending: false }),
         supabase.from('notification_reads').select('*'),
         supabase.from('app_settings').select('expiry_warn_months, birthday_notify_enabled, birthday_warn_days').eq('id', 1).maybeSingle(),
+        supabase.from('display_order').select('*'),
       ]);
       if (cancelled) return;
       if (settingsRow?.data?.expiry_warn_months != null) setExpiryWarnMonths(settingsRow.data.expiry_warn_months);
@@ -781,6 +924,7 @@ export default function App() {
       setProfiles(fromDB(up.data || []));
       setNotifications(fromDB(noti.data || []));
       setNotiReads(fromDB(reads.data || []));
+      setOrderMap(orderRowsToMap(fromDB(orderRows.data || [])));
       // เลือกธุรกิจเริ่มต้น
       const allBiz = b.data || [];
       const allZones = z.data || [];
@@ -865,11 +1009,12 @@ export default function App() {
       lastRefetch = Date.now();
       const seq = ++refetchSeq;
       const epoch = writeEpochRef.current;
-      const [b2, z2, p2, e2] = await Promise.all([
+      const [b2, z2, p2, e2, o2] = await Promise.all([
         supabase.from('businesses').select('*').order('created_at'),
         supabase.from('zones').select('*').order('created_at'),
         supabase.from('positions').select('*').order('created_at'),
         supabase.from('employees').select('*').order('created_at'),
+        supabase.from('display_order').select('*'),
       ]);
       if (cancelled || seq !== refetchSeq) return;
       // ทิ้งผลลัพธ์ถ้ามีการบันทึกในเครื่องระหว่างรอ (ไม่งั้นข้อมูลเก่าจะทับสิ่งที่เพิ่งกดบันทึก)
@@ -885,6 +1030,16 @@ export default function App() {
       if (z2.data) setZones(fromDB(z2.data));
       if (p2.data) { const rows = fromDB(p2.data); if (!canPay) rows.forEach(stripPositionPay); setPositions(rows); }
       if (e2.data) { const rows = fromDB(e2.data); if (!canPay) rows.forEach(stripEmployeePay); setEmployees(rows); }
+      if (o2.data) setOrderMap(orderRowsToMap(fromDB(o2.data)));
+    };
+    // display_order เป็นตารางเล็ก (ไม่มีรูป) ดึงใหม่ทั้งตารางถูกกว่าไล่ diff ทีละแถว
+    let orderTimer = null;
+    const reloadOrder = () => {
+      clearTimeout(orderTimer);
+      orderTimer = setTimeout(async () => {
+        const { data } = await supabase.from('display_order').select('*');
+        if (!cancelled && data) setOrderMap(orderRowsToMap(fromDB(data)));
+      }, 150);
     };
     const onVisible = () => { if (document.visibilityState === 'visible') refetchCore(); };
     document.addEventListener('visibilitychange', onVisible);
@@ -897,6 +1052,7 @@ export default function App() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'employees' }, handle(setEmployees, stripEmpPay))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'user_profiles' }, handle(setProfiles))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications' }, handle(setNotifications))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'display_order' }, () => { reloadOrder(); })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'notification_reads' }, (payload) => {
         const { eventType, new: nv, old: ov } = payload;
         if (eventType === 'INSERT') setNotiReads((prev) => prev.some((r) => r.notificationId === nv.notification_id && r.userId === nv.user_id) ? prev : [...prev, fromDB(nv)]);
@@ -907,7 +1063,7 @@ export default function App() {
         if (status === 'SUBSCRIBED') { if (subscribedOnce) refetchCore(true); subscribedOnce = true; }
       });
 
-    return () => { cancelled = true; document.removeEventListener('visibilitychange', onVisible); supabase.removeChannel(ch); };
+    return () => { cancelled = true; clearTimeout(orderTimer); document.removeEventListener('visibilitychange', onVisible); supabase.removeChannel(ch); };
   }, [profile?.id, profile?.role]);
 
   // ---- HANDLERS ----
@@ -1153,6 +1309,32 @@ export default function App() {
       delete: (id) => deleteRow('employees', id),
       resign: (id, d) => updateRow('employees', id, { status: 'resigned', resignedDate: d.resignedDate, resignReason: d.resignReason, resignNote: d.resignNote }),
       rehire: (id) => updateRow('employees', id, { status: 'active', resignedDate: null, resignReason: null, resignNote: null }),
+    },
+    // ลำดับที่ผู้ใช้ลากจัดเอง — ส่งเฉพาะแถวที่ตำแหน่งเปลี่ยนจริง
+    displayOrder: {
+      // kind: 'employee' | 'zone' · fullIds: ลำดับใหม่ "ทั้งหมด" ของ kind นั้น
+      set: async (kind, fullIds) => {
+        const cur = orderMap[kind] || {};
+        const rows = [];
+        fullIds.forEach((id, i) => { if (cur[id] !== i + 1) rows.push({ kind, ref_id: id, position: i + 1, updated_at: new Date().toISOString() }); });
+        if (!rows.length) return true;
+        const before = orderMap;
+        writeEpochRef.current += 1; // กัน refetchCore ที่ค้างอยู่เอาลำดับเก่ามาทับ
+        // เปลี่ยนในเครื่องทันที ให้ลากแล้วเห็นผลเลย ไม่รอ round-trip
+        setOrderMap((prev) => {
+          const next = { ...prev, [kind]: { ...(prev[kind] || {}) } };
+          fullIds.forEach((id, i) => { next[kind][id] = i + 1; });
+          return next;
+        });
+        const { error } = await supabase.from('display_order').upsert(rows, { onConflict: 'kind,ref_id' });
+        if (error) { setOrderMap(before); alert('บันทึกลำดับไม่สำเร็จ: ' + error.message); return false; }
+        return true;
+      },
+      // จัดลำดับใหม่ "เฉพาะบางกลุ่ม" (เช่น คนในโซนเดียว) — กลุ่มอื่นอยู่ที่เดิม
+      reorder: async (kind, subsetIdsInNewOrder) => {
+        const fullIds = (kind === 'zone' ? zones : employees).map((r) => r.id);
+        return ops.displayOrder.set(kind, applySubsetOrder(fullIds, subsetIdsInNewOrder));
+      },
     },
     profile: {
       update: (id, d) => updateRow('user_profiles', id, d),
@@ -1423,6 +1605,7 @@ export default function App() {
             positions={positions}
             employees={employees}
             activeBusinessId={activeBusinessId}
+            canReorder={profile.canWrite}
             ops={ops}
           />
         )}
@@ -4063,6 +4246,7 @@ function RoomRentPage({ businesses, employees, activeBusinessId, ops }) {
   };
 
   const yearOptions = [now.getFullYear(), now.getFullYear() - 1, now.getFullYear() - 2];
+
   const cellInput = "w-full px-2 py-1.5 border border-stone-200 rounded text-right focus:outline-none focus:ring-1 focus:ring-emerald-500/40";
 
   return (
@@ -4738,7 +4922,7 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, op
   );
 }
 
-function PayrollPage({ businesses, zones, positions, employees, activeBusinessId, ops }) {
+function PayrollPage({ businesses, zones, positions, employees, activeBusinessId, canReorder, ops }) {
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth() + 1); // 1-12
@@ -4827,6 +5011,20 @@ function PayrollPage({ businesses, zones, positions, employees, activeBusinessId
       .filter((x) => x.total > 0);
   }, [recurringTaskMap, bizEmpIdSet, employees, businesses]);
   const externalTotal = externalPayouts.reduce((s, x) => s + x.total, 0);
+  // จัดกลุ่มตามโซนสำหรับโหมด "รายคน" (โหมดกรอกเร็วจัดกลุ่มเองข้างใน)
+  // ต้องอยู่เหนือ early return ทุกอัน ไม่งั้นจำนวน hook เปลี่ยนตาม activeBusinessId → React พัง
+  const listRows = useMemo(() => {
+    if (!activeBusinessId) return [];
+    const bizZones = (zones || []).filter((z) => z.businessId === activeBusinessId);
+    const map = new Map(bizZones.map((z) => [z.id, { id: z.id, name: z.name, rows: [] }]));
+    const none = { id: '__nozone__', name: 'ไม่ระบุโซน', rows: [] };
+    bizEmployees.forEach((e) => { const g = (e.zoneId && map.get(e.zoneId)) || none; g.rows.push(e); });
+    const gs = [...map.values()].filter((g) => g.rows.length);
+    if (none.rows.length) gs.push(none);
+    const out = [];
+    gs.forEach((g) => { out.push({ type: 'group', g }); g.rows.forEach((emp) => out.push({ type: 'emp', emp })); });
+    return out;
+  }, [bizEmployees, zones, activeBusinessId]);
 
   if (!activeBusinessId) return (
     <div className="h-full overflow-auto"><PageHeader title="เงินเดือน" /><div className="p-4 md:p-8"><EmptyState icon={Wallet} title="เลือกธุรกิจที่ sidebar" description="เงินเดือนคำนวณแยกตามธุรกิจ — เลือกธุรกิจก่อน" /></div></div>
@@ -4915,7 +5113,7 @@ function PayrollPage({ businesses, zones, positions, employees, activeBusinessId
           <EmptyState icon={Users} title="ยังไม่มีพนักงาน" description="เพิ่มพนักงานก่อนที่หน้า 'พนักงาน'" />
         ) : mode === 'quick' ? (
           <PayrollQuickEntry
-            bizEmployees={bizEmployees} positions={positions}
+            bizEmployees={bizEmployees} positions={positions} zones={zones} canReorder={canReorder}
             payrollByEmp={payrollByEmp} itemsByPayroll={itemsByPayroll} commissionMap={commissionMap} roomRentMap={roomRentMap} recurringTaskMap={recurringTaskMap} advanceMap={advanceMap}
             year={year} month={month} businessId={activeBusinessId} ops={ops}
             onSaved={() => setReload((r) => r + 1)}
@@ -4923,7 +5121,15 @@ function PayrollPage({ businesses, zones, positions, employees, activeBusinessId
           />
         ) : (
           <div className="space-y-2">
-            {bizEmployees.map((emp) => {
+            {listRows.map((fr) => {
+              if (fr.type === 'group') return (
+                <div key={`g-${fr.g.id}`} className="flex items-center gap-2 pt-3 pb-1">
+                  <MapPin className="w-3.5 h-3.5 text-stone-400" />
+                  <span className="text-xs font-semibold text-stone-600 tracking-wide">{fr.g.name}</span>
+                  <span className="text-xs text-stone-400">({fr.g.rows.length})</span>
+                </div>
+              );
+              const emp = fr.emp;
               const p = payrollByEmp[emp.id];
               const calc = p ? computePayroll(p, itemsByPayroll[p.id] || []) : null;
               const pos = positions.find((x) => x.id === businessPositionId(emp, activeBusinessId));
@@ -5292,7 +5498,7 @@ function PayrollEditor({ employee, existing, existingItems, year, month, busines
 }
 
 // ============ PAYROLL QUICK ENTRY (Spreadsheet / Cards) ============
-function PayrollQuickEntry({ bizEmployees, positions, payrollByEmp, itemsByPayroll, commissionMap, roomRentMap, recurringTaskMap, advanceMap, year, month, businessId, ops, onSaved, onOpenDetail }) {
+function PayrollQuickEntry({ bizEmployees, positions, zones, canReorder, payrollByEmp, itemsByPayroll, commissionMap, roomRentMap, recurringTaskMap, advanceMap, year, month, businessId, ops, onSaved, onOpenDetail }) {
   const isMobile = useIsMobile();
   const [drafts, setDrafts] = useState({});
   const [touched, setTouched] = useState(() => new Set());
@@ -5324,6 +5530,13 @@ function PayrollQuickEntry({ bizEmployees, positions, payrollByEmp, itemsByPayro
     updItems(empId, items);
   };
 
+  // ลายเซ็นของข้อมูลพนักงาน แบบไม่สนลำดับ (เรียงก่อน join)
+  // ใช้เป็น dep แทน bizEmployees เพื่อไม่ให้ "แค่ลากสลับลำดับ" ไปล้างค่าที่ยังพิมพ์ค้างอยู่
+  const empSig = useMemo(() => bizEmployees
+    .map(({ photo, workPermitDocs, passportDocs, applicationDocs, ...rest }) => JSON.stringify(rest))
+    .sort()
+    .join('|'), [bizEmployees]);
+
   // init drafts เมื่อข้อมูลเปลี่ยน
   useEffect(() => {
     const d = {};
@@ -5344,7 +5557,8 @@ function PayrollQuickEntry({ bizEmployees, positions, payrollByEmp, itemsByPayro
     });
     setDrafts(d);
     setTouched(new Set());
-  }, [bizEmployees, payrollByEmp, itemsByPayroll, commissionMap, roomRentMap, recurringTaskMap, advanceMap]);
+    // ตั้งใจใช้ empSig แทน bizEmployees — ดูคอมเมนต์ด้านบน
+  }, [empSig, payrollByEmp, itemsByPayroll, commissionMap, roomRentMap, recurringTaskMap, advanceMap]);
 
   const upd = (empId, field, value) => {
     setDrafts((prev) => ({ ...prev, [empId]: { ...prev[empId], [field]: value } }));
@@ -5366,8 +5580,51 @@ function PayrollQuickEntry({ bizEmployees, positions, payrollByEmp, itemsByPayro
     }
   };
 
-  const eligible = bizEmployees.filter((e) => Number(e.baseSalary) > 0);
+  const eligible = useMemo(() => bizEmployees.filter((e) => Number(e.baseSalary) > 0), [bizEmployees]);
   const noSalaryCount = bizEmployees.length - eligible.length;
+
+  // ---- จัดกลุ่มตามโซน (ลำดับโซน + ลำดับคน มาจาก display_order ที่ผู้ใช้ลากจัดเอง) ----
+  const NO_ZONE = '__nozone__';
+  const bizZones = useMemo(() => (zones || []).filter((z) => z.businessId === businessId), [zones, businessId]);
+  const groups = useMemo(() => {
+    const map = new Map(bizZones.map((z) => [z.id, { id: z.id, name: z.name, rows: [] }]));
+    const none = { id: NO_ZONE, name: 'ไม่ระบุโซน', rows: [] };
+    eligible.forEach((e) => { const g = (e.zoneId && map.get(e.zoneId)) || none; g.rows.push(e); });
+    const out = [...map.values()].filter((g) => g.rows.length);
+    if (none.rows.length) out.push(none);
+    return out;
+  }, [eligible, bizZones]);
+
+  // แถวแบนราบ: หัวข้อโซน + คน — เพื่อให้เลข rowIdx (ใช้กับ Enter/ลูกศร) ไล่ต่อเนื่องข้ามโซน
+  const flatRows = useMemo(() => {
+    const out = []; let i = 0;
+    groups.forEach((g) => { out.push({ type: 'group', g }); g.rows.forEach((emp) => { out.push({ type: 'emp', emp, g, rowIdx: i }); i += 1; }); });
+    return out;
+  }, [groups]);
+
+  const empGroupOf = useMemo(() => {
+    const m = {};
+    groups.forEach((g) => g.rows.forEach((e) => { m[e.id] = g.id; }));
+    return (id) => m[id];
+  }, [groups]);
+  const zoneIds = useMemo(() => groups.filter((g) => g.id !== NO_ZONE).map((g) => g.id), [groups]);
+  const empIds = useMemo(() => eligible.map((e) => e.id), [eligible]);
+  const empDrag = useDragReorder(empIds, (next) => ops.displayOrder.reorder('employee', next), empGroupOf);
+  const zoneDrag = useDragReorder(zoneIds, (next) => ops.displayOrder.reorder('zone', next));
+  const canDragZone = canReorder && zoneIds.length > 1;
+
+  const groupGrip = (g, mobile) => (
+    <div className={`flex items-center gap-2 ${mobile ? 'px-1 pt-3 pb-1' : ''}`}>
+      {canDragZone && (
+        <span {...zoneDrag.bindHandle(g.id, true)} title="ลากเพื่อสลับลำดับโซน" className="text-stone-400 hover:text-stone-600 -ml-1">
+          <GripVertical className="w-4 h-4" />
+        </span>
+      )}
+      <MapPin className="w-3.5 h-3.5 text-stone-400" />
+      <span className="text-xs font-semibold text-stone-600 tracking-wide">{g.name}</span>
+      <span className="text-xs text-stone-400">({g.rows.length})</span>
+    </div>
+  );
 
   const saveAll = async () => {
     setSaving(true);
@@ -5424,7 +5681,9 @@ function PayrollQuickEntry({ bizEmployees, positions, payrollByEmp, itemsByPayro
     <div>
       <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
         <div className="text-sm text-stone-500">
-          {touched.size > 0 ? <span className="text-amber-700 font-medium">● แก้ไข {touched.size} คน ยังไม่บันทึก</span> : 'พิมพ์ตัวเลขในช่อง → กด Enter ลงคนถัดไป'}
+          {touched.size > 0
+            ? <span className="text-amber-700 font-medium">● แก้ไข {touched.size} คน ยังไม่บันทึก</span>
+            : `พิมพ์ตัวเลขในช่อง → กด Enter ลงคนถัดไป${canReorder ? (isMobile ? ' · แตะค้างที่ชื่อเพื่อสลับลำดับ' : ' · ลากไอคอนจุดหน้าชื่อเพื่อสลับลำดับ') : ''}`}
           {noSalaryCount > 0 && <span className="ml-2 text-amber-600">({noSalaryCount} คนยังไม่ตั้งเงินเดือน)</span>}
         </div>
         <button onClick={saveAll} disabled={saving || touched.size === 0} className="flex items-center gap-2 px-4 py-2 bg-emerald-900 hover:bg-emerald-800 disabled:bg-stone-300 disabled:cursor-not-allowed text-white rounded-lg text-sm font-medium">
@@ -5435,7 +5694,13 @@ function PayrollQuickEntry({ bizEmployees, positions, payrollByEmp, itemsByPayro
       {isMobile ? (
         /* ===== มือถือ: การ์ด ===== */
         <div className="space-y-3">
-          {eligible.map((emp) => {
+          {flatRows.map((fr) => {
+            if (fr.type === 'group') return (
+              <div key={`g-${fr.g.id}`} data-drag-id={fr.g.id !== NO_ZONE ? fr.g.id : undefined} className={`rounded-lg ${dragClass(fr.g.id, zoneDrag.dragId, zoneDrag.overId)}`}>
+                {groupGrip(fr.g, true)}
+              </div>
+            );
+            const emp = fr.emp;
             const d = drafts[emp.id]; if (!d) return null;
             const locked = d.status === 'finalized';
             const calc = computePayroll(d, d.items);
@@ -5453,8 +5718,9 @@ function PayrollQuickEntry({ bizEmployees, positions, payrollByEmp, itemsByPayro
               </div>
             );
             return (
-              <div key={emp.id} className={`bg-white rounded-xl border-2 p-4 ${dirty ? 'border-amber-300 bg-amber-50/20' : locked ? 'border-emerald-300' : 'border-stone-200'}`}>
-                <div className="flex items-center gap-3 mb-2">
+              <div key={emp.id} data-drag-id={emp.id} className={`bg-white rounded-xl border-2 p-4 ${dirty ? 'border-amber-300 bg-amber-50/20' : locked ? 'border-emerald-300' : 'border-stone-200'} ${dragClass(emp.id, empDrag.dragId, empDrag.overId)}`}>
+                <div className="flex items-center gap-3 mb-2" {...(canReorder ? empDrag.bindHandle(emp.id) : {})} title={canReorder ? 'แตะค้างเพื่อลากสลับลำดับ' : undefined}>
+                  {canReorder && <GripVertical className="w-4 h-4 text-stone-300 shrink-0 -ml-1" />}
                   <Avatar photo={emp.photo} name={dispName(emp)} size={36} />
                   <div className="flex-1 min-w-0">
                     <div className="font-medium text-stone-800 truncate"><span className="font-mono text-xs text-stone-400 mr-1">#{emp.employeeNumber}</span>{dispName(emp)}</div>
@@ -5499,19 +5765,32 @@ function PayrollQuickEntry({ bizEmployees, positions, payrollByEmp, itemsByPayro
               </tr>
             </thead>
             <tbody className="divide-y divide-stone-100">
-              {eligible.map((emp, rowIdx) => {
+              {flatRows.map((fr) => {
+                if (fr.type === 'group') return (
+                  <tr key={`g-${fr.g.id}`} data-drag-id={fr.g.id !== NO_ZONE ? fr.g.id : undefined} className={`bg-stone-100/70 ${rowDragClass(fr.g.id, zoneDrag.dragId)}`}>
+                    <td colSpan={9} className={`px-3 py-1.5 ${cellDropClass(fr.g.id, zoneDrag.dragId, zoneDrag.overId)}`}>{groupGrip(fr.g, false)}</td>
+                  </tr>
+                );
+                const { emp, rowIdx } = fr;
                 const d = drafts[emp.id]; if (!d) return null;
                 const locked = d.status === 'finalized';
                 const calc = computePayroll(d, d.items);
                 const dirty = touched.has(emp.id);
                 const ic = itemCount(emp.id);
                 return (
-                  <tr key={emp.id} className={dirty ? 'bg-amber-50/40' : locked ? 'bg-emerald-50/30' : 'hover:bg-stone-50'}>
-                    <td className={`px-3 py-2 sticky left-0 z-10 ${dirty ? 'bg-amber-50' : locked ? 'bg-emerald-50/60' : 'bg-white'}`}>
-                      <button onClick={() => onOpenDetail(emp)} className="text-left">
-                        <div className="font-medium text-stone-800 truncate max-w-[150px] hover:text-emerald-700"><span className="font-mono text-xs text-stone-400 mr-1">#{emp.employeeNumber}</span>{dispName(emp)}</div>
-                        {locked && <span className="text-[10px] text-emerald-700">ปิดงวดแล้ว</span>}
-                      </button>
+                  <tr key={emp.id} data-drag-id={emp.id} className={`${dirty ? 'bg-amber-50/40' : locked ? 'bg-emerald-50/30' : 'hover:bg-stone-50'} ${rowDragClass(emp.id, empDrag.dragId)}`}>
+                    <td className={`px-3 py-2 sticky left-0 z-10 ${dirty ? 'bg-amber-50' : locked ? 'bg-emerald-50/60' : 'bg-white'} ${cellDropClass(emp.id, empDrag.dragId, empDrag.overId)}`}>
+                      <div className="flex items-center gap-1.5">
+                        {canReorder && (
+                          <span {...empDrag.bindHandle(emp.id, true)} title="ลากเพื่อสลับลำดับ (ในโซนเดียวกัน)" className="text-stone-300 hover:text-stone-500 shrink-0">
+                            <GripVertical className="w-4 h-4" />
+                          </span>
+                        )}
+                        <button onClick={() => onOpenDetail(emp)} className="text-left min-w-0">
+                          <div className="font-medium text-stone-800 truncate max-w-[150px] hover:text-emerald-700"><span className="font-mono text-xs text-stone-400 mr-1">#{emp.employeeNumber}</span>{dispName(emp)}</div>
+                          {locked && <span className="text-[10px] text-emerald-700">ปิดงวดแล้ว</span>}
+                        </button>
+                      </div>
                     </td>
                     <td className="px-2 py-2 text-right text-stone-500 whitespace-nowrap">{fmtMoney(d.baseSalary)}</td>
                     <td className="px-2 py-2 text-center">{Cell({ empId: emp.id, field: 'holidayDaysTaken', col: 'holidayDaysTaken', rowIdx, locked, w: 'w-16' })}</td>

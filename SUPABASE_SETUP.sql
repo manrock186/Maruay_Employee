@@ -210,3 +210,46 @@ alter publication supabase_realtime add table public.user_profiles;
 -- เสร็จ! ตอนนี้พร้อมใช้แล้ว
 -- คนแรกที่สมัครสมาชิกที่หน้าเว็บ จะกลายเป็น owner อัตโนมัติ
 -- =====================================================================
+
+-- ============================================================
+-- DISPLAY ORDER — ลำดับการแสดงผลที่ผู้ใช้ลากจัดเอง (พนักงาน + โซน)
+-- ------------------------------------------------------------
+-- แยกเป็นตารางเล็กต่างหาก ไม่เก็บเป็น employees.sort_order เพราะ
+--   1) trigger log_audit เก็บ row เต็มทุก UPDATE (มีรูป base64 ~56KB/คน)
+--      → ลากทีเดียว audit_log บวมเป็น MB
+--   2) employees อยู่ใน realtime publication → ลากทีเดียวยิง payload หนักไปทุกเครื่อง
+-- ============================================================
+create table if not exists public.display_order (
+  kind        text        not null check (kind in ('employee', 'zone')),
+  ref_id      uuid        not null,
+  position    integer     not null,
+  updated_at  timestamptz not null default now(),
+  primary key (kind, ref_id)
+);
+
+create index if not exists display_order_kind_position_idx on public.display_order (kind, position);
+
+alter table public.display_order enable row level security;
+
+-- อ่านได้ทุกคนที่ล็อกอิน (ทุก role ต้องใช้เรียงลำดับ)
+drop policy if exists display_order_read on public.display_order;
+create policy display_order_read on public.display_order
+  for select to authenticated using (true);
+
+-- แก้ได้เฉพาะคนที่มีสิทธิ์เขียน
+drop policy if exists display_order_write on public.display_order;
+create policy display_order_write on public.display_order
+  for all to authenticated
+  using (public.current_role() in ('owner', 'business_manager', 'zone_manager'))
+  with check (public.current_role() in ('owner', 'business_manager', 'zone_manager'));
+
+alter publication supabase_realtime add table public.display_order;
+
+-- ตั้งลำดับเริ่มต้นจากลำดับปัจจุบัน (created_at) เพื่อไม่ให้หน้าจอสลับตอน deploy ครั้งแรก
+insert into public.display_order (kind, ref_id, position)
+select 'employee', id, (row_number() over (order by created_at, id))::int from public.employees
+on conflict (kind, ref_id) do nothing;
+
+insert into public.display_order (kind, ref_id, position)
+select 'zone', id, (row_number() over (order by created_at, id))::int from public.zones
+on conflict (kind, ref_id) do nothing;
