@@ -683,7 +683,9 @@ function applySubsetOrder(fullIds, subsetNewOrder) {
 // แผนกตั้งที่ "ตำแหน่ง" ไม่ใช่รายคน → พนักงานได้แผนกจากตำแหน่งของตนในธุรกิจนั้นๆ
 const NO_DEPT = 'ไม่ระบุแผนก';
 function employeeDepartment(emp, positions, businessId) {
-  const posId = businessPositionId(emp, businessId);
+  // ถ้าธุรกิจนี้ไม่ได้ตั้งตำแหน่งเฉพาะไว้ ให้ถอยไปใช้ตำแหน่งหลัก
+  // ไม่งั้นคนที่ช่วยงานข้ามธุรกิจจะตกไปกอง "ไม่ระบุแผนก" ทั้งที่มีแผนกชัดเจนอยู่แล้ว
+  const posId = businessPositionId(emp, businessId) || emp?.positionId;
   const pos = posId ? positions.find((p) => p.id === posId) : null;
   return (pos?.department || '').trim() || NO_DEPT;
 }
@@ -5833,7 +5835,7 @@ function PayrollQuickEntry({ bizEmployees, positions, deptOrder, canReorder, pay
                     <td className={`px-3 py-2 sticky left-0 z-10 ${dirty ? 'bg-amber-50' : locked ? 'bg-emerald-50/60' : 'bg-white'} ${cellDropClass(emp.id, empDrag.dragId, empDrag.overId)}`}>
                       <div className="flex items-center gap-1.5">
                         {canReorder && (
-                          <span {...empDrag.bindHandle(emp.id, true)} title="ลากเพื่อสลับลำดับ (ในโซนเดียวกัน)" className="text-stone-300 hover:text-stone-500 shrink-0">
+                          <span {...empDrag.bindHandle(emp.id, true)} title="ลากเพื่อสลับลำดับ (ในแผนกเดียวกัน)" className="text-stone-300 hover:text-stone-500 shrink-0">
                             <GripVertical className="w-4 h-4" />
                           </span>
                         )}
