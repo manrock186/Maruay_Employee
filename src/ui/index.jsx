@@ -106,6 +106,16 @@ function EmptyState({ icon: Icon, title, description, action }) {
   );
 }
 
+// สปินเนอร์สำหรับ "ในพื้นที่เนื้อหา" — LoadingScreen เป็น min-h-screen ซึ่งล้นกรอบ <main> ที่สูงเท่าจอ
+function PageLoading({ msg = 'กำลังโหลด...' }) {
+  return (
+    <div className="h-full flex flex-col items-center justify-center gap-3 text-stone-400">
+      <div className="w-8 h-8 border-2 border-stone-200 border-t-emerald-700 rounded-full animate-spin" />
+      <span className="text-sm">{msg}</span>
+    </div>
+  );
+}
+
 export {
   Modal,
   FormField,
@@ -113,6 +123,7 @@ export {
   EmptyState,
   PageHeader,
   LoadingScreen,
+  PageLoading,
   Avatar,
   PillRadio,
   InfoItem,

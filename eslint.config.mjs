@@ -12,7 +12,7 @@ export default [
         alert:'readonly', confirm:'readonly', setTimeout:'readonly', clearTimeout:'readonly', setInterval:'readonly', clearInterval:'readonly',
         atob:'readonly', btoa:'readonly', Image:'readonly', FileReader:'readonly',
         Notification:'readonly', PointerEvent:'readonly', Event:'readonly', URL:'readonly',
-        Blob:'readonly', fetch:'readonly', localStorage:'readonly', matchMedia:'readonly',
+        Blob:'readonly', fetch:'readonly', localStorage:'readonly', sessionStorage:'readonly', matchMedia:'readonly',
       },
     },
     plugins: { react },

@@ -56,27 +56,40 @@ Repo นี้ **public** — ห้ามเขียนชื่อ ชื่�
 ให้ใช้ **จำนวน / ตำแหน่ง / แผนก / id** แทน (เช่น "พนักงาน 8 คน สายช่าง" ไม่ใช่รายชื่อ)
 git history ลบด้วย `git revert` ไม่ได้ ต้อง rewrite + force push ซึ่งกระทบทุกคนที่ clone ไปแล้ว
 
-## โครงสร้างโค้ด (หลัง refactor step 2)
+## โครงสร้างโค้ด (หลัง refactor step 3-4)
 ```
 src/
-  App.jsx      state + ops + routing + page component (~5,200 บรรทัด — รอ step 3)
+  main.jsx     ReactDOM.createRoot + <ErrorBoundary> ครอบทั้งแอป
+  App.jsx      ~915 บรรทัด — state + ops + realtime + routing เท่านั้น ไม่มี page component แล้ว
   supabase.js  client + fromDB/toDB
+  lib/         logic ล้วน ไม่มี JSX · ไม่มี circular
+    format · probation · business · pools · payroll · print · storage · push · order · hooks
   ui/index.jsx    Modal, FormField, FormActions, EmptyState, PageHeader, LoadingScreen,
-                  Avatar, PillRadio, InfoItem, DetailBlock, EditorRow — ไม่ import โมดูลอื่นเลย
-  components/     PushToggle, AuthScreen, PendingScreen, NotificationBell, ThemePicker, Sidebar
-                  (Sidebar → ThemePicker + PushToggle)
-  lib/         logic ล้วน ไม่มี JSX · ไม่มี circular import
-    format.js     dispName, สัญชาติ, เหตุผลลาออก/ปรับเงินเดือน, ธีม
-    probation.js  ทดลองงาน + proration
-    business.js   1 คนหลายสังกัด (ตำแหน่ง/เงินเดือนแยกตามธุรกิจ)   → probation
-    pools.js      คอมมิชชั่น / ค่าห้อง / งานเสริมประจำ / เบิกล่วงหน้า
-    payroll.js    คำนวณเงินเดือน + buildPayrollDraft              → probation, business, pools
-    print.js      สลิป + รายงานรวม                                → format, payroll
-    storage.js    อัปโหลด/ลบ/signed URL เอกสาร + ย่อรูป
-    push.js       web push (VAPID, subscribe/unsubscribe)
-    order.js      ลำดับที่ลากจัดเอง + แผนก + ตัดคอลัมน์เงิน          → business
-    hooks.js      useIsMobile, useDragReorder + คลาสตอนลาก
+                  PageLoading, Avatar, PillRadio, InfoItem, DetailBlock, EditorRow
+  components/     ErrorBoundary, PushToggle, AuthScreen, PendingScreen, NotificationBell,
+                  ThemePicker, Sidebar   (Sidebar → ThemePicker + PushToggle)
+  pages/          13 หน้า หน้าละไฟล์ — component ย่อยที่ใช้เฉพาะหน้านั้นอยู่ไฟล์เดียวกัน
+                  (EmployeesPage มี ResignModal/SalaryRaise/DetailModal/IDCard/EmployeeForm/Doc*)
+                  (PayrollPage มี PrintSlipsModal/PayrollEditor/QuickEntry/ItemsModal)
+                  **ไม่มีหน้าไหน import หน้าอื่น และไม่มีหน้าไหน import App.jsx**
 ```
+
+## Code splitting
+`App.jsx` โหลด 12 หน้าแบบ `React.lazy` (ยกเว้น `Dashboard` ที่เป็นหน้าแรก) ห่อด้วย
+`<ErrorBoundary><Suspense fallback={<PageLoading/>}>` · `vite.config.js` แยก `vendor-react` / `vendor-supabase`
+
+| | ก่อน | หลัง |
+|---|---|---|
+| โหลดครั้งแรก | 668 kB (gzip 178) | ~450 kB (gzip 128) = app 89 + react 142 + supabase 219 |
+| แต่ละหน้า | รวมอยู่ในก้อนเดียว | chunk แยก 3-67 kB โหลดตอนเปิดหน้านั้น |
+
+**พื้นของ bundle คือ vendor** — `@supabase/supabase-js` 219 kB (ใช้ auth+realtime+storage ครบ)
+กับ `react-dom` 142 kB ลดต่อไม่ได้ถ้าไม่เปลี่ยนไลบรารี · โค้ดแอปเองเหลือ 89 kB
+
+**ErrorBoundary จำเป็นเพราะ lazy** — ถ้าโหลด chunk ไม่สำเร็จ React จะ throw ตอน render
+ไม่มี boundary = unmount ทั้ง root = จอขาวถาวร เคสจริงคือ deploy ใหม่แล้วผู้ใช้ยังเปิดแอปค้าง
+(PWA + service worker เป็น network-only) → ไฟล์ chunk เก่าหาย → กดเมนู → จอขาว
+boundary จะรีโหลดให้อัตโนมัติ โดยจำ "เวลา" ที่รีโหลดล่าสุดใน sessionStorage เพื่อกันวนไม่รู้จบ
 
 ## Lint — รันทุกครั้งหลังย้ายโค้ด
 `npm run lint` (ESLint flat config) เปิด 2 กฎ **ต้องมีทั้งคู่**:

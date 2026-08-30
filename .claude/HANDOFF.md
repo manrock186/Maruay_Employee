@@ -6,6 +6,49 @@
 
 ---
 
+## 2026-08-30 (5) — Refactor step 3+4: แยก `src/pages/` + code splitting
+
+**step 3 — แยกหน้า (โค้ด byte-identical)**
+`src/App.jsx` 5,172 → **915 บรรทัด** เหลือแค่ state + ops + realtime + routing
+13 หน้าแยกเป็นไฟล์ละหน้าใน `src/pages/` · component ย่อยที่ใช้เฉพาะหน้านั้นย้ายตามไปไฟล์เดียวกัน
+**ไม่มีหน้าไหน import หน้าอื่นเลย** (ตรวจแล้ว — cross-page dependency = 0)
+ลบคอมเมนต์ `// ==== PAYROLL PAGE ====` ที่วางผิดที่ 1 บรรทัด (ส่วนต่างเดียวนอกจาก import/export)
+
+**step 4 — code splitting**
+- 12 หน้าโหลดแบบ `React.lazy` (ยกเว้น `Dashboard` หน้าแรก จะได้ไม่เห็น spinner ตอนเข้าแอป)
+- `vite.config.js` แยก `vendor-react` / `vendor-supabase` → deploy รอบหน้าไม่ต้องโหลด vendor ใหม่
+- โหลดครั้งแรก **668 kB (gzip 178) → ~450 kB (gzip 128)** · แต่ละหน้าเป็น chunk 3-67 kB
+- **ประมาณการเดิม 250-300 kB มองโลกในแง่ดีเกินไป** — พื้นคือ supabase-js 219 kB + react-dom 142 kB
+  ซึ่งลดไม่ได้ถ้าไม่เปลี่ยนไลบรารี · โค้ดแอปเองเหลือ 89 kB
+
+**เพิ่ม `src/components/ErrorBoundary.jsx` — จำเป็นเพราะ lazy**
+review จับได้ว่า lazy โดยไม่มี error boundary = **จอขาวถาวร** ถ้าโหลด chunk ไม่สำเร็จ
+เคสจริงที่จะเกิดแน่: deploy เวอร์ชันใหม่ ผู้ใช้ยังเปิดแอปค้างไว้ (เป็น PWA + sw แบบ network-only)
+→ ไฟล์ chunk เก่าหายจาก CDN → กดเมนู → import ล้มเหลว → React unmount ทั้ง root
+ซ้ำร้าย `React.lazy` cache promise ที่ reject ไว้ → กดกลับมาอีกก็พังเหมือนเดิมจนกว่าจะรีโหลดเอง
+**ก่อน step 4 เคสนี้ไม่มีทางเกิด** เพราะทุกหน้าอยู่ในบันเดิลเดียวแล้ว
+
+boundary จะ auto-reload ให้เมื่อเจอ chunk error โดยจำ **เวลา** ที่รีโหลดล่าสุดใน sessionStorage
+(ตอนแรกเขียนเป็นธง boolean + เคลียร์ตอน mount สำเร็จ ซึ่ง**วนไม่รู้จบ**: mount ผ่าน → เคลียร์ธง →
+กดหน้าที่ยังพัง → รีโหลดอีก · แก้เป็นเว้นอย่างน้อย 60 วิ ถ้ายังพังให้โชว์ปุ่มแทน)
+ครอบ 2 ชั้น: `main.jsx` ครอบทั้งแอป + ใน `App.jsx` ครอบเฉพาะพื้นที่ routing (ไซด์บาร์ยังใช้ได้)
+
+เพิ่ม `PageLoading` ใน `ui/` — `LoadingScreen` เป็น `min-h-screen` ใช้เป็น Suspense fallback แล้วล้นกรอบ
+
+**ตรวจแล้ว:** lint (2 กฎ) + build ผ่าน · subagent เทียบโค้ดที่ย้ายกับ HEAD เดิมแบบต่อกลับทั้งบล็อก —
+ต่างกัน 14 บรรทัด อธิบายได้ทั้งหมด (คอมเมนต์ที่ตั้งใจลบ + บรรทัดว่างที่รอยต่อไฟล์) ·
+38 declaration อยู่ครบไม่ซ้ำ · `App()` body ไม่เปลี่ยนนอกจาก Suspense/ErrorBoundary wrapper ·
+`view === '…'` ทั้ง 13 สาขาอยู่ใน Suspense ครบ ส่วน Sidebar/NotificationBell/AuthScreen อยู่นอก ·
+ชื่อใน `.then(m => ({ default: m.X }))` ตรงกับ export ทุกตัว (จุดนี้ lint กับ build จับไม่ได้) ·
+`manualChunks` ไม่กิน `lucide-react` และไม่แตะโค้ดใน `src/`
+
+**ยังไม่ได้เทสของจริง** — ต้องเทสหลัง deploy: กดสลับหน้าให้ครบทั้ง 13 หน้า (ดู spinner แล้วหน้าโหลดขึ้น)
+และเทส ErrorBoundary ด้วยการเปิดแอปค้างไว้ข้าม deploy แล้วกดเมนู (ควรรีโหลดเองแล้วใช้งานต่อได้)
+
+**refactor ครบทั้ง 4 step แล้ว** — `App.jsx` 6,457 → 915 บรรทัด (−86%)
+
+---
+
 ## 2026-08-30 (4) — Refactor step 2: แยก `src/ui/` + `src/components/`
 
 **ทำอะไร** — ย้าย presentational component ออกจาก `App.jsx` (โค้ด byte-identical ไม่แก้ตรรกะ)
