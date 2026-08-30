@@ -664,7 +664,7 @@ function sortByOrder(list, map) {
 }
 // รายการ [{kind, refId, position}] → { employee: {id: pos}, zone: {id: pos} }
 function orderRowsToMap(rows) {
-  const out = { employee: {}, zone: {} };
+  const out = { employee: {}, zone: {}, department: {} };
   (rows || []).forEach((r) => { if (out[r.kind]) out[r.kind][r.refId] = r.position; });
   return out;
 }
@@ -677,6 +677,19 @@ function applySubsetOrder(fullIds, subsetNewOrder) {
   const inSubset = new Set(subset);
   let k = 0;
   return fullIds.map((id) => (inSubset.has(id) ? subset[k++] : id));
+}
+
+// ============ DEPARTMENT (แผนก) ============
+// แผนกตั้งที่ "ตำแหน่ง" ไม่ใช่รายคน → พนักงานได้แผนกจากตำแหน่งของตนในธุรกิจนั้นๆ
+const NO_DEPT = 'ไม่ระบุแผนก';
+function employeeDepartment(emp, positions, businessId) {
+  const posId = businessPositionId(emp, businessId);
+  const pos = posId ? positions.find((p) => p.id === posId) : null;
+  return (pos?.department || '').trim() || NO_DEPT;
+}
+// รวมชื่อแผนกทั้งหมดที่ใช้อยู่ (ไว้ทำ datalist ตอนพิมพ์ชื่อแผนก)
+function allDepartments(positions) {
+  return [...new Set((positions || []).map((p) => (p.department || '').trim()).filter(Boolean))].sort();
 }
 
 // ============ DRAG TO REORDER (กดค้างแล้วลาก) ============
@@ -803,7 +816,7 @@ export default function App() {
   const [zonesRaw, setZones] = useState([]);
   const [positions, setPositions] = useState([]);
   const [employeesRaw, setEmployees] = useState([]);
-  const [orderMap, setOrderMap] = useState({ employee: {}, zone: {} });
+  const [orderMap, setOrderMap] = useState({ employee: {}, zone: {}, department: {} });
   const [profiles, setProfiles] = useState([]);
   const [notifications, setNotifications] = useState([]);
   const [notiReads, setNotiReads] = useState([]); // [{notificationId, userId}]
@@ -1330,10 +1343,22 @@ export default function App() {
         if (error) { setOrderMap(before); alert('บันทึกลำดับไม่สำเร็จ: ' + error.message); return false; }
         return true;
       },
-      // จัดลำดับใหม่ "เฉพาะบางกลุ่ม" (เช่น คนในโซนเดียว) — กลุ่มอื่นอยู่ที่เดิม
+      // จัดลำดับใหม่ "เฉพาะบางกลุ่ม" (เช่น คนในแผนกเดียว) — กลุ่มอื่นอยู่ที่เดิม
       reorder: async (kind, subsetIdsInNewOrder) => {
         const fullIds = (kind === 'zone' ? zones : employees).map((r) => r.id);
         return ops.displayOrder.set(kind, applySubsetOrder(fullIds, subsetIdsInNewOrder));
+      },
+      // แผนกใช้ "ชื่อ" เป็นคีย์ และใช้ร่วมกันข้ามธุรกิจ → ลำดับรวมต้องรวมแผนกของทุกธุรกิจด้วย
+      // ไม่งั้นลากในธุรกิจหนึ่งจะไปรีเซ็ตลำดับแผนกที่มีแต่ในอีกธุรกิจ
+      reorderDepartments: async (subsetIdsInNewOrder) => {
+        const cur = orderMap.department || {};
+        const all = [...new Set([...allDepartments(positions), ...Object.keys(cur)])]
+          .sort((a, b) => {
+            const ap = cur[a] == null ? Infinity : cur[a];
+            const bp = cur[b] == null ? Infinity : cur[b];
+            return ap === bp ? a.localeCompare(b, 'th') : ap - bp;
+          });
+        return ops.displayOrder.set('department', applySubsetOrder(all, subsetIdsInNewOrder));
       },
     },
     profile: {
@@ -1601,11 +1626,11 @@ export default function App() {
         {view === 'payroll' && profile.canManagePayroll && (
           <PayrollPage
             businesses={businesses}
-            zones={zones}
             positions={positions}
             employees={employees}
             activeBusinessId={activeBusinessId}
             canReorder={profile.canWrite}
+            deptOrder={orderMap.department}
             ops={ops}
           />
         )}
@@ -2743,7 +2768,7 @@ function PositionsPage({ businesses, positions, employees, profile, activeBusine
       </div>
       {showModal && (
         <Modal title={editing?.id ? 'แก้ไขตำแหน่ง' : 'เพิ่มตำแหน่งใหม่'} onClose={() => { setShowModal(false); setEditing(null); }}>
-          <PositionForm initial={editing} positions={bizPositions} canManagePayroll={canManagePayroll} onSave={save} onCancel={() => { setShowModal(false); setEditing(null); }} />
+          <PositionForm initial={editing} positions={bizPositions} allPositions={positions} canManagePayroll={canManagePayroll} onSave={save} onCancel={() => { setShowModal(false); setEditing(null); }} />
         </Modal>
       )}
     </div>
@@ -2767,6 +2792,7 @@ function PositionTree({ positions, allPositions, employees, activeBusinessId, on
                 <Award className={`w-4 h-4 ${shortage > 0 ? 'text-amber-700' : 'text-emerald-700'}`} />
                 <div>
                   <div className="flex items-center gap-2 flex-wrap"><div className="font-medium text-stone-800">{pos.name}</div>
+                    {pos.department && <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-sky-100 text-sky-800 text-[10px] font-medium rounded-full"><Layers className="w-2.5 h-2.5" />{pos.department}</span>}
                     {pos.crossZone && <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-100 text-amber-800 text-[10px] font-medium rounded-full"><MapPin className="w-2.5 h-2.5" />ไม่จำกัดโซน</span>}
                     {target > 0 && (
                       full
@@ -2803,17 +2829,19 @@ function PositionTree({ positions, allPositions, employees, activeBusinessId, on
   );
 }
 
-function PositionForm({ initial, positions, canManagePayroll, onSave, onCancel }) {
+function PositionForm({ initial, positions, allPositions, canManagePayroll, onSave, onCancel }) {
   const [name, setName] = useState(initial?.name || '');
   const [description, setDescription] = useState(initial?.description || '');
   const [parentId, setParentId] = useState(initial?.parentId || '');
   const [crossZone, setCrossZone] = useState(initial?.crossZone || false);
+  const [department, setDepartment] = useState(initial?.department || '');
   const [targetHeadcount, setTargetHeadcount] = useState(initial?.targetHeadcount ?? 0);
   const [standardSalary, setStandardSalary] = useState(initial?.standardSalary || '');
   const submit = () => {
     if (!name.trim()) return alert('กรุณากรอกชื่อตำแหน่ง');
     onSave({
       name: name.trim(), description: description.trim(), parentId: parentId || null, crossZone, targetHeadcount: Number(targetHeadcount) || 0,
+      department: department.trim() || null,
       ...(canManagePayroll ? { standardSalary: standardSalary.trim() || null } : {}),
     });
   };
@@ -2823,6 +2851,11 @@ function PositionForm({ initial, positions, canManagePayroll, onSave, onCancel }
   return (
     <div className="space-y-4">
       <FormField label="ชื่อตำแหน่ง" required><input autoFocus value={name} onChange={(e) => setName(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600" placeholder="เช่น ผู้จัดการ" /></FormField>
+      <FormField label="แผนก">
+        <input list="dept-options" value={department} onChange={(e) => setDepartment(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600" placeholder="เช่น รปภ. · ห้องอาหาร · ช่าง" />
+        <datalist id="dept-options">{allDepartments(allPositions || positions).map((d) => <option key={d} value={d} />)}</datalist>
+        <p className="text-xs text-stone-500 mt-1">ใช้จัดกลุ่มในหน้าเงินเดือน — ตำแหน่งที่ใส่ชื่อแผนกเดียวกันจะอยู่กลุ่มเดียวกัน (เว้นว่าง = ไม่ระบุแผนก)</p>
+      </FormField>
       <FormField label="รายงานต่อตำแหน่ง">
         <select value={parentId} onChange={(e) => setParentId(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600 bg-white">
           <option value="">— ตำแหน่งสูงสุด (ไม่มีหัวหน้า) —</option>
@@ -4922,7 +4955,7 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, op
   );
 }
 
-function PayrollPage({ businesses, zones, positions, employees, activeBusinessId, canReorder, ops }) {
+function PayrollPage({ businesses, positions, employees, activeBusinessId, canReorder, deptOrder, ops }) {
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth() + 1); // 1-12
@@ -5015,16 +5048,24 @@ function PayrollPage({ businesses, zones, positions, employees, activeBusinessId
   // ต้องอยู่เหนือ early return ทุกอัน ไม่งั้นจำนวน hook เปลี่ยนตาม activeBusinessId → React พัง
   const listRows = useMemo(() => {
     if (!activeBusinessId) return [];
-    const bizZones = (zones || []).filter((z) => z.businessId === activeBusinessId);
-    const map = new Map(bizZones.map((z) => [z.id, { id: z.id, name: z.name, rows: [] }]));
-    const none = { id: '__nozone__', name: 'ไม่ระบุโซน', rows: [] };
-    bizEmployees.forEach((e) => { const g = (e.zoneId && map.get(e.zoneId)) || none; g.rows.push(e); });
-    const gs = [...map.values()].filter((g) => g.rows.length);
-    if (none.rows.length) gs.push(none);
+    const map = new Map();
+    bizEmployees.forEach((e) => {
+      const dept = employeeDepartment(e, positions, activeBusinessId);
+      if (!map.has(dept)) map.set(dept, { id: dept, name: dept, rows: [] });
+      map.get(dept).rows.push(e);
+    });
+    const dp = deptOrder || {};
+    const gs = [...map.values()].sort((a, b) => {
+      if (a.id === NO_DEPT) return 1;
+      if (b.id === NO_DEPT) return -1;
+      const ap = dp[a.id] == null ? Infinity : dp[a.id];
+      const bp = dp[b.id] == null ? Infinity : dp[b.id];
+      return ap === bp ? a.name.localeCompare(b.name, 'th') : ap - bp;
+    });
     const out = [];
     gs.forEach((g) => { out.push({ type: 'group', g }); g.rows.forEach((emp) => out.push({ type: 'emp', emp })); });
     return out;
-  }, [bizEmployees, zones, activeBusinessId]);
+  }, [bizEmployees, positions, activeBusinessId, deptOrder]);
 
   if (!activeBusinessId) return (
     <div className="h-full overflow-auto"><PageHeader title="เงินเดือน" /><div className="p-4 md:p-8"><EmptyState icon={Wallet} title="เลือกธุรกิจที่ sidebar" description="เงินเดือนคำนวณแยกตามธุรกิจ — เลือกธุรกิจก่อน" /></div></div>
@@ -5113,7 +5154,7 @@ function PayrollPage({ businesses, zones, positions, employees, activeBusinessId
           <EmptyState icon={Users} title="ยังไม่มีพนักงาน" description="เพิ่มพนักงานก่อนที่หน้า 'พนักงาน'" />
         ) : mode === 'quick' ? (
           <PayrollQuickEntry
-            bizEmployees={bizEmployees} positions={positions} zones={zones} canReorder={canReorder}
+            bizEmployees={bizEmployees} positions={positions} deptOrder={deptOrder} canReorder={canReorder}
             payrollByEmp={payrollByEmp} itemsByPayroll={itemsByPayroll} commissionMap={commissionMap} roomRentMap={roomRentMap} recurringTaskMap={recurringTaskMap} advanceMap={advanceMap}
             year={year} month={month} businessId={activeBusinessId} ops={ops}
             onSaved={() => setReload((r) => r + 1)}
@@ -5124,7 +5165,7 @@ function PayrollPage({ businesses, zones, positions, employees, activeBusinessId
             {listRows.map((fr) => {
               if (fr.type === 'group') return (
                 <div key={`g-${fr.g.id}`} className="flex items-center gap-2 pt-3 pb-1">
-                  <MapPin className="w-3.5 h-3.5 text-stone-400" />
+                  <Layers className="w-3.5 h-3.5 text-stone-400" />
                   <span className="text-xs font-semibold text-stone-600 tracking-wide">{fr.g.name}</span>
                   <span className="text-xs text-stone-400">({fr.g.rows.length})</span>
                 </div>
@@ -5498,7 +5539,7 @@ function PayrollEditor({ employee, existing, existingItems, year, month, busines
 }
 
 // ============ PAYROLL QUICK ENTRY (Spreadsheet / Cards) ============
-function PayrollQuickEntry({ bizEmployees, positions, zones, canReorder, payrollByEmp, itemsByPayroll, commissionMap, roomRentMap, recurringTaskMap, advanceMap, year, month, businessId, ops, onSaved, onOpenDetail }) {
+function PayrollQuickEntry({ bizEmployees, positions, deptOrder, canReorder, payrollByEmp, itemsByPayroll, commissionMap, roomRentMap, recurringTaskMap, advanceMap, year, month, businessId, ops, onSaved, onOpenDetail }) {
   const isMobile = useIsMobile();
   const [drafts, setDrafts] = useState({});
   const [touched, setTouched] = useState(() => new Set());
@@ -5583,17 +5624,26 @@ function PayrollQuickEntry({ bizEmployees, positions, zones, canReorder, payroll
   const eligible = useMemo(() => bizEmployees.filter((e) => Number(e.baseSalary) > 0), [bizEmployees]);
   const noSalaryCount = bizEmployees.length - eligible.length;
 
-  // ---- จัดกลุ่มตามโซน (ลำดับโซน + ลำดับคน มาจาก display_order ที่ผู้ใช้ลากจัดเอง) ----
-  const NO_ZONE = '__nozone__';
-  const bizZones = useMemo(() => (zones || []).filter((z) => z.businessId === businessId), [zones, businessId]);
+  // ---- จัดกลุ่มตามแผนก (แผนกมาจากตำแหน่ง · ลำดับแผนก + ลำดับคน มาจาก display_order ที่ผู้ใช้ลากจัดเอง) ----
   const groups = useMemo(() => {
-    const map = new Map(bizZones.map((z) => [z.id, { id: z.id, name: z.name, rows: [] }]));
-    const none = { id: NO_ZONE, name: 'ไม่ระบุโซน', rows: [] };
-    eligible.forEach((e) => { const g = (e.zoneId && map.get(e.zoneId)) || none; g.rows.push(e); });
-    const out = [...map.values()].filter((g) => g.rows.length);
-    if (none.rows.length) out.push(none);
+    const map = new Map();
+    eligible.forEach((e) => {
+      const dept = employeeDepartment(e, positions, businessId);
+      if (!map.has(dept)) map.set(dept, { id: dept, name: dept, rows: [] });
+      map.get(dept).rows.push(e);
+    });
+    const deptPos = deptOrder || {};
+    const out = [...map.values()];
+    // แผนกที่ยังไม่เคยจัดลำดับไปต่อท้าย · "ไม่ระบุแผนก" อยู่ล่างสุดเสมอ
+    out.sort((a, b) => {
+      if (a.id === NO_DEPT) return 1;
+      if (b.id === NO_DEPT) return -1;
+      const ap = deptPos[a.id] == null ? Infinity : deptPos[a.id];
+      const bp = deptPos[b.id] == null ? Infinity : deptPos[b.id];
+      return ap === bp ? a.name.localeCompare(b.name, 'th') : ap - bp;
+    });
     return out;
-  }, [eligible, bizZones]);
+  }, [eligible, positions, businessId, deptOrder]);
 
   // แถวแบนราบ: หัวข้อโซน + คน — เพื่อให้เลข rowIdx (ใช้กับ Enter/ลูกศร) ไล่ต่อเนื่องข้ามโซน
   const flatRows = useMemo(() => {
@@ -5607,20 +5657,21 @@ function PayrollQuickEntry({ bizEmployees, positions, zones, canReorder, payroll
     groups.forEach((g) => g.rows.forEach((e) => { m[e.id] = g.id; }));
     return (id) => m[id];
   }, [groups]);
-  const zoneIds = useMemo(() => groups.filter((g) => g.id !== NO_ZONE).map((g) => g.id), [groups]);
+  const deptIds = useMemo(() => groups.filter((g) => g.id !== NO_DEPT).map((g) => g.id), [groups]);
   const empIds = useMemo(() => eligible.map((e) => e.id), [eligible]);
   const empDrag = useDragReorder(empIds, (next) => ops.displayOrder.reorder('employee', next), empGroupOf);
-  const zoneDrag = useDragReorder(zoneIds, (next) => ops.displayOrder.reorder('zone', next));
-  const canDragZone = canReorder && zoneIds.length > 1;
+  // ลำดับแผนกเป็น global (ชื่อแผนกใช้ร่วมกันข้ามธุรกิจ) → ส่งลำดับของแผนกที่เห็นอยู่ให้ merge เข้าลำดับรวม
+  const deptDrag = useDragReorder(deptIds, (next) => ops.displayOrder.reorderDepartments(next));
+  const canDragDept = canReorder && deptIds.length > 1;
 
   const groupGrip = (g, mobile) => (
     <div className={`flex items-center gap-2 ${mobile ? 'px-1 pt-3 pb-1' : ''}`}>
-      {canDragZone && (
-        <span {...zoneDrag.bindHandle(g.id, true)} title="ลากเพื่อสลับลำดับโซน" className="text-stone-400 hover:text-stone-600 -ml-1">
+      {canDragDept && g.id !== NO_DEPT && (
+        <span {...deptDrag.bindHandle(g.id, true)} title="ลากเพื่อสลับลำดับแผนก" className="text-stone-400 hover:text-stone-600 -ml-1">
           <GripVertical className="w-4 h-4" />
         </span>
       )}
-      <MapPin className="w-3.5 h-3.5 text-stone-400" />
+      <Layers className="w-3.5 h-3.5 text-stone-400" />
       <span className="text-xs font-semibold text-stone-600 tracking-wide">{g.name}</span>
       <span className="text-xs text-stone-400">({g.rows.length})</span>
     </div>
@@ -5696,7 +5747,7 @@ function PayrollQuickEntry({ bizEmployees, positions, zones, canReorder, payroll
         <div className="space-y-3">
           {flatRows.map((fr) => {
             if (fr.type === 'group') return (
-              <div key={`g-${fr.g.id}`} data-drag-id={fr.g.id !== NO_ZONE ? fr.g.id : undefined} className={`rounded-lg ${dragClass(fr.g.id, zoneDrag.dragId, zoneDrag.overId)}`}>
+              <div key={`g-${fr.g.id}`} data-drag-id={fr.g.id !== NO_DEPT ? fr.g.id : undefined} className={`rounded-lg ${dragClass(fr.g.id, deptDrag.dragId, deptDrag.overId)}`}>
                 {groupGrip(fr.g, true)}
               </div>
             );
@@ -5767,8 +5818,8 @@ function PayrollQuickEntry({ bizEmployees, positions, zones, canReorder, payroll
             <tbody className="divide-y divide-stone-100">
               {flatRows.map((fr) => {
                 if (fr.type === 'group') return (
-                  <tr key={`g-${fr.g.id}`} data-drag-id={fr.g.id !== NO_ZONE ? fr.g.id : undefined} className={`bg-stone-100/70 ${rowDragClass(fr.g.id, zoneDrag.dragId)}`}>
-                    <td colSpan={9} className={`px-3 py-1.5 ${cellDropClass(fr.g.id, zoneDrag.dragId, zoneDrag.overId)}`}>{groupGrip(fr.g, false)}</td>
+                  <tr key={`g-${fr.g.id}`} data-drag-id={fr.g.id !== NO_DEPT ? fr.g.id : undefined} className={`bg-stone-100/70 ${rowDragClass(fr.g.id, deptDrag.dragId)}`}>
+                    <td colSpan={9} className={`px-3 py-1.5 ${cellDropClass(fr.g.id, deptDrag.dragId, deptDrag.overId)}`}>{groupGrip(fr.g, false)}</td>
                   </tr>
                 );
                 const { emp, rowIdx } = fr;

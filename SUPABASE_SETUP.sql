@@ -253,3 +253,38 @@ on conflict (kind, ref_id) do nothing;
 insert into public.display_order (kind, ref_id, position)
 select 'zone', id, (row_number() over (order by created_at, id))::int from public.zones
 on conflict (kind, ref_id) do nothing;
+
+-- ============================================================
+-- DEPARTMENT (แผนก) — ตั้งที่ "ตำแหน่ง" ไม่ใช่รายคน
+-- พนักงานได้แผนกจากตำแหน่งของตนในธุรกิจนั้นๆ อัตโนมัติ
+-- ใช้จัดกลุ่มในหน้าเงินเดือน
+-- ============================================================
+alter table public.positions add column if not exists department text;
+
+-- ลำดับของแผนกใช้ "ชื่อแผนก" เป็นคีย์ (แผนกเป็น text ไม่ใช่แถวที่มี id)
+-- → display_order.ref_id ต้องเป็น text ไม่ใช่ uuid
+alter table public.display_order drop constraint if exists display_order_kind_check;
+alter table public.display_order alter column ref_id type text using ref_id::text;
+alter table public.display_order add constraint display_order_kind_check
+  check (kind in ('employee', 'zone', 'department'));
+
+-- ตั้งแผนกเริ่มต้นจากชื่อตำแหน่ง (แก้ทีหลังได้ที่หน้า "ตำแหน่ง")
+update public.positions set department = case
+  when name ilike '%รปภ%'                                then 'รปภ.'
+  when name ilike '%แม่บ้าน%'                             then 'แม่บ้าน'
+  when name ilike '%ช่าง%'                                then 'ช่าง'
+  when name ilike '%ล้างจาน%' or name ilike '%โต๊ะอาหาร%'   then 'ห้องอาหาร'
+  when name ilike '%บัญชี%' or name ilike '%marketing%'   then 'สำนักงาน'
+  when name ilike '%ผู้จัดการ%'                           then 'บริหาร'
+  else null
+end
+where department is null;
+
+insert into public.display_order (kind, ref_id, position) values
+  ('department', 'บริหาร', 1),
+  ('department', 'สำนักงาน', 2),
+  ('department', 'ห้องอาหาร', 3),
+  ('department', 'ช่าง', 4),
+  ('department', 'รปภ.', 5),
+  ('department', 'แม่บ้าน', 6)
+on conflict (kind, ref_id) do nothing;
