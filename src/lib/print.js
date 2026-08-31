@@ -159,38 +159,62 @@ function printPayslips(list, year, month) {
 }
 
 // พิมพ์รายงานรวมหน้าเดียว (ทุกคนในธุรกิจ — คนที่ยังไม่ทำเงินเดือนขึ้นว่าง)
-function printPayrollRegister({ business, rows, year, month }) {
+function printPayrollRegister({ business, groups, year, month }) {
   const m = fmtMoney;
   const period = `${MONTH_NAMES[month - 1]} ${year + 543}`;
   const cols = ['ฐาน', 'คอมฯ', 'ค่าวันหยุด', 'โบนัส', 'รวมรับ', 'ปกส.', 'ขาด/สาย', 'ค่าหอ', 'เบิก', 'หักอื่น', 'ผ่านบริษัท', 'สุทธิ'];
-  const tot = { base: 0, com: 0, hol: 0, bonus: 0, inc: 0, ss: 0, lateAbsent: 0, room: 0, adv: 0, other: 0, viaco: 0, net: 0 };
-  const body = rows.map((r, idx) => {
-    const e = r.emp;
-    if (!r.payroll) {
-      return `<tr><td style="padding:5px 6px;border:1px solid #e7e5e4;">${idx + 1}</td>
+  const COLSPAN = 4 + cols.length;
+  const blank = () => ({ base: 0, com: 0, hol: 0, bonus: 0, inc: 0, ss: 0, lateAbsent: 0, room: 0, adv: 0, other: 0, viaco: 0, net: 0, count: 0 });
+  const add = (t, p, c) => {
+    t.base += Number(p.baseSalary) || 0; t.com += Number(p.commission) || 0; t.hol += c.holidayWorkPay; t.bonus += c.bonusTasks;
+    t.inc += c.totalIncome; t.ss += Number(p.socialSecurity) || 0;
+    t.lateAbsent += (Number(p.lateDeduction) || 0) + c.excessHolidayDeduction;
+    t.room += Number(p.roomFee) || 0; t.adv += c.advances; t.other += c.otherDeductions;
+    t.viaco += Number(p.paidViaCompany) || 0; t.net += c.net; t.count += 1;
+  };
+  const td = (v, extra = '') => `<td style="padding:5px 6px;border:1px solid #e7e5e4;text-align:right;${extra}">${m(v)}</td>`;
+  const sumCell = (v, extra = '', pad = '7px') => `<td style="padding:${pad} 6px;border:1px solid #d6d3d1;text-align:right;font-weight:700;${extra}">${m(v)}</td>`;
+  const totalCells = (t, pad) => `${sumCell(t.base, '', pad)}${sumCell(t.com, '', pad)}${sumCell(t.hol, '', pad)}${sumCell(t.bonus, '', pad)}` +
+    `${sumCell(t.inc, 'color:#047857;', pad)}${sumCell(t.ss, '', pad)}${sumCell(t.lateAbsent, '', pad)}${sumCell(t.room, '', pad)}` +
+    `${sumCell(t.adv, '', pad)}${sumCell(t.other, '', pad)}${sumCell(t.viaco, '', pad)}${sumCell(t.net, 'color:#065f46;', pad)}`;
+
+  const grand = blank();
+  let seq = 0;
+  const body = (groups || []).map((g) => {
+    const sub = blank();
+    const rowsHtml = g.rows.map((r) => {
+      seq += 1;
+      const e = r.emp;
+      const lead = `<td style="padding:5px 6px;border:1px solid #e7e5e4;">${seq}</td>
         <td style="padding:5px 6px;border:1px solid #e7e5e4;">#${esc(e.employeeNumber || '—')}</td>
-        <td style="padding:5px 6px;border:1px solid #e7e5e4;">${esc(dispName(e))}</td>
-        <td style="padding:5px 6px;border:1px solid #e7e5e4;">${esc(r.position?.name || '—')}</td>
-        <td colspan="12" style="padding:5px 6px;border:1px solid #e7e5e4;text-align:center;color:#a8a29e;font-style:italic;">ยังไม่ได้ทำเงินเดือน</td></tr>`;
-    }
-    const p = r.payroll, c = r.calc;
-    const lateAbsent = (Number(p.lateDeduction) || 0) + c.excessHolidayDeduction;
-    tot.base += Number(p.baseSalary) || 0; tot.com += Number(p.commission) || 0; tot.hol += c.holidayWorkPay; tot.bonus += c.bonusTasks;
-    tot.inc += c.totalIncome; tot.ss += Number(p.socialSecurity) || 0; tot.lateAbsent += lateAbsent; tot.room += Number(p.roomFee) || 0;
-    tot.adv += c.advances; tot.other += c.otherDeductions; tot.viaco += Number(p.paidViaCompany) || 0; tot.net += c.net;
-    const cell = (v, extra = '') => `<td style="padding:5px 6px;border:1px solid #e7e5e4;text-align:right;${extra}">${m(v)}</td>`;
-    return `<tr>
-      <td style="padding:5px 6px;border:1px solid #e7e5e4;">${idx + 1}</td>
-      <td style="padding:5px 6px;border:1px solid #e7e5e4;">#${esc(e.employeeNumber || '—')}</td>
-      <td style="padding:5px 6px;border:1px solid #e7e5e4;white-space:nowrap;">${esc(dispName(e))}</td>
-      <td style="padding:5px 6px;border:1px solid #e7e5e4;">${esc(r.position?.name || '—')}</td>
-      ${cell(p.baseSalary)}${cell(p.commission)}${cell(c.holidayWorkPay)}${cell(c.bonusTasks)}
-      ${cell(c.totalIncome, 'font-weight:600;color:#047857;')}
-      ${cell(p.socialSecurity)}${cell(lateAbsent)}${cell(p.roomFee)}${cell(c.advances)}${cell(c.otherDeductions)}${cell(p.paidViaCompany)}
-      ${cell(c.net, 'font-weight:700;color:#065f46;')}
+        <td style="padding:5px 6px;border:1px solid #e7e5e4;white-space:nowrap;">${esc(dispName(e))}</td>
+        <td style="padding:5px 6px;border:1px solid #e7e5e4;">${esc(r.position?.name || '—')}</td>`;
+      if (!r.payroll) {
+        return `<tr>${lead}<td colspan="${cols.length}" style="padding:5px 6px;border:1px solid #e7e5e4;text-align:center;color:#a8a29e;font-style:italic;">ยังไม่ได้ทำเงินเดือน</td></tr>`;
+      }
+      const p = r.payroll, c = r.calc;
+      add(sub, p, c); add(grand, p, c);
+      const lateAbsent = (Number(p.lateDeduction) || 0) + c.excessHolidayDeduction;
+      return `<tr>${lead}
+        ${td(p.baseSalary)}${td(p.commission)}${td(c.holidayWorkPay)}${td(c.bonusTasks)}
+        ${td(c.totalIncome, 'font-weight:600;color:#047857;')}
+        ${td(p.socialSecurity)}${td(lateAbsent)}${td(p.roomFee)}${td(c.advances)}${td(c.otherDeductions)}${td(p.paidViaCompany)}
+        ${td(c.net, 'font-weight:700;color:#065f46;')}
+      </tr>`;
+    }).join('');
+
+    const header = `<tr style="background:#ecfdf5;">
+      <td colspan="${COLSPAN}" style="padding:6px;border:1px solid #d6d3d1;font-family:'Kanit';font-weight:600;color:#065f46;">
+        ${esc(g.name)} <span style="font-weight:400;color:#57534e;">(${g.rows.length} คน)</span>
+      </td></tr>`;
+    // ยอดรวมรายแผนก — ข้ามถ้าทั้งแผนกยังไม่มีใครทำเงินเดือน (จะได้ไม่มีแถวศูนย์เปล่าๆ)
+    const subtotal = sub.count === 0 ? '' : `<tr style="background:#fafaf9;">
+      <td colspan="4" style="padding:5px 6px;border:1px solid #d6d3d1;font-weight:600;text-align:right;">รวม ${esc(g.name)} (${sub.count} คน)</td>
+      ${totalCells(sub, '5px')}
     </tr>`;
+    return header + rowsHtml + subtotal;
   }).join('');
-  const totCell = (v, extra = '') => `<td style="padding:7px 6px;border:1px solid #d6d3d1;text-align:right;font-weight:700;${extra}">${m(v)}</td>`;
+
   const inner = `<div class="doc" style="width:287mm;padding:12mm 10mm;">
     <div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #065f46;padding-bottom:10px;margin-bottom:12px;">
       ${slipHeaderHtml(business)}
@@ -203,20 +227,19 @@ function printPayrollRegister({ business, rows, year, month }) {
       <thead><tr style="background:#065f46;color:#fff;font-family:'Kanit';">
         <th style="padding:7px 6px;border:1px solid #0a7553;">ลำดับ</th>
         <th style="padding:7px 6px;border:1px solid #0a7553;">รหัส</th>
-        <th style="padding:7px 6px;border:1px solid #0a7553;text-align:left;">ชื่อ</th>
-        <th style="padding:7px 6px;border:1px solid #0a7553;text-align:left;">ตำแหน่ง</th>
+        <th style="padding:7px 6px;border:1px solid #0a7553;">ชื่อ</th>
+        <th style="padding:7px 6px;border:1px solid #0a7553;">ตำแหน่ง</th>
         ${cols.map((c) => `<th style="padding:7px 6px;border:1px solid #0a7553;text-align:right;">${c}</th>`).join('')}
       </tr></thead>
       <tbody>${body}
       <tr style="background:#f5f5f4;font-family:'Kanit';">
-        <td colspan="4" style="padding:7px 6px;border:1px solid #d6d3d1;font-weight:700;">รวมทั้งสิ้น (${rows.filter((r) => r.payroll).length} คน)</td>
-        ${totCell(tot.base)}${totCell(tot.com)}${totCell(tot.hol)}${totCell(tot.bonus)}${totCell(tot.inc, 'color:#047857;')}
-        ${totCell(tot.ss)}${totCell(tot.lateAbsent)}${totCell(tot.room)}${totCell(tot.adv)}${totCell(tot.other)}${totCell(tot.viaco)}${totCell(tot.net, 'color:#065f46;')}
+        <td colspan="4" style="padding:7px 6px;border:1px solid #d6d3d1;font-weight:700;">รวมทั้งสิ้น (${grand.count} คน)</td>
+        ${totalCells(grand, '7px')}
       </tr>
       </tbody>
     </table>
-    <div style="margin-top:14px;font-size:13px;text-align:right;">รวมจ่ายสุทธิทั้งสิ้น: <b style="font-family:'Kanit';font-size:16px;color:#065f46;">${m(tot.net)} บาท</b></div>
-    <div style="font-size:12px;color:#57534e;text-align:right;">(${esc(bahtText(tot.net))})</div>
+    <div style="margin-top:14px;font-size:13px;text-align:right;">รวมจ่ายสุทธิทั้งสิ้น: <b style="font-family:'Kanit';font-size:16px;color:#065f46;">${m(grand.net)} บาท</b></div>
+    <div style="font-size:12px;color:#57534e;text-align:right;">(${esc(bahtText(grand.net))})</div>
     <div style="display:flex;justify-content:flex-end;gap:60px;margin-top:36px;font-size:12.5px;">
       <div style="text-align:center;">ลงชื่อ ............................................. ผู้จัดทำ</div>
       <div style="text-align:center;">ลงชื่อ ............................................. ผู้อนุมัติ</div>

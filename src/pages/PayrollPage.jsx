@@ -131,17 +131,32 @@ function PayrollPage({ businesses, positions, employees, activeBusinessId, canRe
   const yearOptions = [now.getFullYear(), now.getFullYear() - 1, now.getFullYear() - 2];
 
   // พิมพ์รายงานรวม: ทุกคนในธุรกิจ (คนยังไม่ทำขึ้นว่าง)
-  const printReport = () => {
-    const rows = bizEmployees.map((emp) => {
-      const p = payrollByEmp[emp.id];
-      return {
-        emp,
-        position: positions.find((x) => x.id === businessPositionId(emp, activeBusinessId)),
-        payroll: p || null,
-        calc: p ? computePayroll(p, itemsByPayroll[p.id] || []) : null,
-      };
+  // แถวสำหรับพิมพ์ — ใช้ลำดับ/การจัดกลุ่มเดียวกับที่เห็นบนหน้าจอ (listRows) ไม่ใช่ลำดับพนักงานรวม
+  const rowFor = (emp) => {
+    const p = payrollByEmp[emp.id];
+    return {
+      emp,
+      position: positions.find((x) => x.id === businessPositionId(emp, activeBusinessId)),
+      payroll: p || null,
+      calc: p ? computePayroll(p, itemsByPayroll[p.id] || []) : null,
+    };
+  };
+  const printGroups = useMemo(() => {
+    const out = [];
+    listRows.forEach((fr) => {
+      if (fr.type === 'group') out.push({ name: fr.g.name, rows: [] });
+      else if (out.length) out[out.length - 1].rows.push(fr.emp);
     });
-    printPayrollRegister({ business, rows, year, month });
+    return out;
+  }, [listRows]);
+
+  const printReport = () => {
+    printPayrollRegister({
+      business,
+      groups: printGroups.map((g) => ({ name: g.name, rows: g.rows.map(rowFor) })),
+      year,
+      month,
+    });
   };
 
   return (
@@ -287,7 +302,8 @@ function PayrollPage({ businesses, positions, employees, activeBusinessId, canRe
       {showPrintSlips && (
         <PrintSlipsModal
           business={business}
-          bizEmployees={bizEmployees}
+          bizEmployees={printGroups.flatMap((g) => g.rows)}
+          deptOf={Object.fromEntries(printGroups.flatMap((g) => g.rows.map((e) => [e.id, g.name])))}
           payrollByEmp={payrollByEmp}
           itemsByPayroll={itemsByPayroll}
           positions={positions}
@@ -301,7 +317,7 @@ function PayrollPage({ businesses, positions, employees, activeBusinessId, canRe
 }
 
 // ============ PRINT SLIPS MODAL (ฟอร์มพิมพ์สลิปรายคน) ============
-function PrintSlipsModal({ business, bizEmployees, payrollByEmp, itemsByPayroll, positions, activeBusinessId, year, month, onClose }) {
+function PrintSlipsModal({ business, bizEmployees, deptOf = {}, payrollByEmp, itemsByPayroll, positions, activeBusinessId, year, month, onClose }) {
   // เฉพาะคนที่ทำเงินเดือนงวดนี้แล้ว (มีสลิปให้พิมพ์)
   const rows = bizEmployees.filter((e) => payrollByEmp[e.id]).map((e) => ({
     emp: e,
@@ -343,11 +359,21 @@ function PrintSlipsModal({ business, bizEmployees, payrollByEmp, itemsByPayroll,
               </label>
             </div>
             <div className="p-3 overflow-auto space-y-1.5 flex-1">
-              {rows.map((r) => {
+              {rows.map((r, i) => {
                 const calc = computePayroll(r.payroll, r.items);
                 const on = selected.has(r.emp.id);
+                // ขึ้นหัวข้อแผนกเมื่อเปลี่ยนกลุ่ม (ลำดับเดียวกับหน้าจอและกับรายงานที่พิมพ์)
+                const dept = deptOf[r.emp.id];
+                const newDept = dept && dept !== deptOf[rows[i - 1]?.emp.id];
                 return (
-                  <div key={r.emp.id} className={`flex items-center gap-3 p-2.5 rounded-lg border ${on ? 'border-emerald-300 bg-emerald-50/40' : 'border-stone-200'}`}>
+                  <React.Fragment key={r.emp.id}>
+                  {newDept && (
+                    <div className="flex items-center gap-2 pt-2 pb-0.5">
+                      <Layers className="w-3.5 h-3.5 text-stone-400" />
+                      <span className="text-xs font-semibold text-stone-600">{dept}</span>
+                    </div>
+                  )}
+                  <div className={`flex items-center gap-3 p-2.5 rounded-lg border ${on ? 'border-emerald-300 bg-emerald-50/40' : 'border-stone-200'}`}>
                     <input type="checkbox" checked={on} onChange={() => toggle(r.emp.id)} className="w-4 h-4 rounded text-emerald-700 flex-shrink-0" />
                     <Avatar photo={r.emp.photo} name={dispName(r.emp)} size={34} />
                     <div className="flex-1 min-w-0">
@@ -358,6 +384,7 @@ function PrintSlipsModal({ business, bizEmployees, payrollByEmp, itemsByPayroll,
                       <FileText className="w-3.5 h-3.5" />พิมพ์
                     </button>
                   </div>
+                  </React.Fragment>
                 );
               })}
             </div>
