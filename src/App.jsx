@@ -597,6 +597,14 @@ export default function App() {
         if (error) { console.error(error); return []; }
         return fromDB(data || []);
       },
+      // ใช้ตอนตรวจว่าข้อมูลชนกันก่อนบันทึกเท่านั้น — ต้องแยก "ดึงไม่สำเร็จ" ออกจาก "ไม่มีแถว" ให้ได้
+      // ถ้ากลืน error แล้วคืน [] เหมือน listByPeriod จะกลายเป็นว่า "ยังไม่มีใครทำงวดนี้" แล้วปล่อยให้เขียนทับ
+      listByPeriodStrict: async (businessId, year, month) => {
+        const { data, error } = await supabase.from('payrolls').select('*')
+          .eq('business_id', businessId).eq('period_year', year).eq('period_month', month);
+        if (error) { console.error(error); return { ok: false, rows: null }; }
+        return { ok: true, rows: fromDB(data || []) };
+      },
       upsert: async (d) => {
         const { data, error } = await supabase.from('payrolls')
           .upsert(toDB(d), { onConflict: 'employee_id,business_id,period_year,period_month' })

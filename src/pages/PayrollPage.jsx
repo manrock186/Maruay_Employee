@@ -19,6 +19,9 @@ function PayrollPage({ businesses, positions, employees, activeBusinessId, canRe
   const [loading, setLoading] = useState(false);
   const [editingEmp, setEditingEmp] = useState(null);
   const [reload, setReload] = useState(0);
+  // มีค่าที่พิมพ์ค้างยังไม่บันทึกไหม — ถ้ามี ห้ามดึงข้อมูลใหม่ทับ (ไม่งั้นที่พิมพ์ไว้หาย)
+  const dirtyRef = useRef(false);
+  const lastVisibleFetchRef = useRef(Date.now());
   const [mode, setMode] = useState('quick'); // 'quick' | 'list'
   const [showPrintSlips, setShowPrintSlips] = useState(false);
   const [commissionPool, setCommissionPool] = useState(null);
@@ -150,6 +153,42 @@ function PayrollPage({ businesses, positions, employees, activeBusinessId, canRe
     return out;
   }, [listRows]);
 
+  // ---- กันเขียนทับงานคนอื่น ----
+  // หน้านี้ดึง payrolls ครั้งเดียวตอนเปิด ถ้าเปิดค้างไว้นานแล้วมีคนอื่น (หรือเราเองจากอีกเครื่อง) แก้ไป
+  // การกด "บันทึกทั้งหมด" จะเขียนค่าที่ค้างบนจอทับทุกช่อง รวมช่องที่เราไม่ได้แตะ
+  // → ก่อนบันทึกให้เทียบ updated_at กับ DB ก่อน ถ้าไม่ตรงให้หยุดแล้วบอกว่าใครถูกแก้
+  const findConflicts = async (empIds) => {
+    if (!activeBusinessId || !empIds?.length) return { ok: true, names: [] };
+    const res = await ops.payroll.listByPeriodStrict(activeBusinessId, year, month);
+    // ดึงไม่สำเร็จ = ไม่รู้ว่าชนหรือไม่ → ต้องหยุด ไม่ใช่ปล่อยผ่าน
+    if (!res.ok || !res.rows) return { ok: false, names: [] };
+    const freshBy = {};
+    res.rows.forEach((p) => { freshBy[p.employeeId] = p; });
+    const changed = empIds.filter((id) => {
+      const before = payrollByEmp[id];
+      const now = freshBy[id];
+      if (!before && !now) return false;          // ยังไม่มีใครทำ — ไม่ชน
+      if (!before || !now) return true;           // เพิ่งถูกสร้าง หรือถูกลบไป
+      return String(before.updatedAt || '') !== String(now.updatedAt || '');
+    });
+    return { ok: true, names: changed.map((id) => dispName(bizEmployees.find((e) => e.id === id) || {}) || id) };
+  };
+
+  // กลับมาที่แท็บ = ดึงข้อมูลงวดนี้ใหม่ (ยกเว้นกำลังพิมพ์ค้าง หรือเปิด modal อยู่ จะได้ไม่ทับของที่ยังไม่บันทึก)
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return;
+      if (dirtyRef.current || editingEmp || showPrintSlips) return;
+      // การดึงใหม่ทำให้ทั้งตารางถูก unmount + ยิงหลาย query (รวม recentPrices ที่ดึง 3,000 แถว)
+      // สลับแอปไปมาบนมือถือจึงต้องมีเพดาน เหมือนที่ทำกับข้อมูลหลักใน App.jsx
+      if (Date.now() - lastVisibleFetchRef.current < 30000) return;
+      lastVisibleFetchRef.current = Date.now();
+      setReload((r) => r + 1);
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [editingEmp, showPrintSlips]);
+
   const printReport = () => {
     printPayrollRegister({
       business,
@@ -227,7 +266,9 @@ function PayrollPage({ businesses, positions, employees, activeBusinessId, canRe
             bizEmployees={bizEmployees} positions={positions} deptOrder={deptOrder} canReorder={canReorder}
             payrollByEmp={payrollByEmp} itemsByPayroll={itemsByPayroll} commissionMap={commissionMap} roomRentMap={roomRentMap} recurringTaskMap={recurringTaskMap} advanceMap={advanceMap}
             year={year} month={month} businessId={activeBusinessId} ops={ops}
-            onSaved={() => setReload((r) => r + 1)}
+            onDirtyChange={(d) => { dirtyRef.current = d; }}
+            findConflicts={findConflicts}
+            onSaved={() => { dirtyRef.current = false; setReload((r) => r + 1); }}
             onOpenDetail={(emp) => setEditingEmp(emp)}
           />
         ) : (
@@ -296,6 +337,7 @@ function PayrollPage({ businesses, positions, employees, activeBusinessId, canRe
           advancePrefill={advanceMap[editingEmp.id] || 0}
           ops={ops}
           onClose={() => setEditingEmp(null)}
+          findConflicts={findConflicts}
           onSaved={() => { setEditingEmp(null); setReload((r) => r + 1); }}
         />
       )}
@@ -434,7 +476,7 @@ function EditorItemList({ title, list, setList, color, addLabel, disabled, price
 }
 
 // ============ PAYROLL EDITOR MODAL ============
-function PayrollEditor({ employee, existing, existingItems, year, month, businessId, businessName, commissionPrefill, roomFeePrefill, bonusPrefill, advancePrefill, ops, onClose, onSaved }) {
+function PayrollEditor({ employee, existing, existingItems, year, month, businessId, businessName, commissionPrefill, roomFeePrefill, bonusPrefill, advancePrefill, findConflicts, ops, onClose, onSaved }) {
   const isFinalized = existing?.status === 'finalized';
   const [unlocked, setUnlocked] = useState(false);
   const locked = isFinalized && !unlocked;
@@ -477,6 +519,16 @@ function PayrollEditor({ employee, existing, existingItems, year, month, busines
   const save = async (finalize) => {
     setSaving(true);
     try {
+      const chk = findConflicts ? await findConflicts([employee.id]) : { ok: true, names: [] };
+      if (!chk.ok) {
+        alert('ตรวจสอบข้อมูลล่าสุดไม่สำเร็จ (อินเทอร์เน็ตมีปัญหา?)\n\nยังไม่ได้บันทึกอะไรลงไป — กรุณาลองใหม่อีกครั้ง');
+        return;
+      }
+      if (chk.names.length) {
+        alert(`ข้อมูลของ ${chk.names.join(', ')} ถูกแก้จากที่อื่นหลังจากเปิดหน้านี้\n\n`
+          + 'ยังไม่ได้บันทึกอะไรลงไป — กรุณาปิดหน้าต่างนี้แล้วรีเฟรชหน้า เพื่อไม่ให้เขียนทับงานของคนอื่น');
+        return;
+      }
       const payload = {
         employeeId: employee.id, businessId, periodYear: year, periodMonth: month,
         baseSalary: Number(f.baseSalary) || 0, dailyRate: (Number(f.baseSalary) || 0) / 30,
@@ -613,7 +665,7 @@ function PayrollEditor({ employee, existing, existingItems, year, month, busines
 }
 
 // ============ PAYROLL QUICK ENTRY (Spreadsheet / Cards) ============
-function PayrollQuickEntry({ bizEmployees, positions, deptOrder, canReorder, payrollByEmp, itemsByPayroll, commissionMap, roomRentMap, recurringTaskMap, advanceMap, year, month, businessId, ops, onSaved, onOpenDetail }) {
+function PayrollQuickEntry({ bizEmployees, positions, deptOrder, canReorder, onDirtyChange, findConflicts, payrollByEmp, itemsByPayroll, commissionMap, roomRentMap, recurringTaskMap, advanceMap, year, month, businessId, ops, onSaved, onOpenDetail }) {
   const isMobile = useIsMobile();
   const [drafts, setDrafts] = useState({});
   const [touched, setTouched] = useState(() => new Set());
@@ -674,6 +726,17 @@ function PayrollQuickEntry({ bizEmployees, positions, deptOrder, canReorder, pay
     setTouched(new Set());
     // ตั้งใจใช้ empSig แทน bizEmployees — ดูคอมเมนต์ด้านบน
   }, [empSig, payrollByEmp, itemsByPayroll, commissionMap, roomRentMap, recurringTaskMap, advanceMap]);
+
+  // บอกหน้าแม่ว่ามีค่าค้างยังไม่บันทึกไหม → หน้าแม่จะได้ไม่ดึงข้อมูลใหม่มาทับตอนสลับแท็บ
+  // นับ itemsEmp ด้วย: popup งานเสริม/เบิก เก็บรายการไว้ใน state ของตัวเอง ยังไม่เข้า touched
+  // ถ้าไม่นับ พอสลับแอปแล้วกลับมา หน้าจะถูกโหลดใหม่ทั้งตาราง popup หายพร้อมของที่พิมพ์ไว้
+  // เงื่อนไขต้องตรงกับตอน render popup เป๊ะ (itemsEmp && drafts[itemsEmp.id])
+  // ไม่งั้นถ้าแถวนั้นหายไประหว่างเปิด popup ค้างไว้ (เช่น มีคนกดลาออกให้จากอีกเครื่อง)
+  // itemsEmp จะค้างเป็นค่าเก่า แล้ว dirty ติดอยู่ตลอด ทำให้ไม่ดึงข้อมูลใหม่อีกเลย
+  useEffect(() => {
+    onDirtyChange?.(touched.size > 0 || !!(itemsEmp && drafts[itemsEmp.id]));
+    return () => onDirtyChange?.(false);
+  }, [touched, itemsEmp, drafts]);
 
   const upd = (empId, field, value) => {
     setDrafts((prev) => ({ ...prev, [empId]: { ...prev[empId], [field]: value } }));
@@ -754,6 +817,16 @@ function PayrollQuickEntry({ bizEmployees, positions, deptOrder, canReorder, pay
   const saveAll = async () => {
     setSaving(true);
     try {
+      const chk = findConflicts ? await findConflicts([...touched]) : { ok: true, names: [] };
+      if (!chk.ok) {
+        alert('ตรวจสอบข้อมูลล่าสุดไม่สำเร็จ (อินเทอร์เน็ตมีปัญหา?)\n\nยังไม่ได้บันทึกอะไรลงไป — กรุณาลองใหม่อีกครั้ง');
+        return;
+      }
+      if (chk.names.length) {
+        alert(`ข้อมูลของ ${chk.names.join(', ')} ถูกแก้จากที่อื่นหลังจากเปิดหน้านี้\n\n`
+          + 'ยังไม่ได้บันทึกอะไรลงไป — กรุณารีเฟรชหน้าก่อน แล้วกรอกใหม่ เพื่อไม่ให้เขียนทับงานของคนอื่น');
+        return;
+      }
       for (const empId of touched) {
         const emp = bizEmployees.find((e) => e.id === empId);
         const draft = drafts[empId];
