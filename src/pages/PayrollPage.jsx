@@ -873,7 +873,28 @@ function PayrollQuickEntry({ bizEmployees, positions, deptOrder, canReorder, onD
     />
   );
 
-  const itemCount = (empId) => (drafts[empId]?.items || []).filter((i) => i.label?.trim() || Number(i.amount)).length;
+  // รายการที่โชว์ในคอลัมน์ "รายการ" — ตัด "เบิกล่วงหน้า" ออก เพราะมีคอลัมน์ "เบิก" ของตัวเองอยู่แล้ว
+  // (ไม่งั้นแถวเดียวจะเห็นยอดเบิกซ้ำสองที่)
+  const listedItems = (empId) => (drafts[empId]?.items || [])
+    .filter((i) => !(i.kind === 'advance' && i.label === ADV_LABEL))
+    .filter((i) => i.label?.trim() || Number(i.amount));
+  const itemCount = (empId) => listedItems(empId).length;
+  // งานเสริม = บวก · เบิก/หักอื่นๆ = ลบ
+  const itemSign = (kind) => (kind === 'bonus_task' ? 1 : -1);
+  const itemLines = (empId, max) => {
+    const list = listedItems(empId);
+    return (max ? list.slice(0, max) : list).map((it, i) => {
+      const sign = itemSign(it.kind);
+      return (
+        <div key={i} className="flex items-baseline justify-between gap-2 leading-tight">
+          <span className="text-stone-600 truncate">{it.label?.trim() || '—'}</span>
+          <span className={`shrink-0 tabular-nums ${sign > 0 ? 'text-emerald-700' : 'text-red-600'}`}>
+            {sign > 0 ? '+' : '−'}{fmtMoney(Math.abs(Number(it.amount) || 0))}
+          </span>
+        </div>
+      );
+    });
+  };
 
   return (
     <div>
@@ -934,8 +955,15 @@ function PayrollQuickEntry({ bizEmployees, positions, deptOrder, canReorder, onD
                 {D({ label: 'ค่าห้องพัก', value: d.roomFee, hint: 'แก้ที่หน้าค่าห้อง' })}
                 {F({ label: 'รับจากวีเอสจง', field: 'paidViaCompany' })}
                 {D({ label: 'คอมมิชชั่น', value: d.commission, hint: 'แก้ที่หน้าคอมมิชชั่น' })}
-                <button onClick={() => setItemsEmp(emp)} disabled={locked} className="w-full mt-2 px-3 py-2 border border-stone-200 rounded-lg text-sm text-stone-600 hover:bg-stone-50 flex items-center justify-center gap-1.5 disabled:opacity-50">
-                  <Plus className="w-3.5 h-3.5" />งานเสริม/เบิก/หักอื่นๆ {itemCount(emp.id) > 0 && <span className="px-1.5 py-0.5 bg-emerald-100 text-emerald-700 rounded text-xs">{itemCount(emp.id)}</span>}
+                <button onClick={() => setItemsEmp(emp)} disabled={locked} className="w-full mt-2 px-3 py-2 border border-stone-200 rounded-lg text-sm text-stone-600 hover:bg-stone-50 disabled:opacity-50">
+                  {itemCount(emp.id) === 0 ? (
+                    <span className="flex items-center justify-center gap-1.5"><Plus className="w-3.5 h-3.5" />งานเสริม/เบิก/หักอื่นๆ</span>
+                  ) : (
+                    <>
+                      <div className="flex items-center gap-1.5 text-xs text-stone-400 mb-1"><Plus className="w-3 h-3" />งานเสริม/เบิก/หักอื่นๆ</div>
+                      <div className="text-xs space-y-0.5">{itemLines(emp.id)}</div>
+                    </>
+                  )}
                 </button>
                 <div className="flex justify-between items-center mt-3 pt-3 border-t border-stone-100">
                   <button onClick={() => onOpenDetail(emp)} className="text-xs text-stone-500 underline">ดูละเอียด/ปิดงวด</button>
@@ -958,7 +986,7 @@ function PayrollQuickEntry({ bizEmployees, positions, deptOrder, canReorder, onD
                 <th className="text-right px-2 py-2.5">ค่าห้อง</th>
                 <th className="text-center px-2 py-2.5">รับจากวีเอสจง</th>
                 <th className="text-right px-2 py-2.5">คอม</th>
-                <th className="text-center px-2 py-2.5">รายการ</th>
+                <th className="text-left px-2 py-2.5 min-w-[190px]">รายการ</th>
                 <th className="text-right px-3 py-2.5 sticky right-0 bg-stone-50 z-10">สุทธิ</th>
               </tr>
             </thead>
@@ -996,9 +1024,11 @@ function PayrollQuickEntry({ bizEmployees, positions, deptOrder, canReorder, onD
                     <td className="px-2 py-2 text-right text-stone-500 whitespace-nowrap" title="แก้ที่หน้าค่าห้อง">{Number(d.roomFee) ? fmtMoney(d.roomFee) : <span className="text-stone-300">—</span>}</td>
                     <td className="px-2 py-2 text-center">{Cell({ empId: emp.id, field: 'paidViaCompany', col: 'paidViaCompany', rowIdx, locked })}</td>
                     <td className="px-2 py-2 text-right text-stone-500 whitespace-nowrap" title="แก้ที่หน้าคอมมิชชั่น">{Number(d.commission) ? fmtMoney(d.commission) : <span className="text-stone-300">—</span>}</td>
-                    <td className="px-2 py-2 text-center">
-                      <button onClick={() => setItemsEmp(emp)} disabled={locked} className="inline-flex items-center gap-1 px-2 py-1.5 border border-stone-200 rounded hover:bg-stone-50 text-stone-600 disabled:opacity-50">
-                        <Plus className="w-3.5 h-3.5" />{ic > 0 ? <span className="px-1 bg-emerald-100 text-emerald-700 rounded text-xs">{ic}</span> : <span className="text-xs">เพิ่ม</span>}
+                    <td className="px-2 py-2">
+                      <button onClick={() => setItemsEmp(emp)} disabled={locked} title="คลิกเพื่อแก้ไขรายการ" className="w-full text-left rounded px-1.5 py-1 hover:bg-stone-100 disabled:opacity-50 disabled:hover:bg-transparent">
+                        {ic === 0
+                          ? <span className="inline-flex items-center gap-1 text-xs text-stone-400"><Plus className="w-3.5 h-3.5" />เพิ่ม</span>
+                          : <div className="text-[11px] space-y-0.5">{itemLines(emp.id)}</div>}
                       </button>
                     </td>
                     <td className={`px-3 py-2 text-right font-semibold text-emerald-700 whitespace-nowrap sticky right-0 z-10 ${dirty ? 'bg-amber-50' : locked ? 'bg-emerald-50/60' : 'bg-white'}`}>{fmtMoney(calc.net)}</td>
