@@ -887,12 +887,15 @@ function PayrollQuickEntry({ bizEmployees, positions, deptOrder, canReorder, onD
       const sign = itemSign(it.kind);
       // วางจำนวนเงินไว้ "ซ้าย" ก่อนชื่อ — คอลัมน์ "สุทธิ" ตรึงอยู่ขวาสุด (sticky) และทับเนื้อหา
       // ถ้าดันจำนวนเงินไปชิดขวาแบบ justify-between ตัวเลขจะโดนบังจนอ่านไม่ครบ (เคยเป็น "+2,00")
+      // แยกเป็น 2 บรรทัด (ตัวเลขบน / ชื่อล่างแบบตัดคำ) เพื่อให้คอลัมน์แคบลง
+      // ตารางจะได้ไม่กว้างเกินจอจนต้องเลื่อนแนวนอน — เพราะพอเลื่อนแล้วคอลัมน์ "ชื่อ" ที่ตรึงซ้าย
+      // จะไปบังคอลัมน์ "ฐาน" จนอ่านเป็นตัวเลขผิด (เช่น 22,000.00 เหลือ 00.00)
       return (
-        <div key={i} className="flex items-baseline gap-1.5 leading-tight">
-          <span className={`shrink-0 tabular-nums font-medium ${sign > 0 ? 'text-emerald-700' : 'text-red-600'}`}>
+        <div key={i} className="leading-tight max-w-[150px]">
+          <span className={`tabular-nums font-medium ${sign > 0 ? 'text-emerald-700' : 'text-red-600'}`}>
             {sign > 0 ? '+' : '−'}{fmtMoney(Math.abs(Number(it.amount) || 0))}
           </span>
-          <span className="text-stone-500 truncate">{it.label?.trim() || '—'}</span>
+          <div className="text-stone-500 break-words">{it.label?.trim() || '—'}</div>
         </div>
       );
     });
@@ -988,7 +991,7 @@ function PayrollQuickEntry({ bizEmployees, positions, deptOrder, canReorder, onD
                 <th className="text-right px-2 py-2.5">ค่าห้อง</th>
                 <th className="text-center px-2 py-2.5">รับจากวีเอสจง</th>
                 <th className="text-right px-2 py-2.5">คอม</th>
-                <th className="text-left px-2 py-2.5 min-w-[210px]">รายการ</th>
+                <th className="text-left px-2 py-2.5 min-w-[120px]">รายการ</th>
                 <th className="text-right px-3 py-2.5 sticky right-0 bg-stone-50 z-10">สุทธิ</th>
               </tr>
             </thead>
@@ -1030,7 +1033,7 @@ function PayrollQuickEntry({ bizEmployees, positions, deptOrder, canReorder, onD
                       <button onClick={() => setItemsEmp(emp)} disabled={locked} title="คลิกเพื่อแก้ไขรายการ" className="w-full text-left rounded px-1.5 py-1 hover:bg-stone-100 disabled:opacity-50 disabled:hover:bg-transparent">
                         {ic === 0
                           ? <span className="inline-flex items-center gap-1 text-xs text-stone-400"><Plus className="w-3.5 h-3.5" />เพิ่ม</span>
-                          : <div className="text-[11px] space-y-0.5">{itemLines(emp.id)}</div>}
+                          : <div className="text-[11px] space-y-1">{itemLines(emp.id)}</div>}
                       </button>
                     </td>
                     <td className={`px-3 py-2 text-right font-semibold text-emerald-700 whitespace-nowrap sticky right-0 z-10 ${dirty ? 'bg-amber-50' : locked ? 'bg-emerald-50/60' : 'bg-white'}`}>{fmtMoney(calc.net)}</td>
