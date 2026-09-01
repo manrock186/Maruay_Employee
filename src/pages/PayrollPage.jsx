@@ -885,12 +885,14 @@ function PayrollQuickEntry({ bizEmployees, positions, deptOrder, canReorder, onD
     const list = listedItems(empId);
     return (max ? list.slice(0, max) : list).map((it, i) => {
       const sign = itemSign(it.kind);
+      // วางจำนวนเงินไว้ "ซ้าย" ก่อนชื่อ — คอลัมน์ "สุทธิ" ตรึงอยู่ขวาสุด (sticky) และทับเนื้อหา
+      // ถ้าดันจำนวนเงินไปชิดขวาแบบ justify-between ตัวเลขจะโดนบังจนอ่านไม่ครบ (เคยเป็น "+2,00")
       return (
-        <div key={i} className="flex items-baseline justify-between gap-2 leading-tight">
-          <span className="text-stone-600 truncate">{it.label?.trim() || '—'}</span>
-          <span className={`shrink-0 tabular-nums ${sign > 0 ? 'text-emerald-700' : 'text-red-600'}`}>
+        <div key={i} className="flex items-baseline gap-1.5 leading-tight">
+          <span className={`shrink-0 tabular-nums font-medium ${sign > 0 ? 'text-emerald-700' : 'text-red-600'}`}>
             {sign > 0 ? '+' : '−'}{fmtMoney(Math.abs(Number(it.amount) || 0))}
           </span>
+          <span className="text-stone-500 truncate">{it.label?.trim() || '—'}</span>
         </div>
       );
     });
@@ -986,7 +988,7 @@ function PayrollQuickEntry({ bizEmployees, positions, deptOrder, canReorder, onD
                 <th className="text-right px-2 py-2.5">ค่าห้อง</th>
                 <th className="text-center px-2 py-2.5">รับจากวีเอสจง</th>
                 <th className="text-right px-2 py-2.5">คอม</th>
-                <th className="text-left px-2 py-2.5 min-w-[190px]">รายการ</th>
+                <th className="text-left px-2 py-2.5 min-w-[210px]">รายการ</th>
                 <th className="text-right px-3 py-2.5 sticky right-0 bg-stone-50 z-10">สุทธิ</th>
               </tr>
             </thead>
