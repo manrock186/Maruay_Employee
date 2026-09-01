@@ -172,8 +172,23 @@ function printPayrollRegister({ business, groups, year, month }) {
     t.room += Number(p.roomFee) || 0; t.adv += c.advances; t.other += c.otherDeductions;
     t.viaco += Number(p.paidViaCompany) || 0; t.net += c.net; t.count += 1;
   };
-  const td = (v, extra = '') => `<td style="padding:5px 6px;border:1px solid #e7e5e4;text-align:right;${extra}">${m(v)}</td>`;
-  const sumCell = (v, extra = '', pad = '7px') => `<td style="padding:${pad} 6px;border:1px solid #d6d3d1;text-align:right;font-weight:700;${extra}">${m(v)}</td>`;
+  // ช่องที่เป็น 0 แสดงเป็น "–" สีจาง เพื่อให้สายตาจับเฉพาะช่องที่มีตัวเลขจริง
+  // ช่องที่มีตัวเลขได้แถบสีอ่อน: เขียว = รายรับ · แดง = รายการหัก · เขียวเข้ม = สุทธิ
+  // (openPrintHtml ตั้ง print-color-adjust:exact ไว้แล้ว สีจึงติดตอนพิมพ์จริง)
+  const TONE = {
+    in:  'background:#ecfdf5;color:#065f46;',
+    sum: 'background:#d1fae5;color:#047857;font-weight:600;',
+    out: 'background:#fef2f2;color:#b91c1c;',
+    net: 'background:#a7f3d0;color:#064e3b;font-weight:700;',
+  };
+  const dash = (pad, border) => `<td style="padding:${pad} 6px;border:1px solid ${border};text-align:right;color:#d6d3d1;">–</td>`;
+  const td = (v, tone) => (Number(v)
+    ? `<td style="padding:5px 6px;border:1px solid #e7e5e4;text-align:right;${TONE[tone] || ''}">${m(v)}</td>`
+    : dash('5px', '#e7e5e4'));
+  // แถวยอดรวมไม่ลงแถบสี (มีพื้นหลังของตัวเองอยู่แล้ว) แต่ยังใช้ "–" แทน 0 เหมือนกัน
+  const sumCell = (v, extra = '', pad = '7px') => (Number(v)
+    ? `<td style="padding:${pad} 6px;border:1px solid #d6d3d1;text-align:right;font-weight:700;${extra}">${m(v)}</td>`
+    : dash(pad, '#d6d3d1'));
   const totalCells = (t, pad) => `${sumCell(t.base, '', pad)}${sumCell(t.com, '', pad)}${sumCell(t.hol, '', pad)}${sumCell(t.bonus, '', pad)}` +
     `${sumCell(t.inc, 'color:#047857;', pad)}${sumCell(t.ss, '', pad)}${sumCell(t.lateAbsent, '', pad)}${sumCell(t.room, '', pad)}` +
     `${sumCell(t.adv, '', pad)}${sumCell(t.other, '', pad)}${sumCell(t.viaco, '', pad)}${sumCell(t.net, 'color:#065f46;', pad)}`;
@@ -196,10 +211,10 @@ function printPayrollRegister({ business, groups, year, month }) {
       add(sub, p, c); add(grand, p, c);
       const lateAbsent = (Number(p.lateDeduction) || 0) + c.excessHolidayDeduction;
       return `<tr>${lead}
-        ${td(p.baseSalary)}${td(p.commission)}${td(c.holidayWorkPay)}${td(c.bonusTasks)}
-        ${td(c.totalIncome, 'font-weight:600;color:#047857;')}
-        ${td(p.socialSecurity)}${td(lateAbsent)}${td(p.roomFee)}${td(c.advances)}${td(c.otherDeductions)}${td(p.paidViaCompany)}
-        ${td(c.net, 'font-weight:700;color:#065f46;')}
+        ${td(p.baseSalary, 'in')}${td(p.commission, 'in')}${td(c.holidayWorkPay, 'in')}${td(c.bonusTasks, 'in')}
+        ${td(c.totalIncome, 'sum')}
+        ${td(p.socialSecurity, 'out')}${td(lateAbsent, 'out')}${td(p.roomFee, 'out')}${td(c.advances, 'out')}${td(c.otherDeductions, 'out')}${td(p.paidViaCompany, 'out')}
+        ${td(c.net, 'net')}
       </tr>`;
     }).join('');
 
