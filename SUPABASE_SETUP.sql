@@ -288,3 +288,18 @@ insert into public.display_order (kind, ref_id, position) values
   ('department', 'รปภ.', 5),
   ('department', 'แม่บ้าน', 6)
 on conflict (kind, ref_id) do nothing;
+
+-- ============ employee-docs: อ่าน/แก้/ลบ ได้เฉพาะ owner (migration employee_docs_owner_only_read) ============
+drop policy if exists "auth read employee-docs" on storage.objects;
+drop policy if exists "auth update employee-docs" on storage.objects;
+drop policy if exists "auth delete employee-docs" on storage.objects;
+drop policy if exists "auth upload employee-docs" on storage.objects;
+create policy "owner read employee-docs" on storage.objects for select to authenticated
+  using (bucket_id = 'employee-docs' and public."current_role"() = 'owner');
+create policy "owner update employee-docs" on storage.objects for update to authenticated
+  using (bucket_id = 'employee-docs' and public."current_role"() = 'owner')
+  with check (bucket_id = 'employee-docs' and public."current_role"() = 'owner');
+create policy "owner delete employee-docs" on storage.objects for delete to authenticated
+  using (bucket_id = 'employee-docs' and public."current_role"() = 'owner');
+create policy "staff upload employee-docs" on storage.objects for insert to authenticated
+  with check (bucket_id = 'employee-docs' and public."current_role"() in ('owner','business_manager','zone_manager'));

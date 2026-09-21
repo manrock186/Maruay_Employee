@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Users, Building2, MapPin, LogOut, Plus, Edit2, Trash2, Search, X, Upload, UserCircle, Shield, Camera, Calendar, Phone, Mail, AlertCircle, CheckCircle2, Award, Clock, Globe, CreditCard, BookOpen, FileText, ExternalLink, Paperclip, Wallet, TrendingUp, TrendingDown, Hash } from 'lucide-react';
+import { Users, Building2, MapPin, LogOut, Plus, Edit2, Trash2, Search, X, Upload, UserCircle, Shield, Camera, Calendar, Phone, Mail, AlertCircle, CheckCircle2, Award, Clock, Globe, CreditCard, BookOpen, FileText, ExternalLink, Paperclip, Wallet, TrendingUp, TrendingDown, Hash, Lock } from 'lucide-react';
 import { hasSalarySplit, businessPositionId, businessBaseSalary } from '../lib/business.js';
 import { dispName, NATIONALITIES, natLabel, natFlag, isForeign, RESIGN_REASONS, resignLabel, isActive, SALARY_REASONS, salaryReasonLabel } from '../lib/format.js';
 import { MONTH_NAMES, fmtMoney, fmt } from '../lib/payroll.js';
@@ -228,7 +228,7 @@ function EmployeesPage({ businesses, zones, positions, employees, profile, activ
       </div>
       {showModal && (
         <Modal title={editing?.id ? 'แก้ไขข้อมูลพนักงาน' : 'เพิ่มพนักงานใหม่'} onClose={() => { setShowModal(false); setEditing(null); }} wide>
-          <EmployeeForm initial={editing} zones={visibleZones} positions={positions.filter((p) => p.businessId === targetBusinessId)} allPositions={positions} employees={employees.filter((e) => e.businessId === targetBusinessId && e.id !== editing?.id)} businesses={businesses} onSave={save} onCancel={() => { setShowModal(false); setEditing(null); }} lockedZoneId={isZM && (profile.zoneIds || []).length === 1 ? profile.zoneIds[0] : null} allowedZoneIds={isZM ? (profile.zoneIds || []) : null} businessId={targetBusinessId} isOwner={isOwner || isBM} canEditPay={profile.canManagePayroll} />
+          <EmployeeForm initial={editing} zones={visibleZones} positions={positions.filter((p) => p.businessId === targetBusinessId)} allPositions={positions} employees={employees.filter((e) => e.businessId === targetBusinessId && e.id !== editing?.id)} businesses={businesses} onSave={save} onCancel={() => { setShowModal(false); setEditing(null); }} lockedZoneId={isZM && (profile.zoneIds || []).length === 1 ? profile.zoneIds[0] : null} allowedZoneIds={isZM ? (profile.zoneIds || []) : null} businessId={targetBusinessId} isOwner={isOwner || isBM} canViewDocs={isOwner} canEditPay={profile.canManagePayroll} />
         </Modal>
       )}
       {viewing && (() => {
@@ -543,7 +543,7 @@ function EmployeeDetailModal({ employee, salaryReload, zones, positions, employe
                         : <span className="text-stone-400">—</span>}
                       </div>
                       {employee.workPermitExpiry && <div className="text-xs text-stone-500 mt-0.5">หมดอายุ {fmt(employee.workPermitExpiry)}</div>}
-                      <DocList paths={employee.workPermitDocs} />
+                      <DocList paths={employee.workPermitDocs} canView={isOwner} />
                     </div>
                   </div>
                   <div className="flex items-start gap-2.5">
@@ -555,7 +555,7 @@ function EmployeeDetailModal({ employee, salaryReload, zones, positions, employe
                         : employee.hasPassport === false ? <span className="text-amber-700">ไม่มี</span>
                         : <span className="text-stone-400">—</span>}
                       </div>
-                      <DocList paths={employee.passportDocs} />
+                      <DocList paths={employee.passportDocs} canView={isOwner} />
                     </div>
                   </div>
                 </div>
@@ -570,7 +570,7 @@ function EmployeeDetailModal({ employee, salaryReload, zones, positions, employe
                   <Paperclip className="w-4 h-4 text-stone-600" />
                   <h3 className="text-sm font-medium text-stone-800">เอกสารสมัครงาน</h3>
                 </div>
-                <DocList paths={employee.applicationDocs} />
+                <DocList paths={employee.applicationDocs} canView={isOwner} />
               </div>
             </div>
           )}
@@ -807,7 +807,7 @@ function EmployeeIDCard({ employee, business, zone, position, onClose }) {
 }
 
 
-function EmployeeForm({ initial, zones, positions, allPositions, employees, businesses, onSave, onCancel, lockedZoneId, allowedZoneIds, businessId, isOwner, canEditPay }) {
+function EmployeeForm({ initial, zones, positions, allPositions, employees, businesses, onSave, onCancel, lockedZoneId, allowedZoneIds, businessId, isOwner, canViewDocs = false, canEditPay }) {
   const [name, setName] = useState(initial?.name || '');
   const [nickname, setNickname] = useState(initial?.nickname || '');
   const [employeeNumber, setEmployeeNumber] = useState(initial?.employeeNumber || '');
@@ -1093,7 +1093,7 @@ function EmployeeForm({ initial, zones, positions, allPositions, employees, busi
               <FormField label="บัตรหมดอายุ">
                 <input type="date" value={workPermitExpiry} onChange={(e) => setWorkPermitExpiry(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600 bg-white" />
               </FormField>
-              <MultiDocUpload label="ไฟล์/รูปบัตรแรงงาน" paths={workPermitDocs} businessId={businessId} docType="work_permit" onChange={setWorkPermitDocs} />
+              <MultiDocUpload label="ไฟล์/รูปบัตรแรงงาน" paths={workPermitDocs} businessId={businessId} docType="work_permit" canView={canViewDocs} onChange={setWorkPermitDocs} />
             </>
           )}
           <FormField label="พาสปอร์ต">
@@ -1107,7 +1107,7 @@ function EmployeeForm({ initial, zones, positions, allPositions, employees, busi
               <FormField label="พาสปอร์ตหมดอายุ">
                 <input type="date" value={passportExpiry} onChange={(e) => setPassportExpiry(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600 bg-white" />
               </FormField>
-              <MultiDocUpload label="ไฟล์/รูปพาสปอร์ต" paths={passportDocs} businessId={businessId} docType="passport" onChange={setPassportDocs} />
+              <MultiDocUpload label="ไฟล์/รูปพาสปอร์ต" paths={passportDocs} businessId={businessId} docType="passport" canView={canViewDocs} onChange={setPassportDocs} />
             </>
           )}
         </div>
@@ -1119,7 +1119,7 @@ function EmployeeForm({ initial, zones, positions, allPositions, employees, busi
           <h3 className="text-sm font-medium text-stone-800">เอกสารสมัครงาน</h3>
         </div>
         <p className="text-xs text-stone-500 -mt-1">เช่น ใบสมัคร, สำเนาวุฒิการศึกษา, รูปถ่าย, เอกสารอ้างอิง (อัปโหลดได้ทุกคน ทั้งคนไทยและต่างชาติ)</p>
-        <MultiDocUpload label="ไฟล์/รูปเอกสารสมัครงาน" paths={applicationDocs} businessId={businessId} docType="application" onChange={setApplicationDocs} />
+        <MultiDocUpload label="ไฟล์/รูปเอกสารสมัครงาน" paths={applicationDocs} businessId={businessId} docType="application" canView={canViewDocs} onChange={setApplicationDocs} />
       </div>
 
       <FormField label="ที่อยู่"><textarea value={address} onChange={(e) => setAddress(e.target.value)} rows={2} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600 resize-none" /></FormField>
@@ -1130,9 +1130,15 @@ function EmployeeForm({ initial, zones, positions, allPositions, employees, busi
 }
 
 
-function DocList({ paths }) {
+// ไฟล์แนบ (บัตร ปชช./ทะเบียนบ้าน ฯลฯ) — เปิดดูได้เฉพาะ owner · storage policy บังคับซ้ำอีกชั้น
+function DocList({ paths, canView = false }) {
   const list = Array.isArray(paths) ? paths : [];
   if (list.length === 0) return null;
+  if (!canView) return (
+    <div className="mt-2 inline-flex items-center gap-1.5 px-2 py-1 text-xs text-stone-500 bg-stone-100 rounded-md border border-stone-200">
+      <Lock className="w-3 h-3" /> มี {list.length} ไฟล์ · เฉพาะเจ้าของดูได้
+    </div>
+  );
   return (
     <div className="mt-2 flex flex-wrap gap-1.5">
       {list.map((p, i) => <DocViewChip key={p} path={p} index={i} total={list.length} />)}
@@ -1159,8 +1165,10 @@ function DocViewChip({ path, index, total }) {
   );
 }
 
-function MultiDocUpload({ label, paths, businessId, docType, onChange }) {
+function MultiDocUpload({ label, paths, businessId, docType, canView = false, onChange }) {
   const [uploading, setUploading] = useState(false);
+  // ไฟล์ที่อัปโหลดในรอบนี้ — คนที่ไม่ใช่ owner เอาออกจากรายการได้เฉพาะไฟล์พวกนี้ (กันแนบผิด)
+  const [fresh, setFresh] = useState([]);
   const fileRef = useRef(null);
   const list = Array.isArray(paths) ? paths : [];
 
@@ -1177,7 +1185,7 @@ function MultiDocUpload({ label, paths, businessId, docType, onChange }) {
         const p = await uploadDocument(f, businessId, docType);
         if (p) uploaded.push(p);
       }
-      if (uploaded.length) onChange([...list, ...uploaded]);
+      if (uploaded.length) { setFresh((x) => [...x, ...uploaded]); onChange([...list, ...uploaded]); }
     } finally {
       setUploading(false);
     }
@@ -1185,7 +1193,7 @@ function MultiDocUpload({ label, paths, businessId, docType, onChange }) {
 
   const removeOne = async (path) => {
     if (!confirm('ลบไฟล์นี้?')) return;
-    await deleteDocument(path);
+    if (canView) await deleteDocument(path); // non-owner ไม่มีสิทธิ์ลบใน storage — แค่ถอดออกจากรายการ
     onChange(list.filter((p) => p !== path));
   };
 
@@ -1194,7 +1202,7 @@ function MultiDocUpload({ label, paths, businessId, docType, onChange }) {
       <label className="block text-sm font-medium text-stone-700 mb-1.5">{label}{list.length > 0 && <span className="ml-2 text-xs text-stone-500">({list.length} ไฟล์)</span>}</label>
       <div className="space-y-2">
         {list.map((path) => (
-          <DocItem key={path} path={path} onRemove={() => removeOne(path)} />
+          <DocItem key={path} path={path} canView={canView} canRemove={canView || fresh.includes(path)} onRemove={() => removeOne(path)} />
         ))}
         <button type="button" onClick={() => fileRef.current?.click()} disabled={uploading} className="w-full flex items-center justify-center gap-2 px-3 py-2.5 border-2 border-dashed border-stone-300 hover:border-emerald-400 hover:bg-emerald-50/30 rounded-lg text-sm text-stone-600 hover:text-emerald-700 disabled:opacity-50">
           {uploading ? <><Clock className="w-4 h-4 animate-pulse" /> กำลังอัปโหลด...</> : <><Upload className="w-4 h-4" /> เพิ่มไฟล์{list.length > 0 ? ' (เลือกหลายไฟล์ได้)' : ' (รูปหรือ PDF, ไม่เกิน 10MB ต่อไฟล์)'}</>}
@@ -1205,7 +1213,7 @@ function MultiDocUpload({ label, paths, businessId, docType, onChange }) {
   );
 }
 
-function DocItem({ path, onRemove }) {
+function DocItem({ path, canView = false, canRemove = false, onRemove }) {
   const [opening, setOpening] = useState(false);
   const filename = path.split('/').pop() || 'ไฟล์';
   const isPdf = filename.toLowerCase().endsWith('.pdf');
@@ -1223,12 +1231,18 @@ function DocItem({ path, onRemove }) {
       <div className="flex-1 min-w-0">
         <div className="text-xs text-stone-500 truncate" title={filename}>{filename}</div>
       </div>
-      <button type="button" onClick={open} disabled={opening} className="flex items-center gap-1 px-2.5 py-1.5 text-xs text-emerald-700 hover:bg-emerald-50 rounded-md font-medium disabled:opacity-50">
-        <ExternalLink className="w-3.5 h-3.5" />{opening ? '...' : 'ดู'}
-      </button>
-      <button type="button" onClick={onRemove} className="p-1.5 text-red-600 hover:bg-red-50 rounded-md">
-        <Trash2 className="w-3.5 h-3.5" />
-      </button>
+      {canView ? (
+        <button type="button" onClick={open} disabled={opening} className="flex items-center gap-1 px-2.5 py-1.5 text-xs text-emerald-700 hover:bg-emerald-50 rounded-md font-medium disabled:opacity-50">
+          <ExternalLink className="w-3.5 h-3.5" />{opening ? '...' : 'ดู'}
+        </button>
+      ) : (
+        <span className="flex items-center gap-1 px-2 text-xs text-stone-400" title="เฉพาะเจ้าของดูได้"><Lock className="w-3.5 h-3.5" /></span>
+      )}
+      {canRemove && (
+        <button type="button" onClick={onRemove} className="p-1.5 text-red-600 hover:bg-red-50 rounded-md">
+          <Trash2 className="w-3.5 h-3.5" />
+        </button>
+      )}
     </div>
   );
 }
