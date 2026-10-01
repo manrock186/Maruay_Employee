@@ -6,7 +6,7 @@ import { monthlyHolidayQuota, holidayQuotaHint, isCalendarScheme } from '../lib/
 import { useIsMobile, useDragReorder, dragClass, rowDragClass, cellDropClass } from '../lib/hooks.js';
 import { NO_DEPT, employeeDepartment } from '../lib/order.js';
 import { MONTH_NAMES, payMonthLabel, fmtMoney, fmt, calcSocialSecurity, computePayroll, buildPayrollDraft } from '../lib/payroll.js';
-import { roomRentMapFromPool, recurringTaskMapFromPool, advanceMapFromPool } from '../lib/pools.js';
+import { roomRentMapFromPool, recurringTaskMapFromPool, missingRecurringTasks, advanceMapFromPool } from '../lib/pools.js';
 import { printPayslip, printPayslips, printPayrollRegister } from '../lib/print.js';
 import { isProbationPeriod, probationCycle, effectiveBaseSalary, daysInMonth, prorationFactor, payrollBaseSalary } from '../lib/probation.js';
 import { FormField, EmptyState, PageHeader, Avatar, EditorRow } from '../ui/index.jsx';
@@ -141,6 +141,11 @@ function PayrollPage({ businesses, positions, employees, activeBusinessId, canRe
     gs.forEach((g) => { out.push({ type: 'group', g }); g.rows.forEach((emp) => out.push({ type: 'emp', emp })); });
     return out;
   }, [bizEmployees, positions, activeBusinessId, deptOrder]);
+  // โหมด "รายคน": นับคนที่มีงานเสริมประจำยังไม่อยู่ในเงินเดือน (ใส่ทีเดียวทั้งหมดได้ที่โหมดกรอกเร็ว)
+  const listMissingRecurring = useMemo(() => bizEmployees.filter((e) => {
+    const p = payrollByEmp[e.id];
+    return p && missingRecurringTasks(recurringTaskMap?.[e.id], itemsByPayroll[p.id]).length > 0;
+  }).length, [bizEmployees, payrollByEmp, itemsByPayroll, recurringTaskMap]);
 
   if (!activeBusinessId) return (
     <div className="h-full overflow-auto"><PageHeader title="เงินเดือน" /><div className="p-4 md:p-8"><EmptyState icon={Wallet} title="เลือกธุรกิจที่ sidebar" description="เงินเดือนคำนวณแยกตามธุรกิจ — เลือกธุรกิจก่อน" /></div></div>
@@ -290,6 +295,12 @@ function PayrollPage({ businesses, positions, employees, activeBusinessId, canRe
           />
         ) : (
           <div className="space-y-2">
+            {listMissingRecurring > 0 && (
+              <div className="flex items-center justify-between gap-3 flex-wrap bg-amber-50 border border-amber-300 rounded-xl px-4 py-3 text-sm text-amber-900">
+                <span className="flex items-center gap-1.5"><Sparkles className="w-4 h-4" />งานเสริมประจำของ {listMissingRecurring} คนยังไม่อยู่ในเงินเดือนงวดนี้ — กด "แก้ไข" รายคนแล้วกด "ใส่ให้" หรือใส่ทีเดียวทั้งหมดที่โหมดกรอกเร็ว</span>
+                <button onClick={() => setMode('quick')} className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-white rounded-lg text-xs font-medium">ไปโหมดกรอกเร็ว</button>
+              </div>
+            )}
             {listRows.map((fr) => {
               if (fr.type === 'group') return (
                 <div key={`g-${fr.g.id}`} className="flex items-center gap-2 pt-3 pb-1">
@@ -531,6 +542,9 @@ function PayrollEditor({ employee, existing, existingItems, year, month, busines
   );
   const [otherDeductions, setOtherDeductions] = useState(existingItems.filter((i) => i.kind === 'other_deduction').map((i) => ({ label: i.label, amount: i.amount })));
   const [priceMaps, setPriceMaps] = useState({});
+  // งานเสริมประจำที่ยังไม่อยู่ในรายการ (แถวนี้ถูกสร้างก่อนตั้งงานเสริมของเดือน) — เสนอให้กดใส่
+  const missingBonus = missingRecurringTasks(bonusPrefill, bonusTasks.map((b) => ({ ...b, kind: 'bonus_task' })));
+  const addMissingBonus = () => setBonusTasks((prev) => [...prev, ...missingBonus.map((t) => ({ label: t.label, amount: t.amount }))]);
   useEffect(() => { let c = false; (async () => { const m = ops.payrollItem.recentPrices ? await ops.payrollItem.recentPrices() : {}; if (!c) setPriceMaps(m || {}); })(); return () => { c = true; }; }, []);
   const [saving, setSaving] = useState(false);
 
@@ -637,6 +651,12 @@ function PayrollEditor({ employee, existing, existingItems, year, month, busines
             <EditorRow label="คอมมิชชั่น" hint={!existing && commissionPrefill ? 'จากหน้าคอมมิชชั่นงวดนี้' : undefined}>{numInput('commission')}</EditorRow>
             {calc.holidayCredit > 0 && <EditorRow label={`ค่าวันหยุดที่ไม่ได้ใช้ (${fmtDaysUI(-calc.excessDays)} วัน)`} hint="อัตโนมัติ — หยุดน้อยกว่าสิทธิ"><div className="text-right text-sm text-emerald-700 py-1.5">+{fmtMoney(calc.holidayCredit)}</div></EditorRow>}
             <div className="mt-2 pt-2 border-t border-emerald-100"><EditorItemList title="งานเสริม (ล้างห้องน้ำ, ลอกท่อ ฯลฯ)" list={bonusTasks} setList={setBonusTasks} color="text-emerald-700" addLabel="เพิ่มงานเสริม" disabled={locked} priceMap={priceMaps.bonus_task} /></div>
+            {existing && missingBonus.length > 0 && (
+              <div className="mt-2 flex items-start justify-between gap-2 p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800">
+                <div className="min-w-0"><b>งานเสริมประจำที่ยังไม่ใส่:</b> {missingBonus.map((t) => `${t.label} ${fmtMoney(t.amount)}`).join(' • ')}</div>
+                {!locked && <button type="button" onClick={addMissingBonus} className="flex-shrink-0 px-2.5 py-1 bg-amber-500 hover:bg-amber-400 text-white rounded-lg font-medium">ใส่ให้</button>}
+              </div>
+            )}
           </div>
 
           {/* วันหยุด — หยุดเกิน = หยุดจริง − โควต้า (+ หัก / − เพิ่ม) · แก้ได้ทั้งที่ช่อง "หยุดจริง" และช่อง "เกิน/ขาด" */}
@@ -764,7 +784,7 @@ function PayrollQuickEntry({ bizEmployees, positions, deptOrder, canReorder, onD
       if (!p && roomRentMap && roomRentMap[emp.id] != null) d[emp.id].roomFee = roomRentMap[emp.id];
       // งานเสริมประจำ → เติมเป็นรายการ bonus_task ให้คนที่ยังไม่ได้ทำเงินเดือนงวดนี้
       if (!p && recurringTaskMap && (recurringTaskMap[emp.id] || []).length) {
-        d[emp.id].items = [...(d[emp.id].items || []), ...recurringTaskMap[emp.id].map((t) => ({ kind: 'bonus_task', label: t.label, amount: t.amount }))];
+        d[emp.id].items = [...(d[emp.id].items || []), ...recurringTaskMap[emp.id].map((t) => ({ kind: 'bonus_task', label: t.label, amount: t.amount, recurring: true }))];
       }
       // เบิกเงินระหว่างเดือน → เติมยอดรวมเข้าช่อง "เบิก" (label 'เบิกล่วงหน้า') ให้คนที่ยังไม่ได้ทำเงินเดือน
       if (!p && advanceMap && advanceMap[emp.id]) {
@@ -810,6 +830,33 @@ function PayrollQuickEntry({ bizEmployees, positions, deptOrder, canReorder, onD
 
   const eligible = useMemo(() => bizEmployees.filter((e) => Number(e.baseSalary) > 0), [bizEmployees]);
   const noSalaryCount = bizEmployees.length - eligible.length;
+
+  // ---- งานเสริมประจำที่ยังไม่อยู่ในเงินเดือน ----
+  // ตอนสร้างแถวใหม่ระบบเติมให้เอง (ข้างบน) แต่ถ้าแถวเงินเดือนถูกสร้าง "ก่อน" ตั้งงานเสริมประจำของเดือนนั้น
+  // (เคยเกิดจริง: ทำเงินเดือน 08:24 แล้วค่อยตั้งงานเสริม 08:43) รายการจะไม่เข้า → ตรวจแล้วให้กดใส่ทีเดียวทั้งหมด
+  // เทียบด้วยชื่อรายการ: ถ้ามีงานชื่อเดียวกันอยู่แล้ว (ไม่ว่ายอดเท่าไหร่) ถือว่าใส่แล้ว
+  const missingRecurring = useMemo(() => {
+    const open = [], locked = [];
+    eligible.forEach((emp) => {
+      const d = drafts[emp.id]; if (!d) return;
+      const miss = missingRecurringTasks(recurringTaskMap?.[emp.id], d.items);
+      if (!miss.length) return;
+      (d.status === 'finalized' ? locked : open).push({ emp, tasks: miss });
+    });
+    return { open, locked };
+  }, [eligible, drafts, recurringTaskMap]);
+  const applyMissingRecurring = () => {
+    if (!missingRecurring.open.length) return;
+    setDrafts((prev) => {
+      const next = { ...prev };
+      missingRecurring.open.forEach(({ emp, tasks }) => {
+        const d = next[emp.id]; if (!d) return;
+        next[emp.id] = { ...d, items: [...(d.items || []), ...tasks.map((t) => ({ kind: 'bonus_task', label: t.label, amount: t.amount, recurring: true }))] };
+      });
+      return next;
+    });
+    setTouched((prev) => { const n = new Set(prev); missingRecurring.open.forEach(({ emp }) => n.add(emp.id)); return n; });
+  };
 
   // ---- จัดกลุ่มตามแผนก (แผนกมาจากตำแหน่ง · ลำดับแผนก + ลำดับคน มาจาก display_order ที่ผู้ใช้ลากจัดเอง) ----
   const groups = useMemo(() => {
@@ -946,7 +993,10 @@ function PayrollQuickEntry({ bizEmployees, positions, deptOrder, canReorder, onD
           <span className={`tabular-nums font-medium ${sign > 0 ? 'text-emerald-700' : 'text-red-600'}`}>
             {sign > 0 ? '+' : '−'}{fmtMoney(Math.abs(Number(it.amount) || 0))}
           </span>
-          <div className="text-stone-500 break-words">{it.label?.trim() || '—'}</div>
+          <div className="text-stone-500 break-words">
+            {it.label?.trim() || '—'}
+            {it.recurring && <span className="ml-1 px-1 rounded bg-amber-100 text-amber-800 text-[9px] align-middle" title="จากหน้างานเสริมประจำ">ประจำ</span>}
+          </div>
         </div>
       );
     });
@@ -965,6 +1015,29 @@ function PayrollQuickEntry({ bizEmployees, positions, deptOrder, canReorder, onD
           <Save className="w-4 h-4" />{saving ? 'กำลังบันทึก...' : `บันทึกทั้งหมด${touched.size > 0 ? ` (${touched.size})` : ''}`}
         </button>
       </div>
+
+      {(missingRecurring.open.length > 0 || missingRecurring.locked.length > 0) && (
+        <div className="mb-4 bg-amber-50 border border-amber-300 rounded-xl p-4">
+          <div className="flex items-start justify-between gap-3 flex-wrap">
+            <div className="min-w-0">
+              <div className="text-sm font-medium text-amber-900 flex items-center gap-1.5"><Sparkles className="w-4 h-4" />งานเสริมประจำที่ยังไม่อยู่ในเงินเดือนงวดนี้ — {missingRecurring.open.length + missingRecurring.locked.length} คน</div>
+              <p className="text-xs text-amber-700 mt-0.5">แถวเงินเดือนถูกสร้างก่อนตั้งงานเสริมประจำของเดือนนี้ รายการเลยยังไม่เข้า — กดปุ่มเพื่อใส่ให้ทุกคน แล้วกด "บันทึกทั้งหมด"</p>
+            </div>
+            {missingRecurring.open.length > 0 && (
+              <button onClick={applyMissingRecurring} className="flex-shrink-0 flex items-center gap-1.5 px-3 py-2 bg-amber-500 hover:bg-amber-400 text-white rounded-lg text-sm font-medium"><Plus className="w-4 h-4" />ใส่ให้ทั้งหมด ({missingRecurring.open.length})</button>
+            )}
+          </div>
+          <div className="mt-2 space-y-1">
+            {[...missingRecurring.open, ...missingRecurring.locked.map((x) => ({ ...x, locked: true }))].map(({ emp, tasks, locked: isLocked }) => (
+              <div key={emp.id} className="flex items-start gap-2 text-xs bg-white rounded-lg px-3 py-1.5 border border-amber-100">
+                <span className="text-stone-800 font-medium whitespace-nowrap"><span className="font-mono text-stone-400 mr-1">#{emp.employeeNumber}</span>{dispName(emp)}</span>
+                <span className="text-stone-500 min-w-0">{tasks.map((t) => `${t.label} ${fmtMoney(t.amount)}`).join(' • ')}</span>
+                {isLocked && <span className="ml-auto whitespace-nowrap text-emerald-700">ปิดงวดแล้ว — เปิด "รายคน" กด "แก้ไขงวดนี้" เพื่อใส่</span>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {isMobile ? (
         /* ===== มือถือ: การ์ด ===== */

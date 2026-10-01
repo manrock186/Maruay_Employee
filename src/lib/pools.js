@@ -49,6 +49,13 @@ function recurringTaskMapFromPool(pool) {
   return m;
 }
 
+// งานเสริมประจำของพนักงานคนหนึ่งที่ "ยังไม่อยู่" ในรายการ bonus_task ของงวด (เทียบด้วยชื่อรายการ)
+// ใช้กับแถวเงินเดือนที่สร้างไว้ก่อนตั้งงานเสริมประจำของเดือนนั้น — ตอนสร้างแถวจึงไม่ได้ถูกเติมให้
+function missingRecurringTasks(tasks, items) {
+  const have = new Set((items || []).filter((i) => i.kind === 'bonus_task').map((i) => (i.label || '').trim()));
+  return (tasks || []).filter((t) => !have.has((t.label || '').trim()));
+}
+
 // แปลงพูล "เบิกเงิน" → map: empId -> ยอดเบิกรวม (ที่จะไปหักในเงินเดือน)
 function advanceMapFromPool(pool) {
   const m = {};
@@ -69,5 +76,6 @@ export {
   roomUnits,
   roomRentMapFromPool,
   recurringTaskMapFromPool,
+  missingRecurringTasks,
   advanceMapFromPool,
 };
