@@ -2,12 +2,13 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Users, Building2, MapPin, LogOut, Plus, Edit2, Trash2, Search, X, Upload, UserCircle, Shield, Camera, Calendar, Phone, Mail, AlertCircle, CheckCircle2, Award, Clock, Globe, CreditCard, BookOpen, FileText, ExternalLink, Paperclip, Wallet, TrendingUp, TrendingDown, Hash, Lock } from 'lucide-react';
 import { hasSalarySplit, businessPositionId, businessBaseSalary } from '../lib/business.js';
 import { dispName, NATIONALITIES, natLabel, natFlag, isForeign, RESIGN_REASONS, resignLabel, isActive, SALARY_REASONS, salaryReasonLabel } from '../lib/format.js';
-import { MONTH_NAMES, fmtMoney, fmt } from '../lib/payroll.js';
+import { WEEKDAY_LABELS, monthlyHolidayQuota, holidayQuotaHint, holidaySchemeLabel } from '../lib/holidays.js';
+import { MONTH_NAMES, fmtMoney, fmt, holidayStats } from '../lib/payroll.js';
 import { uploadDocument, deleteDocument, getDocumentUrl, resizeImage } from '../lib/storage.js';
 import { Modal, FormField, FormActions, EmptyState, PageHeader, Avatar, PillRadio, InfoItem, DetailBlock } from '../ui/index.jsx';
 
 // ============ EMPLOYEES PAGE ============
-function EmployeesPage({ businesses, zones, positions, employees, profile, activeBusinessId, activeZoneId, setActiveZoneId, ops }) {
+function EmployeesPage({ businesses, zones, positions, employees, profile, activeBusinessId, activeZoneId, setActiveZoneId, publicHolidays = [], ops }) {
   const [editing, setEditing] = useState(null);
   const [showModal, setShowModal] = useState(false);
   const [viewing, setViewing] = useState(null);
@@ -228,7 +229,7 @@ function EmployeesPage({ businesses, zones, positions, employees, profile, activ
       </div>
       {showModal && (
         <Modal title={editing?.id ? 'แก้ไขข้อมูลพนักงาน' : 'เพิ่มพนักงานใหม่'} onClose={() => { setShowModal(false); setEditing(null); }} wide>
-          <EmployeeForm initial={editing} zones={visibleZones} positions={positions.filter((p) => p.businessId === targetBusinessId)} allPositions={positions} employees={employees.filter((e) => e.businessId === targetBusinessId && e.id !== editing?.id)} businesses={businesses} onSave={save} onCancel={() => { setShowModal(false); setEditing(null); }} lockedZoneId={isZM && (profile.zoneIds || []).length === 1 ? profile.zoneIds[0] : null} allowedZoneIds={isZM ? (profile.zoneIds || []) : null} businessId={targetBusinessId} isOwner={isOwner || isBM} canViewDocs={isOwner} canEditPay={profile.canManagePayroll} />
+          <EmployeeForm initial={editing} zones={visibleZones} positions={positions.filter((p) => p.businessId === targetBusinessId)} allPositions={positions} employees={employees.filter((e) => e.businessId === targetBusinessId && e.id !== editing?.id)} businesses={businesses} onSave={save} onCancel={() => { setShowModal(false); setEditing(null); }} lockedZoneId={isZM && (profile.zoneIds || []).length === 1 ? profile.zoneIds[0] : null} allowedZoneIds={isZM ? (profile.zoneIds || []) : null} businessId={targetBusinessId} isOwner={isOwner || isBM} canViewDocs={isOwner} canEditPay={profile.canManagePayroll} publicHolidays={publicHolidays} />
         </Modal>
       )}
       {viewing && (() => {
@@ -327,6 +328,17 @@ function SalaryRaiseModal({ employee, ops, onClose, onSaved }) {
   const [reason, setReason] = useState('annual');
   const [note, setNote] = useState('');
   const [saving, setSaving] = useState(false);
+  // สถิติวันหยุด 12 งวดล่าสุด — โชว์ไว้บนสุดให้เห็นตอนตัดสินใจ
+  const [hstats, setHstats] = useState(null);
+  useEffect(() => {
+    if (!ops?.payroll?.listByEmployee) return;
+    let cancelled = false;
+    (async () => {
+      const rows = await ops.payroll.listByEmployee(employee.id);
+      if (!cancelled) setHstats(holidayStats(rows));
+    })();
+    return () => { cancelled = true; };
+  }, [employee.id]);
 
   const newVal = Number(newSalary) || 0;
   const diff = newVal - current;
@@ -368,6 +380,16 @@ function SalaryRaiseModal({ employee, ops, onClose, onSaved }) {
               <div className="text-xs text-stone-500">เงินเดือนปัจจุบัน {fmtMoney(current)} ฿</div>
             </div>
           </div>
+          {hstats && hstats.recent.periods > 0 && (
+            <div className={`flex items-start gap-2 p-3 rounded-lg border text-xs ${hstats.recent.excessDays > 0 ? 'bg-amber-50 border-amber-200 text-amber-900' : 'bg-emerald-50 border-emerald-200 text-emerald-900'}`}>
+              <Calendar className="w-4 h-4 flex-shrink-0 mt-0.5" />
+              <div>
+                <b>สถิติวันหยุด {hstats.recent.periods} งวดล่าสุด:</b> หยุดเกินรวม <b>{Math.round(hstats.recent.excessDays * 100) / 100}</b> วัน (เกินใน {hstats.recent.overPeriods}/{hstats.recent.periods} งวด)
+                {hstats.recent.creditDays > 0 && <> · ทำงานวันหยุด {Math.round(hstats.recent.creditDays * 100) / 100} วัน</>}
+                {' '}· ผลเงินสุทธิ <b>{hstats.recent.amount >= 0 ? '+' : '−'}{fmtMoney(Math.abs(hstats.recent.amount))} ฿</b>
+              </div>
+            </div>
+          )}
           <FormField label="เงินเดือนใหม่ (บาท)" required>
             <input type="number" min="0" step="0.01" autoFocus value={newSalary} onChange={(e) => setNewSalary(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600" placeholder={`เดิม ${fmtMoney(current)}`} />
             {newVal > 0 && diff !== 0 && (
@@ -415,12 +437,17 @@ function EmployeeDetailModal({ employee, salaryReload, zones, positions, employe
   const additionalBizs = (employee.additionalBusinessIds || []).map((id) => businesses?.find((b) => b.id === id)).filter(Boolean);
   const resigned = !isActive(employee);
   const [salaryHistory, setSalaryHistory] = useState(null);
+  // สถิติวันหยุด — คำนวณจากแถว payroll ทุกงวดของคนนี้ (ไม่เก็บซ้ำ แก้งวดเมื่อไหร่สถิติตรงทันที)
+  const [hstats, setHstats] = useState(null);
+  const [showAllHoliday, setShowAllHoliday] = useState(false);
   useEffect(() => {
     if (!canRaise || !ops) return;
     let cancelled = false;
     (async () => {
       const h = await ops.salaryChange.listByEmployee(employee.id);
       if (!cancelled) setSalaryHistory(h);
+      const rows = ops.payroll?.listByEmployee ? await ops.payroll.listByEmployee(employee.id) : [];
+      if (!cancelled) setHstats(holidayStats(rows));
     })();
     return () => { cancelled = true; };
   }, [employee.id, canRaise, salaryReload]);
@@ -621,6 +648,56 @@ function EmployeeDetailModal({ employee, salaryReload, zones, positions, employe
               )}
             </div>
           )}
+          {canRaise && (
+            <div className="px-6 pb-6">
+              <div className="flex items-center gap-2 mb-3 flex-wrap">
+                <Calendar className="w-4 h-4 text-stone-500" />
+                <h3 className="font-medium text-stone-700">สถิติวันหยุด</h3>
+                <span className="inline-flex items-center px-2 py-0.5 bg-stone-100 text-stone-600 text-xs font-medium rounded">{holidaySchemeLabel(employee)}</span>
+              </div>
+              {hstats === null ? (
+                <div className="text-xs text-stone-400">กำลังโหลด...</div>
+              ) : hstats.list.length === 0 ? (
+                <div className="text-xs text-stone-400 italic">ยังไม่มีงวดเงินเดือนในระบบ</div>
+              ) : (() => {
+                const r = hstats.recent;
+                const rows = showAllHoliday ? hstats.list : hstats.list.slice(0, 12);
+                const d = (n) => String(Math.round(n * 100) / 100);
+                return (
+                  <>
+                    {/* สรุป 12 งวดล่าสุด — ใช้ประกอบการพิจารณาขึ้นเงินเดือน */}
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
+                      <div className="p-2.5 bg-stone-50 rounded-lg border border-stone-200"><div className="text-[11px] text-stone-500">งวดที่ดู</div><div className="text-sm font-semibold text-stone-800">{r.periods} งวดล่าสุด</div></div>
+                      <div className={`p-2.5 rounded-lg border ${r.excessDays > 0 ? 'bg-red-50 border-red-200' : 'bg-stone-50 border-stone-200'}`}><div className="text-[11px] text-stone-500">หยุดเกินรวม</div><div className={`text-sm font-semibold ${r.excessDays > 0 ? 'text-red-600' : 'text-stone-800'}`}>{d(r.excessDays)} วัน <span className="font-normal text-xs text-stone-500">({r.overPeriods}/{r.periods} งวด)</span></div></div>
+                      <div className={`p-2.5 rounded-lg border ${r.creditDays > 0 ? 'bg-emerald-50 border-emerald-200' : 'bg-stone-50 border-stone-200'}`}><div className="text-[11px] text-stone-500">ทำงานวันหยุด</div><div className={`text-sm font-semibold ${r.creditDays > 0 ? 'text-emerald-700' : 'text-stone-800'}`}>{d(r.creditDays)} วัน</div></div>
+                      <div className="p-2.5 bg-stone-50 rounded-lg border border-stone-200"><div className="text-[11px] text-stone-500">ผลเงินสุทธิ</div><div className={`text-sm font-semibold ${r.amount < 0 ? 'text-red-600' : r.amount > 0 ? 'text-emerald-700' : 'text-stone-800'}`}>{r.amount >= 0 ? '+' : '−'}{fmtMoney(Math.abs(r.amount))} ฿</div></div>
+                    </div>
+                    <div className="rounded-lg border border-stone-200 overflow-hidden">
+                      <table className="w-full text-xs">
+                        <thead className="bg-stone-50 text-stone-500">
+                          <tr><th className="text-left px-3 py-1.5 font-medium">งวด</th><th className="text-right px-2 py-1.5 font-medium">โควต้า</th><th className="text-right px-2 py-1.5 font-medium">หยุดจริง</th><th className="text-right px-2 py-1.5 font-medium">เกิน/ขาด</th><th className="text-right px-3 py-1.5 font-medium">เงิน</th></tr>
+                        </thead>
+                        <tbody className="divide-y divide-stone-100">
+                          {rows.map((h) => (
+                            <tr key={h.id} className={h.excess > 0 ? 'bg-red-50/40' : h.excess < 0 ? 'bg-emerald-50/40' : ''}>
+                              <td className="px-3 py-1.5 text-stone-700">{MONTH_NAMES[h.month - 1]} {h.year + 543}{h.note && <span className="block text-[10px] text-stone-400">{h.note}</span>}</td>
+                              <td className="px-2 py-1.5 text-right text-stone-500">{d(h.quota)}</td>
+                              <td className="px-2 py-1.5 text-right text-stone-700">{d(h.taken)}</td>
+                              <td className={`px-2 py-1.5 text-right font-medium ${h.excess > 0 ? 'text-red-600' : h.excess < 0 ? 'text-emerald-700' : 'text-stone-400'}`}>{h.excess > 0 ? `+${d(h.excess)}` : h.excess < 0 ? `−${d(-h.excess)}` : '0'}</td>
+                              <td className={`px-3 py-1.5 text-right ${h.amount < 0 ? 'text-red-600' : h.amount > 0 ? 'text-emerald-700' : 'text-stone-400'}`}>{h.amount === 0 ? '—' : `${h.amount > 0 ? '+' : '−'}${fmtMoney(Math.abs(h.amount))}`}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    {hstats.list.length > 12 && (
+                      <button onClick={() => setShowAllHoliday((v) => !v)} className="mt-2 text-xs text-emerald-700 hover:underline">{showAllHoliday ? 'แสดงเฉพาะ 12 งวดล่าสุด' : `ดูทั้งหมด (${hstats.list.length} งวด)`}</button>
+                    )}
+                  </>
+                );
+              })()}
+            </div>
+          )}
           {reports.length > 0 && (
             <div className="px-6 pb-6">
               <div className="flex items-center gap-2 mb-3"><Users className="w-4 h-4 text-stone-500" /><h3 className="font-medium text-stone-700">ลูกน้องโดยตรง ({reports.length} คน)</h3></div>
@@ -807,7 +884,7 @@ function EmployeeIDCard({ employee, business, zone, position, onClose }) {
 }
 
 
-function EmployeeForm({ initial, zones, positions, allPositions, employees, businesses, onSave, onCancel, lockedZoneId, allowedZoneIds, businessId, isOwner, canViewDocs = false, canEditPay }) {
+function EmployeeForm({ initial, zones, positions, allPositions, employees, businesses, onSave, onCancel, lockedZoneId, allowedZoneIds, businessId, isOwner, canViewDocs = false, canEditPay, publicHolidays = [] }) {
   const [name, setName] = useState(initial?.name || '');
   const [nickname, setNickname] = useState(initial?.nickname || '');
   const [employeeNumber, setEmployeeNumber] = useState(initial?.employeeNumber || '');
@@ -841,6 +918,11 @@ function EmployeeForm({ initial, zones, positions, allPositions, employees, busi
   const [probationSalary, setProbationSalary] = useState(initial?.probationSalary ?? '');
   const [probationMonths, setProbationMonths] = useState(initial?.probationMonths ?? '');
   const [holidayQuota, setHolidayQuota] = useState(initial?.holidayQuota ?? 4);
+  // รูปแบบวันหยุด: fixed = โควต้าคงที่/เดือน · calendar = หยุดตามวันในสัปดาห์ + นักขัตฤกษ์ (โควต้าแต่ละเดือนนับจากปฏิทิน)
+  const [holidayScheme, setHolidayScheme] = useState(initial?.holidayScheme === 'calendar' ? 'calendar' : 'fixed');
+  const [holidayWeekdays, setHolidayWeekdays] = useState(() => (Array.isArray(initial?.holidayWeekdays) ? initial.holidayWeekdays.map(Number) : [0, 6]));
+  const [holidayIncludePublic, setHolidayIncludePublic] = useState(initial?.holidayIncludePublic ?? true);
+  const toggleWeekday = (d) => setHolidayWeekdays((prev) => (prev.includes(d) ? prev.filter((x) => x !== d) : [...prev, d]).sort());
   const [commissionPct, setCommissionPct] = useState(initial?.commissionPct ?? '');
   const [hasSocialSecurity, setHasSocialSecurity] = useState(initial?.hasSocialSecurity ?? false);
   const [roomFee, setRoomFee] = useState(initial?.roomFee ?? '');
@@ -899,7 +981,10 @@ function EmployeeForm({ initial, zones, positions, allPositions, employees, busi
         onProbation,
         probationSalary: onProbation ? (Number(probationSalary) || 0) : null,
         probationMonths: onProbation ? (Number(probationMonths) || null) : null,
-        holidayQuota: Number(holidayQuota) || 0,
+        holidayQuota: Math.round(Number(holidayQuota) || 0),
+        holidayScheme,
+        holidayWeekdays: holidayScheme === 'calendar' ? holidayWeekdays : [0, 6],
+        holidayIncludePublic: holidayScheme === 'calendar' ? !!holidayIncludePublic : true,
         hasSocialSecurity: !!hasSocialSecurity,
         roomFee: Number(roomFee) || 0,
       } : {}),
@@ -1037,9 +1122,38 @@ function EmployeeForm({ initial, zones, positions, allPositions, employees, busi
                 </button>
               )}
             </FormField>
-            <FormField label="โควต้าวันหยุด/เดือน">
-              <input type="number" min="0" value={holidayQuota} onChange={(e) => setHolidayQuota(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600" placeholder="เช่น 4" />
-              <p className="text-xs text-stone-500 mt-1">หยุดเกินจากนี้จะถูกหักเป็นรายวัน</p>
+            <FormField label="รูปแบบวันหยุด">
+              <div className="inline-flex rounded-lg border border-stone-300 overflow-hidden mb-2">
+                {[['fixed', 'โควต้าคงที่'], ['calendar', 'ตามปฏิทิน']].map(([v, label]) => (
+                  <button key={v} type="button" onClick={() => setHolidayScheme(v)} className={`px-3 py-1.5 text-sm font-medium ${holidayScheme === v ? 'bg-emerald-900 text-white' : 'bg-white text-stone-600 hover:bg-stone-50'}`}>{label}</button>
+                ))}
+              </div>
+              {holidayScheme === 'fixed' ? (
+                <>
+                  <div className="flex items-center gap-2">
+                    <input type="number" min="0" step="1" value={holidayQuota} onChange={(e) => setHolidayQuota(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600" placeholder="เช่น 4" />
+                    <span className="text-sm text-stone-500 whitespace-nowrap">วัน/เดือน</span>
+                  </div>
+                  <p className="text-xs text-stone-500 mt-1">หยุดเกินถูกหักรายวัน · หยุดน้อยกว่าโควต้าได้เพิ่มรายวัน (ค่าแรง/วัน = เงินเดือน ÷ 30)</p>
+                </>
+              ) : (
+                <>
+                  <div className="flex flex-wrap gap-1.5">
+                    {[1, 2, 3, 4, 5, 6, 0].map((d) => (
+                      <button key={d} type="button" onClick={() => toggleWeekday(d)} className={`w-9 h-9 rounded-lg border-2 text-sm font-medium transition-all ${holidayWeekdays.includes(d) ? 'border-emerald-600 bg-emerald-50 text-emerald-900' : 'border-stone-200 text-stone-500 hover:border-stone-300'}`}>{WEEKDAY_LABELS[d]}</button>
+                    ))}
+                  </div>
+                  <label className="flex items-center gap-2 mt-2 cursor-pointer">
+                    <input type="checkbox" checked={holidayIncludePublic} onChange={(e) => setHolidayIncludePublic(e.target.checked)} className="w-4 h-4 rounded text-emerald-700" />
+                    <span className="text-sm text-stone-700">รวมวันหยุดนักขัตฤกษ์ (ตามรายการในหน้าตั้งค่า)</span>
+                  </label>
+                  {(() => {
+                    const now = new Date();
+                    const previewEmp = { holidayScheme: 'calendar', holidayWeekdays, holidayIncludePublic, startDate: null, resignedDate: null };
+                    return <p className="text-xs text-stone-500 mt-1">โควต้านับจากปฏิทินแต่ละเดือน — เดือนนี้ = <b>{monthlyHolidayQuota(previewEmp, now.getFullYear(), now.getMonth() + 1, publicHolidays)} วัน</b> ({holidayQuotaHint(previewEmp, now.getFullYear(), now.getMonth() + 1, publicHolidays)})</p>;
+                  })()}
+                </>
+              )}
             </FormField>
             <FormField label="% คอมมิชชั่น (ตั้งต้นในหน้าคอม)">
               <input type="number" min="0" step="0.001" value={commissionPct} onChange={(e) => setCommissionPct(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-600" placeholder="เช่น 4.3 (= 4.3%)" />

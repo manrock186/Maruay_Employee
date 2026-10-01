@@ -4,6 +4,8 @@ import { MONTH_NAMES, payMonthLabel, fmtMoney, computePayroll } from './payroll.
 // ============ PAYROLL PRINT HELPERS (สลิป + รายงานรวม) ============
 // escape ข้อความผู้ใช้ก่อนยัดเข้า HTML ของหน้าต่างพิมพ์
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+// จำนวนวัน: 1 → "1", 1.5 → "1.5" (ไม่โชว์ทศนิยมเปล่าๆ)
+const fmtDays = (n) => String(Math.round((Number(n) || 0) * 100) / 100);
 
 // แปลงจำนวนเงินเป็นข้อความภาษาไทย (บาทอักษร)
 function bahtText(num) {
@@ -80,11 +82,11 @@ function payslipInner({ employee, payroll, items, business, position, year, mont
   const income = [
     ['เงินเดือนพื้นฐาน', Number(payroll.baseSalary) || 0],
     ['ค่าคอมมิชชั่น', Number(payroll.commission) || 0],
-    [`ค่าทำงานวันหยุด (${c.holidayWorkDays} วัน)`, c.holidayWorkPay],
+    [`ค่าวันหยุดที่ไม่ได้ใช้ (${fmtDays(-c.excessDays)} วัน)`, c.holidayCredit],
     ...(items || []).filter((i) => i.kind === 'bonus_task').map((i) => [i.label || 'โบนัส/งานพิเศษ', Number(i.amount) || 0]),
   ].filter((r, idx) => idx === 0 || Number(r[1]) > 0);
   const deduct = [
-    [`ขาดวันหยุดเกินสิทธิ (${c.excessDays} วัน)`, c.excessHolidayDeduction],
+    [`หักวันหยุดเกินสิทธิ (${fmtDays(c.excessDays)} วัน)`, c.excessHolidayDeduction],
     ['มาสาย', Number(payroll.lateDeduction) || 0],
     ['ประกันสังคม', Number(payroll.socialSecurity) || 0],
     ['ค่าหอพัก', Number(payroll.roomFee) || 0],
@@ -166,7 +168,7 @@ function printPayrollRegister({ business, groups, year, month }) {
   const COLSPAN = 4 + cols.length;
   const blank = () => ({ base: 0, com: 0, hol: 0, bonus: 0, inc: 0, ss: 0, lateAbsent: 0, room: 0, adv: 0, other: 0, viaco: 0, net: 0, count: 0 });
   const add = (t, p, c) => {
-    t.base += Number(p.baseSalary) || 0; t.com += Number(p.commission) || 0; t.hol += c.holidayWorkPay; t.bonus += c.bonusTasks;
+    t.base += Number(p.baseSalary) || 0; t.com += Number(p.commission) || 0; t.hol += c.holidayCredit; t.bonus += c.bonusTasks;
     t.inc += c.totalIncome; t.ss += Number(p.socialSecurity) || 0;
     t.lateAbsent += (Number(p.lateDeduction) || 0) + c.excessHolidayDeduction;
     t.room += Number(p.roomFee) || 0; t.adv += c.advances; t.other += c.otherDeductions;
@@ -211,7 +213,7 @@ function printPayrollRegister({ business, groups, year, month }) {
       add(sub, p, c); add(grand, p, c);
       const lateAbsent = (Number(p.lateDeduction) || 0) + c.excessHolidayDeduction;
       return `<tr>${lead}
-        ${td(p.baseSalary, 'in')}${td(p.commission, 'in')}${td(c.holidayWorkPay, 'in')}${td(c.bonusTasks, 'in')}
+        ${td(p.baseSalary, 'in')}${td(p.commission, 'in')}${td(c.holidayCredit, 'in')}${td(c.bonusTasks, 'in')}
         ${td(c.totalIncome, 'sum')}
         ${td(p.socialSecurity, 'out')}${td(lateAbsent, 'out')}${td(p.roomFee, 'out')}${td(c.advances, 'out')}${td(c.otherDeductions, 'out')}${td(p.paidViaCompany, 'out')}
         ${td(c.net, 'net')}

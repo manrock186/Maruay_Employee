@@ -20,12 +20,16 @@ function businessBaseSalary(emp, businessId) {
   if (businessId === emp?.businessId) return Number(emp?.baseSalary) || 0;
   return 0;
 }
-// เงินเดือนฐานตั้งต้นใน payroll ของธุรกิจหนึ่ง (รวมทดลองงาน+เฉลี่ยวันเริ่มงาน)
-function payrollBaseSalaryForBiz(emp, businessId, year, month) {
+// เงินเดือน "เต็มเดือน" ของธุรกิจหนึ่งในงวดนั้น (ทดลองงาน → เงินทดลอง) — ยังไม่เฉลี่ยวันเริ่มงาน
+// ใช้เป็น salaryRate สำหรับคิดค่าแรง/วัน (÷30) ของงวด
+function salaryRateForBiz(emp, businessId, year, month) {
   // ทดลองงาน: ใช้เงินทดลองเฉพาะกรณีไม่ได้แยกเงินเดือน (ธุรกิจหลัก)
   const probation = isProbationPeriod(emp, year, month) && Number(emp.probationSalary) > 0 && !hasSalarySplit(emp) && businessId === emp.businessId;
-  const eff = probation ? Number(emp.probationSalary) : businessBaseSalary(emp, businessId);
-  return Math.round(eff * prorationFactor(emp, year, month));
+  return probation ? Number(emp.probationSalary) : businessBaseSalary(emp, businessId);
+}
+// เงินเดือนฐานตั้งต้นใน payroll ของธุรกิจหนึ่ง (รวมทดลองงาน+เฉลี่ยวันเริ่มงาน)
+function payrollBaseSalaryForBiz(emp, businessId, year, month) {
+  return Math.round(salaryRateForBiz(emp, businessId, year, month) * prorationFactor(emp, year, month));
 }
 
 export {
@@ -33,5 +37,6 @@ export {
   employeeBusinessIds,
   businessPositionId,
   businessBaseSalary,
+  salaryRateForBiz,
   payrollBaseSalaryForBiz,
 };

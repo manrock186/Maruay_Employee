@@ -45,6 +45,8 @@ export default function App() {
   const [profiles, setProfiles] = useState([]);
   const [notifications, setNotifications] = useState([]);
   const [notiReads, setNotiReads] = useState([]); // [{notificationId, userId}]
+  const [publicHolidaysRaw, setPublicHolidays] = useState([]); // วันหยุดนักขัตฤกษ์ (ทั้งระบบ)
+  const publicHolidays = useMemo(() => [...publicHolidaysRaw].sort((a, b) => String(a.holidayDate).localeCompare(String(b.holidayDate))), [publicHolidaysRaw]);
 
   // ลำดับที่ผู้ใช้ลากจัดเอง (เก็บใน display_order) — จัดครั้งเดียวตรงนี้
   // ตัวแปร employees/zones ที่โค้ดข้างล่างใช้ทั้งหมดจึงเรียงตามที่จัดไว้ ทุกหน้าเหมือนกัน
@@ -134,7 +136,7 @@ export default function App() {
     let cancelled = false;
     setDataLoading(true);
     (async () => {
-      const [b, z, p, e, up, noti, reads, settingsRow, orderRows] = await Promise.all([
+      const [b, z, p, e, up, noti, reads, settingsRow, orderRows, holidayRows] = await Promise.all([
         supabase.from('businesses').select('*').order('created_at'),
         supabase.from('zones').select('*').order('created_at'),
         supabase.from('positions').select('*').order('created_at'),
@@ -146,6 +148,7 @@ export default function App() {
         supabase.from('notification_reads').select('*'),
         supabase.from('app_settings').select('expiry_warn_months, birthday_notify_enabled, birthday_warn_days').eq('id', 1).maybeSingle(),
         supabase.from('display_order').select('*'),
+        supabase.from('public_holidays').select('*'),
       ]);
       if (cancelled) return;
       if (settingsRow?.data?.expiry_warn_months != null) setExpiryWarnMonths(settingsRow.data.expiry_warn_months);
@@ -163,6 +166,7 @@ export default function App() {
       setNotifications(fromDB(noti.data || []));
       setNotiReads(fromDB(reads.data || []));
       setOrderMap(orderRowsToMap(fromDB(orderRows.data || [])));
+      setPublicHolidays(fromDB(holidayRows.data || []));
       // เลือกธุรกิจเริ่มต้น
       const allBiz = b.data || [];
       const allZones = z.data || [];
@@ -247,12 +251,13 @@ export default function App() {
       lastRefetch = Date.now();
       const seq = ++refetchSeq;
       const epoch = writeEpochRef.current;
-      const [b2, z2, p2, e2, o2] = await Promise.all([
+      const [b2, z2, p2, e2, o2, h2] = await Promise.all([
         supabase.from('businesses').select('*').order('created_at'),
         supabase.from('zones').select('*').order('created_at'),
         supabase.from('positions').select('*').order('created_at'),
         supabase.from('employees').select('*').order('created_at'),
         supabase.from('display_order').select('*'),
+        supabase.from('public_holidays').select('*'),
       ]);
       if (cancelled || seq !== refetchSeq) return;
       // ทิ้งผลลัพธ์ถ้ามีการบันทึกในเครื่องระหว่างรอ (ไม่งั้นข้อมูลเก่าจะทับสิ่งที่เพิ่งกดบันทึก)
@@ -269,6 +274,7 @@ export default function App() {
       if (p2.data) { const rows = fromDB(p2.data); if (!canPay) rows.forEach(stripPositionPay); setPositions(rows); }
       if (e2.data) { const rows = fromDB(e2.data); if (!canPay) rows.forEach(stripEmployeePay); setEmployees(rows); }
       if (o2.data) setOrderMap(orderRowsToMap(fromDB(o2.data)));
+      if (h2.data) setPublicHolidays(fromDB(h2.data));
     };
     // display_order เป็นตารางเล็ก (ไม่มีรูป) ดึงใหม่ทั้งตารางถูกกว่าไล่ diff ทีละแถว
     let orderTimer = null;
@@ -291,6 +297,7 @@ export default function App() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'user_profiles' }, handle(setProfiles))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications' }, handle(setNotifications))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'display_order' }, () => { reloadOrder(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'public_holidays' }, handle(setPublicHolidays))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'notification_reads' }, (payload) => {
         const { eventType, new: nv, old: ov } = payload;
         if (eventType === 'INSERT') setNotiReads((prev) => prev.some((r) => r.notificationId === nv.notification_id && r.userId === nv.user_id) ? prev : [...prev, fromDB(nv)]);
@@ -461,7 +468,7 @@ export default function App() {
   // ---- SYNC LOCAL STATE ----
   // อัปเดต state ทันทีหลังบันทึก ไม่รอ realtime (realtime อาจหลุด/ช้า/ถูก RLS กรอง
   // ทำให้ผู้ใช้กด "บันทึก" แล้วหน้าจอไม่เปลี่ยน ทั้งที่ข้อมูลเข้า DB แล้ว)
-  const localSetters = { businesses: setBusinesses, zones: setZones, positions: setPositions, employees: setEmployees, user_profiles: setProfiles, notifications: setNotifications };
+  const localSetters = { businesses: setBusinesses, zones: setZones, positions: setPositions, employees: setEmployees, user_profiles: setProfiles, notifications: setNotifications, public_holidays: setPublicHolidays };
   const localTransform = (table, row) => {
     if (canPayRef.current) return row;
     if (table === 'employees') return stripEmployeePay(row);
@@ -614,6 +621,18 @@ export default function App() {
       },
       update: (id, d) => updateRow('payrolls', id, d),
       delete: (id) => deleteRow('payrolls', id),
+      // ทุกงวดของพนักงานคนหนึ่ง (ทุกธุรกิจ) — ใช้ทำสถิติวันหยุดในหน้าพนักงาน
+      listByEmployee: async (employeeId) => {
+        const { data, error } = await supabase.from('payrolls').select('*')
+          .eq('employee_id', employeeId).order('period_year', { ascending: false }).order('period_month', { ascending: false });
+        if (error) { console.error(error); return []; }
+        return fromDB(data || []);
+      },
+    },
+    // วันหยุดนักขัตฤกษ์ — รายการกลางทั้งระบบ (เจ้าของแก้ที่หน้าตั้งค่า)
+    publicHoliday: {
+      add: (d) => insertRow('public_holidays', d),
+      delete: (id) => deleteRow('public_holidays', id),
     },
     payrollItem: {
       listByPayrolls: async (ids) => {
@@ -845,6 +864,7 @@ export default function App() {
             activeBusinessId={activeBusinessId}
             activeZoneId={activeZoneId}
             setActiveZoneId={setActiveZoneId}
+            publicHolidays={publicHolidays}
             ops={ops}
           />
         )}
@@ -866,6 +886,7 @@ export default function App() {
             activeBusinessId={activeBusinessId}
             canReorder={profile.canWrite}
             deptOrder={orderMap.department}
+            publicHolidays={publicHolidays}
             ops={ops}
           />
         )}
@@ -920,6 +941,7 @@ export default function App() {
             expiryWarnMonths={expiryWarnMonths}
             birthdayNotify={birthdayNotify}
             birthdayWarnDays={birthdayWarnDays}
+            publicHolidays={publicHolidays}
             ops={ops}
             onSaved={(m) => setExpiryWarnMonths(m)}
             onSavedBirthday={(en, d) => { setBirthdayNotify(en); setBirthdayWarnDays(d); }}

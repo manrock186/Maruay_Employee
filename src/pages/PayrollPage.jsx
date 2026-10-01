@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Users, Plus, Edit2, X, Layers, Calendar, Save, CheckCircle2, Clock, FileText, Wallet, Calculator, TrendingUp, TrendingDown, Sparkles, GripVertical } from 'lucide-react';
-import { businessPositionId, businessBaseSalary, payrollBaseSalaryForBiz } from '../lib/business.js';
+import { businessPositionId, businessBaseSalary, payrollBaseSalaryForBiz, salaryRateForBiz } from '../lib/business.js';
 import { dispName, isActive } from '../lib/format.js';
+import { monthlyHolidayQuota, holidayQuotaHint, isCalendarScheme } from '../lib/holidays.js';
 import { useIsMobile, useDragReorder, dragClass, rowDragClass, cellDropClass } from '../lib/hooks.js';
 import { NO_DEPT, employeeDepartment } from '../lib/order.js';
 import { MONTH_NAMES, payMonthLabel, fmtMoney, fmt, calcSocialSecurity, computePayroll, buildPayrollDraft } from '../lib/payroll.js';
@@ -10,7 +11,23 @@ import { printPayslip, printPayslips, printPayrollRegister } from '../lib/print.
 import { isProbationPeriod, probationCycle, effectiveBaseSalary, daysInMonth, prorationFactor, payrollBaseSalary } from '../lib/probation.js';
 import { FormField, EmptyState, PageHeader, Avatar, EditorRow } from '../ui/index.jsx';
 
-function PayrollPage({ businesses, positions, employees, activeBusinessId, canReorder, deptOrder, ops }) {
+// ข้อความสรุปหยุดเกิน/ขาดของงวด (ใช้ทั้งโหมดกรอกเร็วและรายคน)
+//   excess > 0 → "เกิน 1.5 วัน → หัก 550.00"  ·  excess < 0 → "ขาด 1 วัน → เพิ่ม 366.67"  ·  0 → "ตรงโควต้า"
+function holidayBalanceText(h, short = false) {
+  const days = (n) => (Number.isInteger(n) ? String(n) : String(Math.round(n * 100) / 100));
+  const whole = (n) => Math.round(n).toLocaleString('th-TH'); // แบบย่อตัดทศนิยม ให้พอดีคอลัมน์แคบ
+  if (h.excess > 0) return short ? `เกิน ${days(h.excess)} −${whole(h.deduction)}` : `เกิน ${days(h.excess)} วัน → หัก ${fmtMoney(h.deduction)} ฿`;
+  if (h.excess < 0) return short ? `ขาด ${days(-h.excess)} +${whole(h.credit)}` : `ขาด ${days(-h.excess)} วัน → เพิ่ม ${fmtMoney(h.credit)} ฿`;
+  return short ? 'ครบ' : 'ตรงโควต้า — ไม่มีผลกับเงิน';
+}
+const holidayTone = (h) => (h.excess > 0 ? 'text-red-600' : h.excess < 0 ? 'text-emerald-700' : 'text-stone-400');
+// จำนวนวันสำหรับแสดงผล: 1 → "1", 1.5 → "1.5" (ตัดเศษทศนิยมลอยๆ เช่น 0.0999…)
+const fmtDaysUI = (n) => String(Math.round((Number(n) || 0) * 100) / 100);
+// ค่าที่จะบันทึกลงช่อง "หยุดจริง": ช่องว่าง = ยังไม่ได้กรอก → ใช้โควต้า (ถือว่าหยุดครบ ไม่มีผลกับเงิน)
+// ถ้าปล่อยให้ว่าง = 0 จะกลายเป็น "หยุดน้อยกว่าสิทธิ" แล้วได้เงินเพิ่มเท่าโควต้าโดยไม่ตั้งใจ
+const takenOrQuota = (taken, quota) => ((taken === '' || taken == null) ? Math.max(0, Number(quota) || 0) : Math.max(0, Number(taken) || 0));
+
+function PayrollPage({ businesses, positions, employees, activeBusinessId, canReorder, deptOrder, publicHolidays = [], ops }) {
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth() + 1); // 1-12
@@ -265,7 +282,7 @@ function PayrollPage({ businesses, positions, employees, activeBusinessId, canRe
           <PayrollQuickEntry
             bizEmployees={bizEmployees} positions={positions} deptOrder={deptOrder} canReorder={canReorder}
             payrollByEmp={payrollByEmp} itemsByPayroll={itemsByPayroll} commissionMap={commissionMap} roomRentMap={roomRentMap} recurringTaskMap={recurringTaskMap} advanceMap={advanceMap}
-            year={year} month={month} businessId={activeBusinessId} ops={ops}
+            year={year} month={month} businessId={activeBusinessId} publicHolidays={publicHolidays} ops={ops}
             onDirtyChange={(d) => { dirtyRef.current = d; }}
             findConflicts={findConflicts}
             onSaved={() => { dirtyRef.current = false; setReload((r) => r + 1); }}
@@ -335,6 +352,7 @@ function PayrollPage({ businesses, positions, employees, activeBusinessId, canRe
           roomFeePrefill={roomRentMap[editingEmp.id]}
           bonusPrefill={recurringTaskMap[editingEmp.id] || []}
           advancePrefill={advanceMap[editingEmp.id] || 0}
+          publicHolidays={publicHolidays}
           ops={ops}
           onClose={() => setEditingEmp(null)}
           findConflicts={findConflicts}
@@ -476,23 +494,31 @@ function EditorItemList({ title, list, setList, color, addLabel, disabled, price
 }
 
 // ============ PAYROLL EDITOR MODAL ============
-function PayrollEditor({ employee, existing, existingItems, year, month, businessId, businessName, commissionPrefill, roomFeePrefill, bonusPrefill, advancePrefill, findConflicts, ops, onClose, onSaved }) {
+function PayrollEditor({ employee, existing, existingItems, year, month, businessId, businessName, commissionPrefill, roomFeePrefill, bonusPrefill, advancePrefill, publicHolidays = [], findConflicts, ops, onClose, onSaved }) {
   const isFinalized = existing?.status === 'finalized';
   const [unlocked, setUnlocked] = useState(false);
   const locked = isFinalized && !unlocked;
+  // โควต้าของงวดนี้ตามโปรไฟล์ (คงที่ หรือ นับจากปฏิทิน ส-อา + นักขัตฤกษ์)
+  const defaultQuota = monthlyHolidayQuota(employee, year, month, publicHolidays);
   // ค่าตั้งต้น: ถ้ามี payroll แล้วใช้ค่าเดิม ถ้าไม่มีดึงจากข้อมูลพนักงาน
   const [f, setF] = useState(() => ({
     baseSalary: existing?.baseSalary ?? payrollBaseSalaryForBiz(employee, businessId, year, month),
-    holidayQuota: existing?.holidayQuota ?? employee.holidayQuota ?? 4,
+    // เงินเดือนเต็มเดือนที่ใช้คิดค่าแรง/วัน (÷30) — แถวเก่าที่ยังไม่มีใช้ฐานแทน
+    salaryRate: (existing ? (Number(existing.salaryRate) || existing.baseSalary) : salaryRateForBiz(employee, businessId, year, month)) ?? 0,
+    holidayQuota: existing?.holidayQuota ?? defaultQuota,
     commission: existing?.commission ?? commissionPrefill ?? 0,
-    holidayWorkDays: existing?.holidayWorkDays ?? 0,
-    holidayDaysTaken: existing?.holidayDaysTaken ?? 0,
+    // ตั้งต้น "หยุดจริง = โควต้า" → ลืมกรอก = ไม่มีผลกับเงิน (ถ้าตั้ง 0 จะกลายเป็นได้เงินเพิ่มเท่าโควต้า)
+    holidayDaysTaken: existing?.holidayDaysTaken ?? defaultQuota,
+    holidayNote: existing?.holidayNote ?? '',
     lateDeduction: existing?.lateDeduction ?? 0,
     socialSecurity: existing?.socialSecurity ?? (employee.hasSocialSecurity ? calcSocialSecurity(payrollBaseSalaryForBiz(employee, businessId, year, month)) : 0),
     roomFee: existing?.roomFee ?? (roomFeePrefill != null ? roomFeePrefill : (employee.roomFee ?? 0)),
     paidViaCompany: existing?.paidViaCompany ?? 0,
     note: existing?.note ?? '',
   }));
+  // ช่อง "หยุดเกิน/ขาด" แก้ได้สองทาง: พิมพ์ที่ช่องนี้ → หยุดจริง = โควต้า + ค่าที่พิมพ์
+  // เก็บข้อความที่กำลังพิมพ์แยกไว้ ไม่งั้นพิมพ์ "-" (ยังไม่เป็นตัวเลข) จะถูกคำนวณกลับเป็น 0 แล้วเครื่องหมายลบหาย
+  const [excessStr, setExcessStr] = useState(null);
   const [bonusTasks, setBonusTasks] = useState(
     existing
       ? existingItems.filter((i) => i.kind === 'bonus_task').map((i) => ({ label: i.label, amount: i.amount }))
@@ -514,7 +540,8 @@ function PayrollEditor({ employee, existing, existingItems, year, month, busines
     ...advances.map((i) => ({ ...i, kind: 'advance' })),
     ...otherDeductions.map((i) => ({ ...i, kind: 'other_deduction' })),
   ];
-  const calc = computePayroll(f, allItems);
+  // ช่อง "หยุดจริง" ว่าง = ใช้โควต้า — ให้ตัวเลขบนจอตรงกับที่จะบันทึก
+  const calc = computePayroll({ ...f, holidayDaysTaken: takenOrQuota(f.holidayDaysTaken, f.holidayQuota) }, allItems);
 
   const save = async (finalize) => {
     setSaving(true);
@@ -529,13 +556,14 @@ function PayrollEditor({ employee, existing, existingItems, year, month, busines
           + 'ยังไม่ได้บันทึกอะไรลงไป — กรุณาปิดหน้าต่างนี้แล้วรีเฟรชหน้า เพื่อไม่ให้เขียนทับงานของคนอื่น');
         return;
       }
+      const salaryRate = Number(f.salaryRate) || Number(f.baseSalary) || 0;
       const payload = {
         employeeId: employee.id, businessId, periodYear: year, periodMonth: month,
-        baseSalary: Number(f.baseSalary) || 0, dailyRate: (Number(f.baseSalary) || 0) / 30,
-        holidayQuota: Number(f.holidayQuota) || 0,
+        baseSalary: Number(f.baseSalary) || 0, salaryRate, dailyRate: salaryRate / 30,
+        holidayQuota: Math.round(Number(f.holidayQuota) || 0),
         commission: Number(f.commission) || 0,
-        holidayWorkDays: Number(f.holidayWorkDays) || 0,
-        holidayDaysTaken: Number(f.holidayDaysTaken) || 0,
+        holidayDaysTaken: takenOrQuota(f.holidayDaysTaken, f.holidayQuota),
+        holidayNote: f.holidayNote?.trim() || null,
         lateDeduction: Number(f.lateDeduction) || 0,
         socialSecurity: Number(f.socialSecurity) || 0,
         roomFee: Number(f.roomFee) || 0,
@@ -604,23 +632,44 @@ function PayrollEditor({ employee, existing, existingItems, year, month, busines
               </div>
             )}
             <div className="flex items-center gap-1.5 text-sm font-semibold text-emerald-800 mb-2"><TrendingUp className="w-4 h-4" />รายรับ</div>
-            <EditorRow label="เงินเดือนฐาน" hint={`ค่าแรง/วัน = ${fmtMoney(calc.daily)} ฿`}>{numInput('baseSalary')}</EditorRow>
+            <EditorRow label="เงินเดือนฐาน" hint={prorationFactor(employee, year, month) < 1 ? 'เฉลี่ยตามวันเริ่มงานแล้ว' : undefined}>{numInput('baseSalary')}</EditorRow>
+            <EditorRow label="เงินเดือนเต็มเดือน (คิดค่าแรง/วัน)" hint={`÷ 30 = ${fmtMoney(calc.daily)} ฿/วัน${isProbationPeriod(employee, year, month) ? ' · ใช้เงินเดือนทดลองงาน' : ''}`}>{numInput('salaryRate')}</EditorRow>
             <EditorRow label="คอมมิชชั่น" hint={!existing && commissionPrefill ? 'จากหน้าคอมมิชชั่นงวดนี้' : undefined}>{numInput('commission')}</EditorRow>
-            <EditorRow label="ทำงานวันหยุด (วัน)" hint={`+${fmtMoney(calc.holidayWorkPay)} ฿`}>{numInput('holidayWorkDays')}</EditorRow>
+            {calc.holidayCredit > 0 && <EditorRow label={`ค่าวันหยุดที่ไม่ได้ใช้ (${fmtDaysUI(-calc.excessDays)} วัน)`} hint="อัตโนมัติ — หยุดน้อยกว่าสิทธิ"><div className="text-right text-sm text-emerald-700 py-1.5">+{fmtMoney(calc.holidayCredit)}</div></EditorRow>}
             <div className="mt-2 pt-2 border-t border-emerald-100"><EditorItemList title="งานเสริม (ล้างห้องน้ำ, ลอกท่อ ฯลฯ)" list={bonusTasks} setList={setBonusTasks} color="text-emerald-700" addLabel="เพิ่มงานเสริม" disabled={locked} priceMap={priceMaps.bonus_task} /></div>
           </div>
 
-          {/* วันหยุด */}
+          {/* วันหยุด — หยุดเกิน = หยุดจริง − โควต้า (+ หัก / − เพิ่ม) · แก้ได้ทั้งที่ช่อง "หยุดจริง" และช่อง "เกิน/ขาด" */}
           <div className="bg-stone-50 rounded-xl p-4">
             <div className="text-sm font-semibold text-stone-700 mb-2">วันหยุด</div>
-            <EditorRow label="โควต้าวันหยุดเดือนนี้">{numInput('holidayQuota')}</EditorRow>
-            <EditorRow label="วันหยุดที่ใช้จริง" hint={calc.excessDays > 0 ? `เกิน ${calc.excessDays} วัน → หัก ${fmtMoney(calc.excessHolidayDeduction)} ฿` : 'ไม่เกินโควต้า'}>{numInput('holidayDaysTaken')}</EditorRow>
+            <EditorRow label="โควต้าวันหยุดเดือนนี้" hint={holidayQuotaHint(employee, year, month, publicHolidays)}>
+              <input type="number" min="0" step="1" disabled={locked} value={f.holidayQuota} onChange={(e) => { setExcessStr(null); set('holidayQuota', e.target.value); }} className="w-full px-2 py-1.5 text-sm border border-stone-300 rounded-lg text-right focus:outline-none focus:ring-2 focus:ring-emerald-500/40 disabled:bg-stone-100" />
+            </EditorRow>
+            <EditorRow label="วันหยุดที่ใช้จริง" hint={!existing ? 'ตั้งต้น = โควต้า (ถือว่าหยุดครบสิทธิ์)' : undefined}>
+              <input type="number" min="0" step="0.5" disabled={locked} value={f.holidayDaysTaken} onChange={(e) => { setExcessStr(null); set('holidayDaysTaken', e.target.value); }} className="w-full px-2 py-1.5 text-sm border border-stone-300 rounded-lg text-right focus:outline-none focus:ring-2 focus:ring-emerald-500/40 disabled:bg-stone-100" />
+            </EditorRow>
+            <EditorRow label="หยุดเกิน / ขาด (วัน)" hint="+ = หยุดเกินสิทธิ ถูกหัก · − = หยุดน้อยกว่าสิทธิ ได้เพิ่ม">
+              <input type="number" step="0.5" disabled={locked}
+                value={excessStr ?? fmtDaysUI(takenOrQuota(f.holidayDaysTaken, f.holidayQuota) - (Number(f.holidayQuota) || 0))}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setExcessStr(v);
+                  if (v !== '' && v !== '-' && Number.isFinite(Number(v))) set('holidayDaysTaken', Math.max(0, (Number(f.holidayQuota) || 0) + Number(v)));
+                }}
+                onBlur={() => setExcessStr(null)}
+                className={`w-full px-2 py-1.5 text-sm border rounded-lg text-right font-medium focus:outline-none focus:ring-2 focus:ring-emerald-500/40 disabled:bg-stone-100 ${calc.excessDays > 0 ? 'border-red-300 text-red-600' : calc.excessDays < 0 ? 'border-emerald-300 text-emerald-700' : 'border-stone-300'}`} />
+            </EditorRow>
+            <div className={`text-sm font-medium py-1 ${holidayTone(calc.holiday)}`}>
+              {holidayBalanceText(calc.holiday)}
+              <span className="block text-[11px] font-normal text-stone-400">ค่าแรง/วัน {fmtMoney(calc.daily)} ฿ = เงินเดือนเต็มเดือน {fmtMoney(f.salaryRate)} ÷ 30</span>
+            </div>
+            <input disabled={locked} value={f.holidayNote} onChange={(e) => set('holidayNote', e.target.value)} placeholder="หมายเหตุวันหยุด เช่น ลาป่วย 2 วัน (ไม่บังคับ — เก็บไว้ดูตอนพิจารณาขึ้นเงินเดือน)" className="w-full mt-1 px-2 py-1.5 text-sm border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40 disabled:bg-stone-100" />
           </div>
 
           {/* รายการหัก */}
           <div className="bg-red-50/40 rounded-xl p-4">
             <div className="flex items-center gap-1.5 text-sm font-semibold text-red-700 mb-2"><TrendingDown className="w-4 h-4" />รายการหัก</div>
-            {calc.excessHolidayDeduction > 0 && <EditorRow label="หักหยุดเกิน (อัตโนมัติ)"><div className="text-right text-sm text-red-600 py-1.5">−{fmtMoney(calc.excessHolidayDeduction)}</div></EditorRow>}
+            {calc.excessHolidayDeduction > 0 && <EditorRow label={`หักหยุดเกินสิทธิ (${fmtDaysUI(calc.excessDays)} วัน)`} hint="อัตโนมัติ"><div className="text-right text-sm text-red-600 py-1.5">−{fmtMoney(calc.excessHolidayDeduction)}</div></EditorRow>}
             <EditorRow label="หักมาสาย">{numInput('lateDeduction')}</EditorRow>
             <EditorRow label="ประกันสังคม" hint={employee.hasSocialSecurity ? '5% ของฐาน สูงสุด 750' : 'พนักงานนี้ไม่มี ปกส.'}>{numInput('socialSecurity')}</EditorRow>
             <EditorRow label="ค่าห้องพัก" hint={!existing && roomFeePrefill != null ? 'จากหน้าค่าห้อง (มิเตอร์) งวดนี้' : undefined}>{numInput('roomFee')}</EditorRow>
@@ -665,7 +714,7 @@ function PayrollEditor({ employee, existing, existingItems, year, month, busines
 }
 
 // ============ PAYROLL QUICK ENTRY (Spreadsheet / Cards) ============
-function PayrollQuickEntry({ bizEmployees, positions, deptOrder, canReorder, onDirtyChange, findConflicts, payrollByEmp, itemsByPayroll, commissionMap, roomRentMap, recurringTaskMap, advanceMap, year, month, businessId, ops, onSaved, onOpenDetail }) {
+function PayrollQuickEntry({ bizEmployees, positions, deptOrder, canReorder, onDirtyChange, findConflicts, payrollByEmp, itemsByPayroll, commissionMap, roomRentMap, recurringTaskMap, advanceMap, year, month, businessId, publicHolidays = [], ops, onSaved, onOpenDetail }) {
   const isMobile = useIsMobile();
   const [drafts, setDrafts] = useState({});
   const [touched, setTouched] = useState(() => new Set());
@@ -710,7 +759,7 @@ function PayrollQuickEntry({ bizEmployees, positions, deptOrder, canReorder, onD
     bizEmployees.forEach((emp) => {
       const p = payrollByEmp[emp.id];
       const its = p ? (itemsByPayroll[p.id] || []) : [];
-      d[emp.id] = buildPayrollDraft(emp, p, its, year, month, businessId);
+      d[emp.id] = buildPayrollDraft(emp, p, its, year, month, businessId, publicHolidays);
       if (!p && commissionMap && commissionMap[emp.id]) d[emp.id].commission = commissionMap[emp.id];
       if (!p && roomRentMap && roomRentMap[emp.id] != null) d[emp.id].roomFee = roomRentMap[emp.id];
       // งานเสริมประจำ → เติมเป็นรายการ bonus_task ให้คนที่ยังไม่ได้ทำเงินเดือนงวดนี้
@@ -725,6 +774,7 @@ function PayrollQuickEntry({ bizEmployees, positions, deptOrder, canReorder, onD
     setDrafts(d);
     setTouched(new Set());
     // ตั้งใจใช้ empSig แทน bizEmployees — ดูคอมเมนต์ด้านบน
+    // publicHolidays ไม่อยู่ใน dep: เปลี่ยนรายการวันหยุดกลางงวดไม่ควรล้างค่าที่พิมพ์ค้าง (มีผลกับงวดถัดไปที่เปิดใหม่)
   }, [empSig, payrollByEmp, itemsByPayroll, commissionMap, roomRentMap, recurringTaskMap, advanceMap]);
 
   // บอกหน้าแม่ว่ามีค่าค้างยังไม่บันทึกไหม → หน้าแม่จะได้ไม่ดึงข้อมูลใหม่มาทับตอนสลับแท็บ
@@ -831,13 +881,14 @@ function PayrollQuickEntry({ bizEmployees, positions, deptOrder, canReorder, onD
         const emp = bizEmployees.find((e) => e.id === empId);
         const draft = drafts[empId];
         if (!emp || !draft || !Number(draft.baseSalary)) continue;
+        const salaryRate = Number(draft.salaryRate) || Number(draft.baseSalary) || 0;
         const payload = {
           employeeId: empId, businessId, periodYear: year, periodMonth: month,
-          baseSalary: Number(draft.baseSalary) || 0, dailyRate: (Number(draft.baseSalary) || 0) / 30,
-          holidayQuota: Number(draft.holidayQuota) || 0,
+          baseSalary: Number(draft.baseSalary) || 0, salaryRate, dailyRate: salaryRate / 30,
+          holidayQuota: Math.round(Number(draft.holidayQuota) || 0),
           commission: Number(draft.commission) || 0,
-          holidayWorkDays: Number(draft.holidayWorkDays) || 0,
-          holidayDaysTaken: Number(draft.holidayDaysTaken) || 0,
+          holidayDaysTaken: takenOrQuota(draft.holidayDaysTaken, draft.holidayQuota),
+          holidayNote: draft.holidayNote?.trim() || null,
           lateDeduction: Number(draft.lateDeduction) || 0,
           socialSecurity: Number(draft.socialSecurity) || 0,
           roomFee: Number(draft.roomFee) || 0,
@@ -860,9 +911,9 @@ function PayrollQuickEntry({ bizEmployees, positions, deptOrder, canReorder, onD
   };
 
   // input cell ในตาราง
-  const Cell = ({ empId, field, col, rowIdx, locked, w = 'w-20' }) => (
+  const Cell = ({ empId, field, col, rowIdx, locked, w = 'w-20', min }) => (
     <input
-      type="number" step="0.01" inputMode="decimal"
+      type="number" step="0.01" inputMode="decimal" min={min}
       data-cell={`${col}-${rowIdx}`}
       disabled={locked}
       value={drafts[empId]?.[field] ?? ''}
@@ -927,7 +978,7 @@ function PayrollQuickEntry({ bizEmployees, positions, deptOrder, canReorder, onD
             const emp = fr.emp;
             const d = drafts[emp.id]; if (!d) return null;
             const locked = d.status === 'finalized';
-            const calc = computePayroll(d, d.items);
+            const calc = computePayroll({ ...d, holidayDaysTaken: takenOrQuota(d.holidayDaysTaken, d.holidayQuota) }, d.items);
             const dirty = touched.has(emp.id);
             const F = ({ label, field, hint }) => (
               <div className="flex items-center justify-between gap-2 py-1">
@@ -952,7 +1003,10 @@ function PayrollQuickEntry({ bizEmployees, positions, deptOrder, canReorder, onD
                   </div>
                   {locked && <span className="text-[10px] text-emerald-700 font-medium">ปิดงวดแล้ว</span>}
                 </div>
-                {F({ label: 'หยุด', field: 'holidayDaysTaken', hint: calc.holidayWorkPay > 0 ? `ลบ=ทำงานวันหยุด • +${fmtMoney(calc.holidayWorkPay)}` : `โควต้า ${d.holidayQuota}${calc.excessDays > 0 ? ` • เกิน ${calc.excessDays}` : ''} (ลบ=ทำงานวันหยุด)` })}
+                <div className="flex items-center justify-between gap-2 py-1">
+                  <span className="text-sm text-stone-600">หยุดจริง (วัน)<span className="block text-[11px] text-stone-400">โควต้า {d.holidayQuota}{isCalendarScheme(emp) ? ' (ตามปฏิทิน)' : ''}</span><span className={`block text-[11px] font-medium ${holidayTone(calc.holiday)}`}>{holidayBalanceText(calc.holiday, true)}</span></span>
+                  <input type="number" min="0" step="0.5" inputMode="decimal" disabled={locked} value={d.holidayDaysTaken ?? ''} onChange={(e) => upd(emp.id, 'holidayDaysTaken', e.target.value)} onFocus={(e) => e.target.select()} className="w-28 px-2 py-1.5 text-sm text-right border border-stone-200 rounded focus:outline-none focus:ring-2 focus:ring-emerald-500/40 disabled:bg-stone-100" />
+                </div>
                 <div className="flex items-center justify-between gap-2 py-1">
                   <span className="text-sm text-stone-600">เบิกล่วงหน้า</span>
                   <input type="number" step="0.01" inputMode="decimal" disabled={locked} value={quickAdvance(emp.id)} onChange={(e) => setQuickAdvance(emp.id, e.target.value)} onFocus={(e) => e.target.select()} className="w-28 px-2 py-1.5 text-sm text-right border border-stone-200 rounded focus:outline-none focus:ring-2 focus:ring-emerald-500/40 disabled:bg-stone-100" />
@@ -986,7 +1040,7 @@ function PayrollQuickEntry({ bizEmployees, positions, deptOrder, canReorder, onD
               <tr>
                 <th className="text-left px-3 py-2.5 sticky left-0 bg-stone-50 z-10 min-w-[160px]">ชื่อ</th>
                 <th className="text-right px-2 py-2.5">ฐาน</th>
-                <th className="text-center px-2 py-2.5" title="ค่าบวก = วันหยุดที่ใช้ (เกินโควต้าถูกหัก) / ค่าลบ = ทำงานวันหยุด เช่น -1 = ทำงานวันหยุด 1 วัน ได้เพิ่ม 1 แรง">หยุด</th>
+                <th className="text-center px-2 py-2.5" title="วันหยุดที่ใช้จริงในงวด — ตั้งต้นเท่าโควต้า · มากกว่าโควต้า = หยุดเกิน ถูกหักรายวัน · น้อยกว่าโควต้า = ทำงานในวันหยุด ได้เพิ่มรายวัน">หยุด</th>
                 <th className="text-center px-2 py-2.5">เบิก</th>
                 <th className="text-right px-2 py-2.5">ค่าห้อง</th>
                 <th className="text-center px-2 py-2.5">รับจากวีเอสจง</th>
@@ -1005,7 +1059,7 @@ function PayrollQuickEntry({ bizEmployees, positions, deptOrder, canReorder, onD
                 const { emp, rowIdx } = fr;
                 const d = drafts[emp.id]; if (!d) return null;
                 const locked = d.status === 'finalized';
-                const calc = computePayroll(d, d.items);
+                const calc = computePayroll({ ...d, holidayDaysTaken: takenOrQuota(d.holidayDaysTaken, d.holidayQuota) }, d.items);
                 const dirty = touched.has(emp.id);
                 const ic = itemCount(emp.id);
                 return (
@@ -1024,7 +1078,14 @@ function PayrollQuickEntry({ bizEmployees, positions, deptOrder, canReorder, onD
                       </div>
                     </td>
                     <td className="px-2 py-2 text-right text-stone-500 whitespace-nowrap">{fmtMoney(d.baseSalary)}</td>
-                    <td className="px-2 py-2 text-center">{Cell({ empId: emp.id, field: 'holidayDaysTaken', col: 'holidayDaysTaken', rowIdx, locked, w: 'w-16' })}</td>
+                    <td className="px-2 py-2 text-center">
+                      {Cell({ empId: emp.id, field: 'holidayDaysTaken', col: 'holidayDaysTaken', rowIdx, locked, w: 'w-16', min: 0 })}
+                      {/* บรรทัดสอง: โควต้า + ผลหยุดเกิน/ขาด — แถวสูง 66px อยู่แล้ว (คอลัมน์รายการ) ไม่ทำให้ตารางกว้างขึ้น */}
+                      <div className="text-[10px] leading-tight mt-0.5 whitespace-nowrap" title={holidayBalanceText(calc.holiday)}>
+                        <div className="text-stone-400">โควต้า {d.holidayQuota}</div>
+                        <div className={`font-medium ${holidayTone(calc.holiday)}`}>{holidayBalanceText(calc.holiday, true)}</div>
+                      </div>
+                    </td>
                     <td className="px-2 py-2 text-center"><input type="number" step="0.01" inputMode="decimal" data-cell={`advance-${rowIdx}`} disabled={locked} value={quickAdvance(emp.id)} onChange={(e) => setQuickAdvance(emp.id, e.target.value)} onKeyDown={(e) => onKeyNav(e, 'advance', rowIdx)} onFocus={(e) => e.target.select()} className="w-20 px-2 py-1.5 text-sm text-right border border-stone-200 rounded focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500 disabled:bg-stone-100 disabled:text-stone-400" /></td>
                     <td className="px-2 py-2 text-right text-stone-500 whitespace-nowrap" title="แก้ที่หน้าค่าห้อง">{Number(d.roomFee) ? fmtMoney(d.roomFee) : <span className="text-stone-300">—</span>}</td>
                     <td className="px-2 py-2 text-center">{Cell({ empId: emp.id, field: 'paidViaCompany', col: 'paidViaCompany', rowIdx, locked })}</td>

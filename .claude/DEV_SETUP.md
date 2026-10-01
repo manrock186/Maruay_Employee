@@ -26,9 +26,10 @@ npm run build    # ยืนยันแล้วว่า build ผ่าน �
 ```
 มี `.env.local` + `.env.example` แล้ว, เพิ่ม `.gitignore` แล้ว (repo เดิมไม่มี)
 
-## Database schema (public, 20 tables, เปิด RLS ทุกตาราง)
+## Database schema (public, 22 tables, เปิด RLS ทุกตาราง)
 - **Core:** businesses, zones, positions, employees, user_profiles
-- **Payroll:** payrolls, payroll_items, salary_changes, commission_pools, room_rent_pools, advance_pools, recurring_task_pools
+- **Payroll:** payrolls, payroll_items, salary_changes, commission_pools, room_rent_pools, advance_pools, recurring_task_pools, public_holidays
+- **Order:** display_order (ลำดับพนักงาน/โซน/แผนก)
 - **Ops:** contractors, contractor_visits, expense_requests, app_settings
 - **System:** notifications, notification_reads, push_subscriptions, audit_log
 
@@ -45,6 +46,15 @@ Multi-tenant: scope ด้วย `business_id` + `zone_id`. RLS ใช้ SECURI
 - SECURITY DEFINER helper fns เรียกได้จาก anon/authenticated (น่าจะตั้งใจสำหรับ RLS — ทบทวน)
 - extension `pg_net` อยู่ใน schema public
 - Auth: leaked-password protection ปิดอยู่ (HaveIBeenPwned) → เปิดได้ใน Auth settings
+
+## สูตรเงินเดือน — วันหยุด (ตั้งแต่ ต.ค. 2569)
+- `หยุดเกิน = หยุดจริง − โควต้า` · + = หัก / − = ได้เพิ่ม · `ค่าแรง/วัน = payrolls.salary_rate ÷ 30` (คงที่ 30 ตาม Excel เดิม)
+- `salary_rate` = เงินเดือน **เต็มเดือน** ของงวด (ทดลองงาน → เงินทดลอง) — **ไม่ใช่** `base_salary` ที่ถูกเฉลี่ยตามวันเริ่มงาน
+- ช่อง "หยุดจริง" ตั้งต้น = โควต้า และช่องว่างตอนบันทึก = โควต้า (`takenOrQuota`) — ห้ามให้ว่าง = 0 เพราะจะกลายเป็นได้เงินเพิ่มเท่าโควต้า
+- รูปแบบวันหยุด (`employees.holiday_scheme`): `fixed` ใช้ `holiday_quota` · `calendar` นับ `holiday_weekdays` (0=อา…6=ส) + `public_holidays` (ไม่นับซ้ำวันที่ตรงกับวันหยุดประจำสัปดาห์) ดู `lib/holidays.js`
+- `holiday_quota` เป็น **integer** ทั้ง payrolls/employees → ช่องโควต้า step 1 + `Math.round` ตอนบันทึก (หยุดจริงเป็น numeric ใส่ครึ่งวันได้)
+- สถิติวันหยุดในหน้าพนักงาน **ไม่เก็บซ้ำ** — คำนวณจากแถว payrolls ของคนนั้น (`ops.payroll.listByEmployee` + `holidayStats`)
+- คนที่รับเงินเดือน 2 ธุรกิจ: โควต้า/หยุดจริงอยู่ในแถวของ **ทุก** ธุรกิจ → กรอกวันหยุดที่ธุรกิจหลักที่เดียว อีกธุรกิจปล่อยตั้งต้น (= โควต้า ไม่มีผล)
 
 ## TODO / ไอเดียพัฒนาต่อ
 - `src/App.jsx` เป็นไฟล์ยักษ์ไฟล์เดียว → candidate สำหรับ refactor (code-split, แยก component)
@@ -63,7 +73,8 @@ src/
   App.jsx      ~915 บรรทัด — state + ops + realtime + routing เท่านั้น ไม่มี page component แล้ว
   supabase.js  client + fromDB/toDB
   lib/         logic ล้วน ไม่มี JSX · ไม่มี circular
-    format · probation · business · pools · payroll · print · storage · push · order · hooks
+    format · probation · business · holidays · pools · payroll · print · storage · push · order · hooks
+    (payroll → holidays → probation · business → probation)
   ui/index.jsx    Modal, FormField, FormActions, EmptyState, PageHeader, LoadingScreen,
                   PageLoading, Avatar, PillRadio, InfoItem, DetailBlock, EditorRow
   components/     ErrorBoundary, PushToggle, AuthScreen, PendingScreen, NotificationBell,

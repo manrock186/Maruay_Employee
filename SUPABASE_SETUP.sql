@@ -303,3 +303,38 @@ create policy "owner delete employee-docs" on storage.objects for delete to auth
   using (bucket_id = 'employee-docs' and public."current_role"() = 'owner');
 create policy "staff upload employee-docs" on storage.objects for insert to authenticated
   with check (bucket_id = 'employee-docs' and public."current_role"() in ('owner','business_manager','zone_manager'));
+
+-- ============================================================
+-- หยุดเกิน/ขาด + วันหยุดตามปฏิทิน + วันหยุดนักขัตฤกษ์ (migration holiday_balance_and_public_holidays)
+-- ------------------------------------------------------------
+-- สูตร: หยุดเกิน = หยุดจริง − โควต้า · + = หัก / − = ได้เพิ่ม · ค่าแรง/วัน = salary_rate ÷ 30
+-- salary_rate = เงินเดือน "เต็มเดือน" ของงวด (ทดลองงาน → เงินทดลอง) แยกจาก base_salary ที่อาจถูกเฉลี่ยตามวันเริ่มงาน
+-- ============================================================
+alter table public.payrolls add column if not exists salary_rate numeric not null default 0;
+alter table public.payrolls add column if not exists holiday_note text;
+update public.payrolls set salary_rate = base_salary where salary_rate = 0;
+
+-- รูปแบบวันหยุด: fixed = โควต้าคงที่ (holiday_quota) · calendar = วันในสัปดาห์ (0=อาทิตย์ … 6=เสาร์) + นักขัตฤกษ์
+alter table public.employees add column if not exists holiday_scheme text not null default 'fixed'
+  check (holiday_scheme in ('fixed', 'calendar'));
+alter table public.employees add column if not exists holiday_weekdays integer[] not null default '{0,6}';
+alter table public.employees add column if not exists holiday_include_public boolean not null default true;
+
+-- วันหยุดนักขัตฤกษ์ — รายการกลางทั้งระบบ (เจ้าของแก้ที่หน้าตั้งค่า) · วันชดเชยต้องเพิ่มเองตามประกาศ
+create table if not exists public.public_holidays (
+  id            uuid        primary key default gen_random_uuid(),
+  holiday_date  date        not null unique,
+  name          text        not null,
+  created_at    timestamptz not null default now()
+);
+alter table public.public_holidays enable row level security;
+drop policy if exists public_holidays_read on public.public_holidays;
+create policy public_holidays_read on public.public_holidays
+  for select to authenticated using (true);
+drop policy if exists public_holidays_write on public.public_holidays;
+create policy public_holidays_write on public.public_holidays
+  for all to authenticated
+  using (public.current_role() in ('owner', 'business_manager'))
+  with check (public.current_role() in ('owner', 'business_manager'));
+alter publication supabase_realtime add table public.public_holidays;
+-- (seed วันหยุดราชการไทย พ.ศ. 2569 จำนวน 22 วันทำไปแล้วใน migration — ปีถัดไปเพิ่มที่หน้าตั้งค่า)

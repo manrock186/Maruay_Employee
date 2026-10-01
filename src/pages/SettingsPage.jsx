@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react';
-import { Calendar, Save, CheckCircle2, BellRing } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Calendar, Save, CheckCircle2, BellRing, CalendarOff, Plus, Trash2 } from 'lucide-react';
+import { WEEKDAY_LABELS, parseISODate } from '../lib/holidays.js';
 import { FormField, PageHeader } from '../ui/index.jsx';
 
 // ============ SETTINGS PAGE ============
-function SettingsPage({ expiryWarnMonths, birthdayNotify, birthdayWarnDays, ops, onSaved, onSavedBirthday }) {
+function SettingsPage({ expiryWarnMonths, birthdayNotify, birthdayWarnDays, publicHolidays = [], ops, onSaved, onSavedBirthday }) {
   const [months, setMonths] = useState(expiryWarnMonths ?? 2);
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState(0);
@@ -107,7 +108,88 @@ function SettingsPage({ expiryWarnMonths, birthdayNotify, birthdayWarnDays, ops,
         </div>
 
         <p className="text-xs text-stone-400">หมายเหตุ: การแจ้งเตือนจะอัปเดตเมื่อเจ้าของระบบเปิดแอป (ระบบ generate ฝั่งเจ้าของ) — ค่าที่ตั้งมีผลกับทั้งระบบทันทีหลังบันทึก</p>
+
+        <PublicHolidaySettings publicHolidays={publicHolidays} ops={ops} />
       </div>
+    </div>
+  );
+}
+
+// ============ วันหยุดนักขัตฤกษ์ (รายการกลางทั้งระบบ) ============
+// ใช้คิดโควต้าวันหยุดของพนักงานที่ตั้ง "รูปแบบวันหยุด = ตามปฏิทิน" (เช่น หยุด ส-อา + นักขัตฤกษ์)
+// วันที่ตรงกับวันหยุดประจำสัปดาห์ของคนนั้นอยู่แล้วจะไม่ถูกนับซ้ำ — วันชดเชยต้องเพิ่มเป็นรายการเองตามประกาศ
+function PublicHolidaySettings({ publicHolidays, ops }) {
+  const thisYear = new Date().getFullYear();
+  const years = useMemo(() => {
+    const set = new Set([thisYear, thisYear + 1]);
+    (publicHolidays || []).forEach((h) => { const d = parseISODate(h.holidayDate); if (d) set.add(d.getFullYear()); });
+    return [...set].sort((a, b) => b - a);
+  }, [publicHolidays, thisYear]);
+  const [year, setYear] = useState(thisYear);
+  const [date, setDate] = useState('');
+  const [name, setName] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const rows = useMemo(() => (publicHolidays || [])
+    .filter((h) => parseISODate(h.holidayDate)?.getFullYear() === year)
+    .sort((a, b) => String(a.holidayDate).localeCompare(String(b.holidayDate))), [publicHolidays, year]);
+  const fmtTh = (iso) => {
+    const d = parseISODate(iso);
+    return d ? `${WEEKDAY_LABELS[d.getDay()]} ${d.toLocaleDateString('th-TH', { day: 'numeric', month: 'short' })}` : iso;
+  };
+  const isWeekend = (iso) => { const d = parseISODate(iso); return d && (d.getDay() === 0 || d.getDay() === 6); };
+
+  const add = async () => {
+    if (!date) return alert('กรุณาเลือกวันที่');
+    if (!name.trim()) return alert('กรุณาใส่ชื่อวันหยุด');
+    if ((publicHolidays || []).some((h) => h.holidayDate === date)) return alert('วันที่นี้มีในรายการแล้ว');
+    setBusy(true);
+    try {
+      const r = await ops.publicHoliday.add({ holidayDate: date, name: name.trim() });
+      if (r) { setName(''); const d = parseISODate(date); if (d) setYear(d.getFullYear()); }
+    } finally { setBusy(false); }
+  };
+  const remove = async (h) => {
+    if (!confirm(`ลบ "${h.name}" (${fmtTh(h.holidayDate)}) ออกจากรายการวันหยุด?`)) return;
+    setBusy(true);
+    try { await ops.publicHoliday.delete(h.id); } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="bg-white rounded-xl border border-stone-200 p-6">
+      <div className="flex items-center justify-between gap-3 mb-1 flex-wrap">
+        <div className="flex items-center gap-2.5">
+          <div className="w-9 h-9 rounded-lg bg-sky-100 flex items-center justify-center"><CalendarOff className="w-5 h-5 text-sky-700" /></div>
+          <h3 className="font-semibold text-stone-800">วันหยุดนักขัตฤกษ์</h3>
+        </div>
+        <select value={year} onChange={(e) => setYear(Number(e.target.value))} className="px-3 py-1.5 border border-stone-300 rounded-lg bg-white text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/40">
+          {years.map((y) => <option key={y} value={y}>พ.ศ. {y + 543}</option>)}
+        </select>
+      </div>
+      <p className="text-sm text-stone-500 mb-4">ใช้คิดโควต้าวันหยุดของพนักงานที่ตั้ง "รูปแบบวันหยุด = ตามปฏิทิน" (เช่น หยุด ส-อา + นักขัตฤกษ์) — ลบวันที่บริษัทไม่หยุดออกได้ และเพิ่มวันหยุดชดเชย/วันหยุดบริษัทเองได้</p>
+
+      {rows.length === 0 ? (
+        <div className="text-sm text-stone-400 italic mb-4">ยังไม่มีรายการของปีนี้</div>
+      ) : (
+        <div className="rounded-lg border border-stone-200 divide-y divide-stone-100 mb-4">
+          {rows.map((h) => (
+            <div key={h.id} className="flex items-center gap-3 px-3 py-2 text-sm">
+              <span className={`w-24 flex-shrink-0 font-mono text-xs ${isWeekend(h.holidayDate) ? 'text-stone-400' : 'text-stone-600'}`}>{fmtTh(h.holidayDate)}</span>
+              <span className="flex-1 text-stone-800 min-w-0 truncate">{h.name}{isWeekend(h.holidayDate) && <span className="ml-2 text-[10px] text-stone-400">(ตรงเสาร์-อาทิตย์)</span>}</span>
+              <button onClick={() => remove(h)} disabled={busy} title="ลบ" className="p-1.5 text-red-500 hover:bg-red-50 rounded disabled:opacity-50"><Trash2 className="w-4 h-4" /></button>
+            </div>
+          ))}
+          <div className="px-3 py-1.5 text-[11px] text-stone-400">รวม {rows.length} วัน</div>
+        </div>
+      )}
+
+      <FormField label="เพิ่มวันหยุด">
+        <div className="flex flex-wrap gap-2">
+          <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="px-3 py-2 border border-stone-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/40" />
+          <input value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') add(); }} placeholder="ชื่อวันหยุด เช่น ชดเชยวันสงกรานต์" className="flex-1 min-w-[180px] px-3 py-2 border border-stone-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/40" />
+          <button onClick={add} disabled={busy} className="flex items-center gap-1.5 px-4 py-2 bg-emerald-900 hover:bg-emerald-800 disabled:bg-stone-300 text-white rounded-lg text-sm font-medium"><Plus className="w-4 h-4" />เพิ่ม</button>
+        </div>
+      </FormField>
     </div>
   );
 }
