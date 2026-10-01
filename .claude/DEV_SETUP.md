@@ -56,6 +56,16 @@ Multi-tenant: scope ด้วย `business_id` + `zone_id`. RLS ใช้ SECURI
 - สถิติวันหยุดในหน้าพนักงาน **ไม่เก็บซ้ำ** — คำนวณจากแถว payrolls ของคนนั้น (`ops.payroll.listByEmployee` + `holidayStats`)
 - คนที่รับเงินเดือน 2 ธุรกิจ: โควต้า/หยุดจริงอยู่ในแถวของ **ทุก** ธุรกิจ → กรอกวันหยุดที่ธุรกิจหลักที่เดียว อีกธุรกิจปล่อยตั้งต้น (= โควต้า ไม่มีผล)
 
+## คอมมิชชั่น ก้อนที่ 1 (POS) — สูตร (ตั้งแต่ ต.ค. 2569) · `lib/commission.js`
+- กองกลาง = กำไร Loyverse (หักต้นทุนแล้ว) − รายการหัก (น้ำไฟรวม, น้ำไฟที่ขาดทุน, ช้อนส้อม …) · กองกลางติดลบ → คอมจาก % = 0 และบันทึกไม่ได้
+- คอม 1 = กองกลาง × % (`employees.commission_pct` เป็นค่าตั้งต้น) · entry.amount = ยอดที่ **กำหนดเอง** เท่านั้น (null = คิดจาก % ทุกครั้ง) · base1 = ยอดที่ใช้จริง
+- รวม = คอม 1 + คอม 2 (ก้อน 2 ร้านค้า ยังใส่มือ) → **หลังหัก = รวม × (30 − หยุดเกินสิทธิ) ÷ 30** (30 คงที่ ไม่ตามวันจริง — user ตัดสินใจ)
+- หยุดเกินสิทธิ = `holidayBalance(payroll).excess` ของงวดนั้น ถ้าทำเงินเดือนแล้ว (อ่านอย่างเดียว) · ยังไม่ทำ → กรอกใน entry
+- ส่วนที่หายจากคนหยุด → แบ่งเท่ากันให้คนใน **แผนกเดียวกัน** (employeeDepartment) ที่ไม่ได้หยุดและมีคอม · ไม่มีคนรับ = คงไว้กับบริษัท (unassigned)
+- บันทึกคอม → `ops.commission.syncToPayroll` อัปเดต `payrolls.commission` ของแถวงวดนั้นที่ **ยังไม่ปิดงวด** ให้ตรง final (ไม่งั้นคอมเข้าเฉพาะคนที่ยังไม่ทำเงินเดือน)
+  ก่อนบันทึกดึงเงินเดือนล่าสุดเทียบก่อน ถ้าเปลี่ยนให้กดบันทึกใหม่ · หน้าเงินเดือนใช้ `commissionEntryTotal(entry)` (final ถ้ามี ไม่งั้น amount+amount2 สำหรับ pool เก่า)
+- ผู้บริหาร 2 คน (#038, #039) เป็นพนักงานในระบบ ตำแหน่ง "ผู้บริหาร" แผนกบริหาร ไม่จำกัดโซน — คอม 10% คนละ
+
 ## TODO / ไอเดียพัฒนาต่อ
 - `src/App.jsx` เป็นไฟล์ยักษ์ไฟล์เดียว → candidate สำหรับ refactor (code-split, แยก component)
 - (เพิ่มรายการที่นี่เมื่อคิดออก)
@@ -73,8 +83,8 @@ src/
   App.jsx      ~915 บรรทัด — state + ops + realtime + routing เท่านั้น ไม่มี page component แล้ว
   supabase.js  client + fromDB/toDB
   lib/         logic ล้วน ไม่มี JSX · ไม่มี circular
-    format · probation · business · holidays · pools · payroll · print · storage · push · order · hooks
-    (payroll → holidays → probation · business → probation)
+    format · probation · business · holidays · pools · payroll · print · storage · push · order · hooks · commission
+    (payroll → holidays → probation · business → probation · commission ไม่ import ใคร)
   ui/index.jsx    Modal, FormField, FormActions, EmptyState, PageHeader, LoadingScreen,
                   PageLoading, Avatar, PillRadio, InfoItem, DetailBlock, EditorRow
   components/     ErrorBoundary, PushToggle, AuthScreen, PendingScreen, NotificationBell,

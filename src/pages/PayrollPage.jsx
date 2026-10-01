@@ -7,6 +7,7 @@ import { useIsMobile, useDragReorder, dragClass, rowDragClass, cellDropClass } f
 import { NO_DEPT, employeeDepartment } from '../lib/order.js';
 import { MONTH_NAMES, payMonthLabel, fmtMoney, fmt, calcSocialSecurity, computePayroll, buildPayrollDraft } from '../lib/payroll.js';
 import { roomRentMapFromPool, recurringTaskMapFromPool, missingRecurringTasks, advanceMapFromPool } from '../lib/pools.js';
+import { commissionEntryTotal } from '../lib/commission.js';
 import { printPayslip, printPayslips, printPayrollRegister } from '../lib/print.js';
 import { isProbationPeriod, probationCycle, effectiveBaseSalary, daysInMonth, prorationFactor, payrollBaseSalary } from '../lib/probation.js';
 import { FormField, EmptyState, PageHeader, Avatar, EditorRow } from '../ui/index.jsx';
@@ -89,7 +90,8 @@ function PayrollPage({ businesses, positions, employees, activeBusinessId, canRe
     const m = {}; items.forEach((i) => { (m[i.payrollId] ||= []).push(i); }); return m;
   }, [items]);
   const commissionMap = useMemo(() => {
-    const m = {}; (commissionPool?.entries || []).forEach((e) => { m[e.employeeId] = (Number(e.amount) || 0) + (Number(e.amount2) || 0); }); return m;
+    // entry ใหม่มี final (หลังหักวันหยุด+แบ่งในแผนก) · entry เก่าใช้ คอม1+คอม2
+    const m = {}; (commissionPool?.entries || []).forEach((e) => { m[e.employeeId] = commissionEntryTotal(e); }); return m;
   }, [commissionPool]);
   const roomRentMap = useMemo(() => roomRentMapFromPool(roomRentPool), [roomRentPool]);
   const recurringTaskMap = useMemo(() => recurringTaskMapFromPool(recurringTaskPool), [recurringTaskPool]);

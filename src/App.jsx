@@ -675,6 +675,20 @@ export default function App() {
         if (error) { alert('บันทึกคอมไม่สำเร็จ: ' + error.message); return null; }
         return fromDB(data);
       },
+      // อัปเดตช่องคอมในแถวเงินเดือนที่มีอยู่แล้วของงวด (เฉพาะที่ยังไม่ปิดงวด) — คอมจะได้ไม่เข้าเฉพาะคนที่ยังไม่ทำเงินเดือน
+      // คืน { updated, failed: [employeeId] } — แถวที่อัปเดตไม่ได้ (error หรือ RLS บล็อก = 0 แถว) ต้องบอกผู้ใช้ ไม่กลืนเงียบ
+      syncToPayroll: async (businessId, year, month, list) => {
+        let updated = 0; const failed = [];
+        for (const x of list || []) {
+          const { data, error } = await supabase.from('payrolls')
+            .update({ commission: x.commission, updated_at: new Date().toISOString() })
+            .eq('business_id', businessId).eq('period_year', year).eq('period_month', month).eq('employee_id', x.employeeId)
+            .neq('status', 'finalized').select('id');
+          if (error || !data || !data.length) { if (error) console.error(error); failed.push(x.employeeId); continue; }
+          updated += 1;
+        }
+        return { updated, failed };
+      },
     },
     roomRent: {
       // ค่าห้องเป็นส่วนกลางของทุกธุรกิจ → คีย์ด้วยงวด (ปี/เดือน) เท่านั้น (business_id = null)

@@ -338,3 +338,13 @@ create policy public_holidays_write on public.public_holidays
   with check (public.current_role() in ('owner', 'business_manager'));
 alter publication supabase_realtime add table public.public_holidays;
 -- (seed วันหยุดราชการไทย พ.ศ. 2569 จำนวน 22 วันทำไปแล้วใน migration — ปีถัดไปเพิ่มที่หน้าตั้งค่า)
+
+-- ============================================================
+-- คอมมิชชั่นก้อนที่ 1 — นำเข้าไฟล์ Loyverse (migration commission_pos_import)
+-- ------------------------------------------------------------
+-- pos_items  = รายการสินค้าจากไฟล์ "ยอดขายตามสินค้า" ของ Loyverse [{name, qty, net, cost, profit}] (เก็บไว้ดูย้อนหลัง)
+-- pos_import = { fileName, importedAt, rows, qty, net, cost, profit }
+-- entries แต่ละคนเพิ่ม: base1 (คอม1 ที่ใช้จริง), amount (เฉพาะที่กำหนดเอง, null = คิดจาก %), excessDays, forfeited, share, final
+-- ============================================================
+alter table public.commission_pools add column if not exists pos_items jsonb not null default '[]'::jsonb;
+alter table public.commission_pools add column if not exists pos_import jsonb;
