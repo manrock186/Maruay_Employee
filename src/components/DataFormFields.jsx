@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import { fmtMoney } from '../lib/payroll.js';
 import { isDynamicTable, isLedgerTable, rowGroups, resolvePlaceholder, MONTH_TH, tableShapeMismatch, tableRows, tableColumnTotals, isBlank } from '../lib/dataForms.js';
@@ -64,7 +64,7 @@ function FieldInput({ field, value, onChange, prevValue, disabled, period, ledge
     return <div>{label}<textarea id={id} rows={3} value={value ?? ''} onChange={(e) => onChange(e.target.value)} disabled={disabled} className={`${inputCls} resize-y`} />{hint}</div>;
   }
   if (field.type === 'number') {
-    return <div>{label}<input id={id} type="number" inputMode="decimal" step="0.01" value={value ?? ''} onChange={(e) => onChange(e.target.value)} disabled={disabled} placeholder={isBlank(prevValue) ? '0' : String(prevValue)} className={`${inputCls} text-right`} />{hint}</div>;
+    return <div>{label}<MoneyInput id={id} value={value} onChange={onChange} disabled={disabled} placeholder={isBlank(prevValue) ? '0' : fmtComma(prevValue)} className={`${inputCls} text-right tabular-nums`} />{hint}</div>;
   }
   if (field.type === 'date') {
     return <div>{label}<input id={id} type="date" value={value ?? ''} onChange={(e) => onChange(e.target.value)} disabled={disabled} className={inputCls} />{hint}</div>;
@@ -72,10 +72,32 @@ function FieldInput({ field, value, onChange, prevValue, disabled, period, ledge
   return <div>{label}<input id={id} type="text" value={value ?? ''} onChange={(e) => onChange(e.target.value)} disabled={disabled} placeholder={isBlank(prevValue) ? '' : String(prevValue)} className={inputCls} />{hint}</div>;
 }
 
+// ช่องตัวเลขแบบมีลูกน้ำ: ตอนไม่ได้แก้โชว์ "83,877.67" · คลิกเข้าไปพิมพ์เป็นเลขล้วน "83877.67" · ค่าที่ส่งออกไม่มีลูกน้ำเสมอ
+// (input type=number ใส่ลูกน้ำไม่ได้ จึงใช้ type=text + inputMode=decimal ให้มือถือขึ้นแป้นตัวเลข) · วางเลขที่มีลูกน้ำ/ช่องว่างมาก็รับได้
+const cleanNum = (v) => String(v ?? '').replace(/[^0-9.-]/g, '');
+const fmtComma = (v) => {
+  if (isBlank(v)) return '';
+  const n = Number(cleanNum(v));
+  if (!Number.isFinite(n)) return String(v);
+  const dec = (cleanNum(v).split('.')[1] || '').length;
+  return n.toLocaleString('en-US', { minimumFractionDigits: Math.min(dec, 2), maximumFractionDigits: 2 });
+};
+function MoneyInput({ value, onChange, className, ...rest }) {
+  const [focused, setFocused] = useState(false);
+  return (
+    <input type="text" inputMode="decimal" autoComplete="off" {...rest}
+      value={focused ? (value ?? '') : fmtComma(value)}
+      onFocus={(e) => { setFocused(true); rest.onFocus?.(e); }}
+      onBlur={(e) => { setFocused(false); rest.onBlur?.(e); }}
+      onChange={(e) => onChange(cleanNum(e.target.value))}
+      className={className} />
+  );
+}
+
 // เซลล์กรอกของตาราง (ใช้ทั้งแบบรายการเป็นแถว และแบบทั้งปี)
 function CellInput({ col, value, onChange, placeholder, title, disabled, compact }) {
   const base = compact ? 'w-full min-w-[6.5rem] px-2 py-1 bg-white border border-stone-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/40 disabled:bg-stone-50' : cellCls;
-  if (col.type === 'number') return <input type="number" inputMode="decimal" step="0.01" value={value ?? ''} onChange={(e) => onChange(e.target.value)} disabled={disabled} placeholder={placeholder || '0'} title={title} className={`${base} text-right`} />;
+  if (col.type === 'number') return <MoneyInput value={value} onChange={onChange} disabled={disabled} placeholder={placeholder && placeholder !== '0' ? fmtComma(placeholder) : '0'} title={title} className={`${base} text-right tabular-nums`} />;
   return <input type="text" value={value ?? ''} onChange={(e) => onChange(e.target.value)} disabled={disabled} placeholder={placeholder || ''} title={title} className={`${base} text-left`} />;
 }
 
@@ -300,4 +322,4 @@ function AnswersView({ fields, answers }) {
   );
 }
 
-export { FieldInput, TableInput, LedgerYearTable, AnswersView, groupTone };
+export { FieldInput, TableInput, LedgerYearTable, AnswersView, groupTone, MoneyInput };
