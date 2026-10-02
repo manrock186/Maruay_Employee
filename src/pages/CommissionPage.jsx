@@ -361,7 +361,7 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, da
                             applyFromForm(srcKey, n.label, n.amount);
                           };
                           return (
-                            <button key={n.key} onClick={apply} title={applied ? 'ใส่เป็นรายการหักแล้ว' : `ใส่ "${n.label}" = ${fmtMoney(n.amount)} เป็นรายการหัก`}
+                            <button key={n.key} onClick={apply} title={`${n.group ? `${n.group} › ` : ''}${n.label} = ${fmtMoney(n.amount)}${applied ? ' (ใส่เป็นรายการหักแล้ว)' : ' — กดเพื่อใส่เป็นรายการหัก'}`}
                               className={`flex items-center gap-1 px-2 py-1 rounded-md text-xs border ${applied ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-stone-50 hover:bg-amber-50 border-stone-200 hover:border-amber-300 text-stone-700'}`}>
                               <span>{n.label}</span><b>{fmtMoney(n.amount)}</b>{applied ? <Check className="w-3 h-3" /> : <ArrowRight className="w-3 h-3" />}
                             </button>

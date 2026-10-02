@@ -68,7 +68,14 @@ function tableColumnTotals(field, value) {
 function numericSummary(fields, answers) {
   const out = [];
   const a = answers && typeof answers === 'object' ? answers : {};
-  normalizeFields(fields).forEach((f) => {
+  const fs = normalizeFields(fields);
+  // ชื่อรายการหักใช้ชื่อคอลัมน์สั้นๆ ("คงเหลือใช้ของศูนย์อาหาร") — ถ้าชื่อคอลัมน์ซ้ำกันข้ามตาราง/ซ้ำกับช่องตัวเลข ค่อยนำหน้าด้วยชื่อตาราง
+  const labelCount = {};
+  fs.forEach((f) => {
+    if (f.type === 'number') labelCount[f.label] = (labelCount[f.label] || 0) + 1;
+    if (f.type === 'table') (f.columns || []).forEach((c) => { if (c.type === 'number') labelCount[c.label] = (labelCount[c.label] || 0) + 1; });
+  });
+  fs.forEach((f) => {
     if (f.type === 'number') {
       if (!isBlank(a[f.key])) out.push({ key: f.key, label: f.label || f.key, amount: r2(a[f.key]), kind: 'field' });
     } else if (f.type === 'table') {
@@ -77,7 +84,9 @@ function numericSummary(fields, answers) {
         if (c.type !== 'number') return;
         // คอลัมน์ที่ไม่มีใครกรอกเลย ไม่ต้องโชว์เป็น 0 ให้รก
         const any = tableRows(f, a[f.key]).some((r) => !isBlank(r.cells[c.key]));
-        if (any) out.push({ key: `${f.key}.${c.key}`, label: `${f.label || f.key} — ${c.label || c.key}`, amount: totals[c.key] || 0, kind: 'column' });
+        if (!any) return;
+        const label = c.label && labelCount[c.label] === 1 ? c.label : `${f.label || f.key} — ${c.label || c.key}`;
+        out.push({ key: `${f.key}.${c.key}`, label, amount: totals[c.key] || 0, kind: 'column', group: f.label || f.key });
       });
     }
   });
