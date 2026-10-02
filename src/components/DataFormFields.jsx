@@ -106,7 +106,8 @@ function TableInput({ field, value, onChange, prevValue, disabled, period }) {
                   {!dynamic && <td className="px-3 py-1.5 text-stone-700 whitespace-nowrap" title={r.hint || ''}>{r.label}{r.sub && <span className="block text-[11px] text-stone-400 font-normal">{r.sub}</span>}</td>}
                   {cols.map((c) => {
                     const pv = dynamic ? undefined : prevCell(r.key, c.key);
-                    const ph = c.type === 'number' ? (isBlank(pv) ? '0' : String(pv)) : (isBlank(pv) ? resolvePlaceholder(c.placeholder, period) : String(pv));
+                    // ช่องข้อความที่ตั้งค่าจางไว้ (เช่น รอบเดือน = {month}) ใช้ค่าจางนั้น ไม่เอาข้อความเดือนก่อนมาโชว์ให้สับสน
+                    const ph = c.type === 'number' ? (isBlank(pv) ? '0' : String(pv)) : (c.placeholder ? resolvePlaceholder(c.placeholder, period) : (isBlank(pv) ? '' : String(pv)));
                     return (
                       <td key={c.key} className="px-1.5 py-1">
                         <CellInput col={c} value={r.cells[c.key]} onChange={(v) => setCell(r.key, c.key, v)} disabled={disabled} placeholder={ph} title={isBlank(pv) ? '' : `เดือนก่อน ${c.type === 'number' ? fmtMoney(pv) : pv}`} />
