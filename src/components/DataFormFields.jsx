@@ -9,6 +9,30 @@ const cellCls = 'w-full min-w-[7rem] px-2 py-1.5 border border-stone-200 rounded
 // ค่าของเดือนก่อนไว้ดูเทียบ — จัดรูปเงินเฉพาะช่องตัวเลข (ข้อความอย่างเลขมิเตอร์/เบอร์โทรไม่ใช่เงิน)
 const prevHint = (v, type) => (isBlank(v) ? '' : `เดือนก่อน ${type === 'number' ? fmtMoney(v) : String(v)}`);
 
+// ---- สีประจำกลุ่ม (ค่าไฟ / ค่าน้ำ / อินเทอร์เน็ต / โทรศัพท์ …) ให้ดูแยกกันชัด ----
+// ใช้สีที่ไม่ผูกกับธีม (emerald/amber ถูก map เป็นสีธีม) · class ต้องเขียนเต็มให้ Tailwind เห็น
+const TONES = {
+  yellow: { head: 'bg-yellow-200 text-yellow-900', sub: 'bg-yellow-50 text-yellow-900', cell: 'bg-yellow-50/60', cellActive: 'bg-yellow-100', foot: 'bg-yellow-100 text-yellow-900', edge: 'border-l-2 border-l-yellow-400', chip: 'text-yellow-800 bg-yellow-100', dot: 'bg-yellow-400' },
+  sky:    { head: 'bg-sky-200 text-sky-900',       sub: 'bg-sky-50 text-sky-900',       cell: 'bg-sky-50/60',    cellActive: 'bg-sky-100',    foot: 'bg-sky-100 text-sky-900',       edge: 'border-l-2 border-l-sky-400',    chip: 'text-sky-800 bg-sky-100',       dot: 'bg-sky-400' },
+  violet: { head: 'bg-violet-200 text-violet-900', sub: 'bg-violet-50 text-violet-900', cell: 'bg-violet-50/60', cellActive: 'bg-violet-100', foot: 'bg-violet-100 text-violet-900', edge: 'border-l-2 border-l-violet-400', chip: 'text-violet-800 bg-violet-100', dot: 'bg-violet-400' },
+  rose:   { head: 'bg-rose-200 text-rose-900',     sub: 'bg-rose-50 text-rose-900',     cell: 'bg-rose-50/60',   cellActive: 'bg-rose-100',   foot: 'bg-rose-100 text-rose-900',     edge: 'border-l-2 border-l-rose-400',   chip: 'text-rose-800 bg-rose-100',     dot: 'bg-rose-400' },
+  lime:   { head: 'bg-lime-200 text-lime-900',     sub: 'bg-lime-50 text-lime-900',     cell: 'bg-lime-50/60',   cellActive: 'bg-lime-100',   foot: 'bg-lime-100 text-lime-900',     edge: 'border-l-2 border-l-lime-400',   chip: 'text-lime-800 bg-lime-100',     dot: 'bg-lime-400' },
+  orange: { head: 'bg-orange-200 text-orange-900', sub: 'bg-orange-50 text-orange-900', cell: 'bg-orange-50/60', cellActive: 'bg-orange-100', foot: 'bg-orange-100 text-orange-900', edge: 'border-l-2 border-l-orange-400', chip: 'text-orange-800 bg-orange-100', dot: 'bg-orange-400' },
+  teal:   { head: 'bg-teal-200 text-teal-900',     sub: 'bg-teal-50 text-teal-900',     cell: 'bg-teal-50/60',   cellActive: 'bg-teal-100',   foot: 'bg-teal-100 text-teal-900',     edge: 'border-l-2 border-l-teal-400',   chip: 'text-teal-800 bg-teal-100',     dot: 'bg-teal-400' },
+};
+const TONE_ORDER = ['yellow', 'sky', 'violet', 'rose', 'lime', 'orange', 'teal'];
+const NEUTRAL_TONE = { head: 'bg-stone-100 text-stone-700', sub: 'bg-stone-50 text-stone-700', cell: '', cellActive: 'bg-amber-50', foot: 'bg-stone-50 text-stone-700', edge: 'border-l border-l-stone-200', chip: 'text-stone-700 bg-stone-100', dot: 'bg-stone-300' };
+// ชื่อกลุ่มที่รู้จักได้สีตายตัว (ไฟ = เหลือง, น้ำ = ฟ้า, เน็ต = ม่วง, โทร = ชมพู) · ชื่ออื่นไล่สีตามลำดับที่พบ
+function groupTone(name, index = 0) {
+  const n = String(name || '');
+  if (!n) return NEUTRAL_TONE;
+  if (/ไฟ|elec/i.test(n)) return TONES.yellow;
+  if (/น้ำ|water/i.test(n)) return TONES.sky;
+  if (/เน็ต|เน็ท|internet|wifi/i.test(n)) return TONES.violet;
+  if (/โทร|phone/i.test(n)) return TONES.rose;
+  return TONES[TONE_ORDER[(index + 4) % TONE_ORDER.length]];
+}
+
 // period = { year, month } ของงวดที่กำลังกรอก · ledgerView: 'year' (ตารางทั้งปีแบบ Excel) | 'month' (รายการเป็นแถว)
 // yearAnswers/yearStatus = ค่าของเดือนอื่นในปีเดียวกัน (สำหรับ ledger) { [month]: tableValue } / { [month]: 'submitted'|'draft' }
 function FieldInput({ field, value, onChange, prevValue, disabled, period, ledgerView = 'month', yearAnswers, yearStatus, onPickMonth, onChangeMonth }) {
@@ -50,7 +74,7 @@ function FieldInput({ field, value, onChange, prevValue, disabled, period, ledge
 
 // เซลล์กรอกของตาราง (ใช้ทั้งแบบรายการเป็นแถว และแบบทั้งปี)
 function CellInput({ col, value, onChange, placeholder, title, disabled, compact }) {
-  const base = compact ? 'w-full min-w-[6.5rem] px-2 py-1 border border-stone-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/40 disabled:bg-stone-50' : cellCls;
+  const base = compact ? 'w-full min-w-[6.5rem] px-2 py-1 bg-white border border-stone-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/40 disabled:bg-stone-50' : cellCls;
   if (col.type === 'number') return <input type="number" inputMode="decimal" step="0.01" value={value ?? ''} onChange={(e) => onChange(e.target.value)} disabled={disabled} placeholder={placeholder || '0'} title={title} className={`${base} text-right`} />;
   return <input type="text" value={value ?? ''} onChange={(e) => onChange(e.target.value)} disabled={disabled} placeholder={placeholder || ''} title={title} className={`${base} text-left`} />;
 }
@@ -101,7 +125,7 @@ function TableInput({ field, value, onChange, prevValue, disabled, period }) {
             const groupHead = grouped && r.group !== lastGroup ? (lastGroup = r.group) : null;
             return (
               <React.Fragment key={r.key}>
-                {groupHead != null && <tr className="bg-emerald-50/60"><td colSpan={cols.length + 1} className="px-3 py-1 text-xs font-semibold text-emerald-900">{groupHead || 'อื่นๆ'}</td></tr>}
+                {groupHead != null && <tr><td colSpan={cols.length + 1} className={`px-3 py-1 text-xs font-bold ${groupTone(groupHead, rowGroups(field).indexOf(groupHead)).head}`}>{groupHead || 'อื่นๆ'}</td></tr>}
                 <tr>
                   {!dynamic && <td className="px-3 py-1.5 text-stone-700 whitespace-nowrap" title={r.hint || ''}>{r.label}{r.sub && <span className="block text-[11px] text-stone-400 font-normal">{r.sub}</span>}</td>}
                   {cols.map((c) => {
@@ -162,27 +186,31 @@ function LedgerYearTable({ field, year, month, value, onChange, onChangeMonth, y
   const yearTotal = (rowKey, colKey) => [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].reduce((s, m) => s + (Number(valueOf(m)?.[rowKey]?.[colKey]) || 0), 0);
   if (!cols.length || !items.length) return <p className="text-xs text-stone-400">ตารางนี้ยังไม่ได้กำหนดคอลัมน์/รายการ — แจ้งเจ้าของระบบ</p>;
   const stickyCls = 'sticky left-0 z-10 bg-white';
+  const toneOf = (g) => groupTone(g, groups.indexOf(g || ''));
+  // คอลัมน์แรกของแต่ละกลุ่ม → เส้นแบ่งหนาสีกลุ่ม · คอลัมน์แรกของแต่ละบัญชี → เส้นบาง
+  const firstInGroup = new Set(groups.map((g) => items.find((r) => (r.group || '') === g)?.key));
+  const edgeOf = (r, ci) => (ci !== 0 ? '' : firstInGroup.has(r.key) ? toneOf(r.group).edge : 'border-l border-l-stone-200');
   return (
     <div className="overflow-x-auto rounded-lg border border-stone-200 bg-white">
       <table className="text-sm border-collapse">
         <thead className="text-xs">
           {groups.some(Boolean) && (
-            <tr className="bg-emerald-50 text-emerald-900">
-              <th className={`${stickyCls} bg-emerald-50 px-3 py-1.5 text-left font-semibold border-r border-stone-200`}>พ.ศ. {year + 543}</th>
-              {groups.map((g) => <th key={g || '_'} colSpan={items.filter((r) => (r.group || '') === g).length * cols.length} className="px-2 py-1.5 font-semibold border-l border-stone-200">{g || ''}</th>)}
+            <tr>
+              <th className={`${stickyCls} bg-stone-100 px-3 py-1.5 text-left font-semibold text-stone-800 border-r border-stone-200`}>พ.ศ. {year + 543}</th>
+              {groups.map((g) => <th key={g || '_'} colSpan={items.filter((r) => (r.group || '') === g).length * cols.length} className={`px-2 py-1.5 font-bold text-sm ${toneOf(g).head} ${toneOf(g).edge}`}>{g || ''}</th>)}
             </tr>
           )}
-          <tr className="bg-stone-50 text-stone-700">
-            <th className={`${stickyCls} bg-stone-50 px-3 py-1.5 text-left font-medium border-r border-stone-200`}>{groups.some(Boolean) ? 'รายการ' : `พ.ศ. ${year + 543}`}</th>
+          <tr>
+            <th className={`${stickyCls} bg-stone-50 px-3 py-1.5 text-left font-medium text-stone-700 border-r border-stone-200`}>{groups.some(Boolean) ? 'รายการ' : `พ.ศ. ${year + 543}`}</th>
             {items.map((r) => (
-              <th key={r.key} colSpan={cols.length} title={r.hint || ''} className="px-2 py-1.5 font-semibold border-l border-stone-200 whitespace-nowrap align-top">
-                {r.label}{r.sub && <span className="block text-[11px] text-stone-500 font-normal max-w-[14rem] whitespace-normal">{r.sub}</span>}
+              <th key={r.key} colSpan={cols.length} title={r.hint || ''} className={`px-2 py-1.5 font-semibold whitespace-nowrap align-top ${toneOf(r.group).sub} ${edgeOf(r, 0)}`}>
+                {r.label}{r.sub && <span className="block text-[11px] opacity-70 font-normal max-w-[14rem] whitespace-normal">{r.sub}</span>}
               </th>
             ))}
           </tr>
-          <tr className="bg-stone-50 text-stone-500">
-            <th className={`${stickyCls} bg-stone-50 px-3 py-1 text-left font-normal border-r border-stone-200`}>เดือน</th>
-            {items.map((r) => cols.map((c, ci) => <th key={`${r.key}.${c.key}`} className={`px-2 py-1 font-normal whitespace-nowrap ${ci === 0 ? 'border-l border-stone-200' : ''} ${c.type === 'number' ? 'text-right' : 'text-left'}`}>{c.label}</th>))}
+          <tr>
+            <th className={`${stickyCls} bg-stone-50 px-3 py-1 text-left font-normal text-stone-500 border-r border-stone-200`}>เดือน</th>
+            {items.map((r) => cols.map((c, ci) => <th key={`${r.key}.${c.key}`} className={`px-2 py-1 font-normal whitespace-nowrap ${toneOf(r.group).sub} ${edgeOf(r, ci)} ${c.type === 'number' ? 'text-right' : 'text-left'}`}>{c.label}</th>))}
           </tr>
         </thead>
         <tbody>
@@ -192,15 +220,15 @@ function LedgerYearTable({ field, year, month, value, onChange, onChangeMonth, y
             const st = yearStatus[m];
             const v = valueOf(m);
             return (
-              <tr key={m} className={`border-t border-stone-100 ${active ? 'bg-amber-50' : ''}`}>
-                <td className={`${stickyCls} ${active ? 'bg-amber-50' : ''} px-3 py-1 border-r border-stone-200 whitespace-nowrap`}>
+              <tr key={m} className={`border-t ${active ? 'border-amber-300' : 'border-stone-100'}`}>
+                <td className={`${stickyCls} ${active ? 'bg-amber-100' : ''} px-3 py-1 border-r border-stone-200 whitespace-nowrap`}>
                   <button type="button" onClick={() => !active && onPickMonth?.(m)} disabled={active || !onPickMonth} className={`text-left ${active ? 'font-semibold text-amber-900' : 'text-stone-700 hover:underline'}`} title={active ? '' : 'กดเพื่อเลือกเดือนนี้ (ดูสถานะ/ส่งข้อมูลของเดือนนั้น)'}>
                     {mName}{active && <span className="text-[10px] font-normal ml-1">← เดือนที่เลือก</span>}
                   </button>
                   {st && <span className={`ml-1.5 text-[10px] ${st === 'submitted' ? 'text-emerald-700' : 'text-stone-400'}`}>{st === 'submitted' ? '✓ ส่งแล้ว' : 'ร่าง'}</span>}
                 </td>
                 {items.map((r) => cols.map((c, ci) => (
-                  <td key={`${r.key}.${c.key}`} className={`px-1 py-0.5 ${ci === 0 ? 'border-l border-stone-200' : ''}`}>
+                  <td key={`${r.key}.${c.key}`} className={`px-1 py-0.5 ${active ? toneOf(r.group).cellActive : toneOf(r.group).cell} ${edgeOf(r, ci)}`}>
                     <CellInput compact col={c} value={v?.[r.key]?.[c.key]} onChange={(val) => setCell(m, r.key, c.key, val)} disabled={disabled} placeholder={c.type === 'number' ? '0' : resolvePlaceholder(c.placeholder, { year, month: m })} />
                   </td>
                 )))}
@@ -209,10 +237,10 @@ function LedgerYearTable({ field, year, month, value, onChange, onChangeMonth, y
           })}
         </tbody>
         {numCols.length > 0 && (
-          <tfoot className="bg-stone-50 text-xs border-t border-stone-200">
+          <tfoot className="text-xs border-t border-stone-300">
             <tr>
-              <td className={`${stickyCls} bg-stone-50 px-3 py-1.5 font-medium text-stone-600 border-r border-stone-200`}>รวมทั้งปี</td>
-              {items.map((r) => cols.map((c, ci) => <td key={`${r.key}.${c.key}`} className={`px-2 py-1.5 font-semibold whitespace-nowrap ${ci === 0 ? 'border-l border-stone-200' : ''} ${c.type === 'number' ? 'text-right text-emerald-800' : ''}`}>{c.type === 'number' ? fmtMoney(yearTotal(r.key, c.key)) : ''}</td>))}
+              <td className={`${stickyCls} bg-stone-100 px-3 py-1.5 font-medium text-stone-700 border-r border-stone-200`}>รวมทั้งปี</td>
+              {items.map((r) => cols.map((c, ci) => <td key={`${r.key}.${c.key}`} className={`px-2 py-1.5 font-semibold whitespace-nowrap ${toneOf(r.group).foot} ${edgeOf(r, ci)} ${c.type === 'number' ? 'text-right' : ''}`}>{c.type === 'number' ? fmtMoney(yearTotal(r.key, c.key)) : ''}</td>))}
             </tr>
           </tfoot>
         )}
@@ -247,7 +275,7 @@ function AnswersView({ fields, answers }) {
                       const groupHead = grouped && r.group !== lastGroup ? (lastGroup = r.group) : null;
                       return (
                         <React.Fragment key={r.key}>
-                          {groupHead != null && <tr className="bg-emerald-50/60"><td colSpan={cols.length + 1} className="px-2 py-0.5 font-semibold text-emerald-900">{groupHead || 'อื่นๆ'}</td></tr>}
+                          {groupHead != null && <tr><td colSpan={cols.length + 1} className={`px-2 py-0.5 font-bold ${groupTone(groupHead, rowGroups(f).indexOf(groupHead)).head}`}>{groupHead || 'อื่นๆ'}</td></tr>}
                           <tr>{!dynamic && <td className="px-2 py-1 text-stone-700 whitespace-nowrap">{r.label}{r.sub && <span className="text-stone-400"> · {r.sub}</span>}</td>}{cols.map((c) => <td key={c.key} className={`px-2 py-1 ${c.type === 'number' ? 'text-right' : 'text-left'}`}>{c.type === 'number' ? (isBlank(r.cells[c.key]) ? <span className="text-stone-300">—</span> : fmtMoney(r.cells[c.key])) : (r.cells[c.key] ?? '')}</td>)}</tr>
                         </React.Fragment>
                       );
@@ -272,4 +300,4 @@ function AnswersView({ fields, answers }) {
   );
 }
 
-export { FieldInput, TableInput, LedgerYearTable, AnswersView };
+export { FieldInput, TableInput, LedgerYearTable, AnswersView, groupTone };

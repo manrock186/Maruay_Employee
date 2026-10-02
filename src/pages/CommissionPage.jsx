@@ -5,7 +5,7 @@ import { NO_DEPT, employeeDepartment } from '../lib/order.js';
 import { MONTH_NAMES, payMonthLabel, fmtMoney, fmt, holidayBalance } from '../lib/payroll.js';
 import { parseLoyverseText, computeCommission } from '../lib/commission.js';
 import { normalizeFields, numericSummary, latestNumericSummary, isLedgerTable, isSubmitted, editedAfterSubmit, periodKey, periodLabel } from '../lib/dataForms.js';
-import { AnswersView } from '../components/DataFormFields.jsx';
+import { AnswersView, groupTone } from '../components/DataFormFields.jsx';
 import { FormField, EmptyState, PageHeader } from '../ui/index.jsx';
 
 // ============ COMMISSION PAGE (คอมมิชชั่น) ============
@@ -410,7 +410,7 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, da
                         <div className="mt-2 space-y-1.5">
                           {groupsInOrder.map((g) => (
                             <div key={g || '_'} className="flex flex-wrap items-center gap-1.5">
-                              {g && <span className="text-[11px] font-semibold text-emerald-900 w-16 shrink-0">{g}</span>}
+                              {g && <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded w-20 shrink-0 text-center ${g === 'รวม' ? 'bg-stone-200 text-stone-800' : groupTone(g, groupsInOrder.indexOf(g)).chip}`}>{g}</span>}
                               {nums.filter((n) => (n.group || '') === g).map(chip)}
                             </div>
                           ))}
