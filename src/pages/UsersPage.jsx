@@ -126,9 +126,9 @@ function ProfileEditForm({ initial, businesses, zones, onSave, onCancel, isSelf 
     { id: 'orgchart', label: 'แผนผังองค์กร', when: true },
     { id: 'payroll', label: 'เงินเดือน', when: role === 'business_manager' && canManagePayroll },
     { id: 'commission', label: 'คอมมิชชั่น', when: role === 'business_manager' && canManagePayroll },
-    { id: 'roomrent', label: 'ค่าห้องพนักงาน', when: role === 'business_manager' && canManagePayroll },
+    { id: 'roomrent', label: 'ค่าห้องพนักงาน', when: role === 'business_manager' },
     { id: 'recurringtasks', label: 'งานเสริมประจำ', when: role === 'business_manager' },
-    { id: 'advances', label: 'เบิกเงิน', when: role === 'business_manager' },
+    { id: 'advances', label: 'เบิกเงิน', when: role === 'business_manager' && canManagePayroll },
   ].filter((m) => m.when);
   const showMenuPicker = ['business_manager', 'zone_manager', 'viewer'].includes(role);
   const grantIds = toggleMenus.filter((m) => m.grant).map((m) => m.id);
@@ -220,7 +220,7 @@ function ProfileEditForm({ initial, businesses, zones, onSave, onCancel, isSelf 
               <EyeOff className={`w-4 h-4 mt-0.5 flex-shrink-0 ${!canManagePayroll ? 'text-emerald-700' : 'text-stone-400'}`} />
               <div>
                 <div className={`text-sm font-medium ${!canManagePayroll ? 'text-emerald-900' : 'text-stone-700'}`}>ไม่เห็นเงินเดือน</div>
-                <div className="text-[11px] text-stone-500 mt-0.5">ซ่อนข้อมูลเงินเดือนทั้งหมด (ค่าเริ่มต้น)</div>
+                <div className="text-[11px] text-stone-500 mt-0.5">ซ่อนเมนูเงินเดือน คอมมิชชั่น เบิกเงิน และยอดเงินในงานเสริมประจำ (ค่าเริ่มต้น) — ค่าห้องพนักงานยังเห็น</div>
               </div>
             </button>
             <button type="button" onClick={() => setCanManagePayroll(true)} className={`flex items-start gap-2.5 p-3 rounded-lg border-2 text-left transition-all ${canManagePayroll ? 'border-emerald-600 bg-emerald-50' : 'border-stone-200 hover:border-stone-300'}`}>

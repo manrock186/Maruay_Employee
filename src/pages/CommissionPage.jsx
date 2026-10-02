@@ -88,7 +88,8 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, op
     const r = parseLoyverseText(text);
     if (r.error) { alert(r.error); return false; }
     setPosItems(r.items);
-    setPosImport({ fileName: fileName || 'วางจาก Excel', importedAt: new Date().toISOString(), rows: r.items.length, qty: r.totals.qty, net: r.totals.net, cost: r.totals.cost, profit: r.totals.profit });
+    setPosImport({ fileName: fileName || 'วางจาก Excel', importedAt: new Date().toISOString(), rows: r.items.length, qty: r.totals.qty, net: r.totals.net, cost: r.totals.cost, profit: r.totals.profit,
+      excluded: (r.excluded || []).map((it) => ({ name: it.name, profit: it.profit })), excludedProfit: r.excludedTotals?.profit || 0 });
     setPosProfit(r.totals.profit);
     setShowItems(false); setPasteOpen(false); setPasteText('');
     return true;
@@ -256,6 +257,9 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, op
                 <div className="text-emerald-900">
                   <b>นำเข้าแล้ว {posImport.rows} รายการ</b> <span className="text-xs text-stone-500">({posImport.fileName} · {fmt(posImport.importedAt)})</span>
                   <div className="text-xs text-stone-600 mt-0.5">ยอดขายสุทธิ {fmtMoney(posImport.net)} − ต้นทุน {fmtMoney(posImport.cost)} = <b className="text-emerald-800">กำไร {fmtMoney(posImport.profit)} ฿</b></div>
+                  {(posImport.excluded || []).length > 0 && (
+                    <div className="text-xs text-amber-700 mt-0.5" title={posImport.excluded.map((x) => `${x.name} (${fmtMoney(x.profit)})`).join('\n')}>ตัดออกไม่คิดคอม {posImport.excluded.length} รายการ "รายวัน" (กำไร {fmtMoney(posImport.excludedProfit)}): {posImport.excluded.map((x) => x.name).join(', ')}</div>
+                  )}
                 </div>
                 <div className="flex gap-1">
                   {posItems.length > 0 && <button onClick={() => setShowItems((v) => !v)} className="flex items-center gap-1 px-2 py-1 text-xs text-stone-600 hover:bg-white rounded">{showItems ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}{showItems ? 'ซ่อนรายการ' : 'ดูรายการ'}</button>}

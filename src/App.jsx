@@ -913,7 +913,7 @@ export default function App() {
             ops={ops}
           />
         )}
-        {view === 'roomrent' && profile.canManagePayroll && (
+        {view === 'roomrent' && (profile.isOwner || (profile.isBM && (!Array.isArray(profile.allowedViews) || profile.allowedViews.includes('roomrent')))) && (
           <RoomRentPage
             businesses={businesses}
             employees={employees}
@@ -930,7 +930,7 @@ export default function App() {
             ops={ops}
           />
         )}
-        {view === 'advances' && (profile.isOwner || (profile.isBM && (!Array.isArray(profile.allowedViews) || profile.allowedViews.includes('advances')))) && (
+        {view === 'advances' && profile.canManagePayroll && (profile.isOwner || (profile.isBM && (!Array.isArray(profile.allowedViews) || profile.allowedViews.includes('advances')))) && (
           <AdvancePage
             businesses={businesses}
             employees={employees}

@@ -13,8 +13,13 @@ const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 // ---------- นำเข้าไฟล์ Loyverse (Sales by item) ----------
 // รับได้ทั้ง CSV ที่ export จาก Loyverse และข้อความที่ copy จาก Excel (คั่นด้วย tab)
 // หัวคอลัมน์รองรับทั้งอังกฤษ/ไทย — ใช้แค่ ชื่อสินค้า / จำนวน / ยอดขายสุทธิ / ต้นทุน / กำไรขั้นต้น
+// รายการที่ไม่เอามาคิดคอม (user กำหนด): ชื่อสินค้า/หมวดที่มีคำว่า "รายวัน" — ตัดออกก่อนรวมกำไร แต่เก็บไว้โชว์ว่าตัดอะไรไป
+const EXCLUDE_KEYWORDS = ['รายวัน'];
+const isExcludedItem = (name, category) => EXCLUDE_KEYWORDS.some((k) => String(name || '').includes(k) || String(category || '').includes(k));
+
 const HEADER_KEYS = {
   name: ['item name', 'item', 'ชื่อสินค้า', 'สินค้า', 'รายการ'],
+  category: ['category', 'หมวดหมู่', 'หมวด'],
   qty: ['items sold', 'quantity', 'จำนวนที่ขาย', 'จำนวน'],
   net: ['net sales', 'ยอดขายสุทธิ'],
   cost: ['cost of goods', 'cost', 'ต้นทุนสินค้า', 'ต้นทุน'],
@@ -62,10 +67,10 @@ function parseLoyverseText(text) {
   if (raw.length < 2) return { items: [], totals: { qty: 0, net: 0, cost: 0, profit: 0 }, error: 'ไม่พบข้อมูล (ต้องมีหัวตาราง + อย่างน้อย 1 รายการ)' };
   const delim = raw[0].includes('\t') ? '\t' : (raw[0].split(';').length > raw[0].split(',').length ? ';' : ',');
   const headers = splitLine(raw[0], delim);
-  const col = { name: findCol(headers, HEADER_KEYS.name), qty: findCol(headers, HEADER_KEYS.qty), net: findCol(headers, HEADER_KEYS.net), cost: findCol(headers, HEADER_KEYS.cost), profit: findCol(headers, HEADER_KEYS.profit) };
+  const col = { name: findCol(headers, HEADER_KEYS.name), category: findCol(headers, HEADER_KEYS.category), qty: findCol(headers, HEADER_KEYS.qty), net: findCol(headers, HEADER_KEYS.net), cost: findCol(headers, HEADER_KEYS.cost), profit: findCol(headers, HEADER_KEYS.profit) };
   if (col.profit < 0) return { items: [], totals: { qty: 0, net: 0, cost: 0, profit: 0 }, error: `ไม่พบคอลัมน์ "Gross profit / กำไรขั้นต้น" ในหัวตาราง (เจอ: ${headers.filter(Boolean).join(', ')})` };
   if (col.name < 0) col.name = 0;
-  const items = [];
+  const items = [], excluded = [];
   raw.slice(1).forEach((line) => {
     const c = splitLine(line, delim);
     const name = (c[col.name] || '').trim();
@@ -75,10 +80,13 @@ function parseLoyverseText(text) {
     const cost = col.cost >= 0 ? parseNumber(c[col.cost]) : 0;
     const qty = col.qty >= 0 ? parseNumber(c[col.qty]) : 0;
     if (!profit && !net && !cost && !qty) return;
-    items.push({ name, qty, net: r2(net), cost: r2(cost), profit: r2(profit) });
+    const item = { name, qty, net: r2(net), cost: r2(cost), profit: r2(profit) };
+    const category = col.category >= 0 ? (c[col.category] || '').trim() : '';
+    (isExcludedItem(name, category) ? excluded : items).push(item);
   });
-  const totals = items.reduce((t, it) => ({ qty: t.qty + it.qty, net: r2(t.net + it.net), cost: r2(t.cost + it.cost), profit: r2(t.profit + it.profit) }), { qty: 0, net: 0, cost: 0, profit: 0 });
-  return { items, totals, columns: col, error: items.length ? null : 'อ่านไฟล์ได้แต่ไม่พบรายการสินค้า' };
+  const sum = (list) => list.reduce((t, it) => ({ qty: t.qty + it.qty, net: r2(t.net + it.net), cost: r2(t.cost + it.cost), profit: r2(t.profit + it.profit) }), { qty: 0, net: 0, cost: 0, profit: 0 });
+  const totals = sum(items), excludedTotals = sum(excluded);
+  return { items, totals, excluded, excludedTotals, columns: col, error: (items.length || excluded.length) ? null : 'อ่านไฟล์ได้แต่ไม่พบรายการสินค้า' };
 }
 
 // ---------- คำนวณคอมต่อคน ----------
@@ -133,6 +141,7 @@ function commissionEntryTotal(e) {
 
 export {
   COMM_DAYS,
+  EXCLUDE_KEYWORDS,
   parseNumber,
   parseLoyverseText,
   computeCommission,

@@ -348,3 +348,11 @@ alter publication supabase_realtime add table public.public_holidays;
 -- ============================================================
 alter table public.commission_pools add column if not exists pos_items jsonb not null default '[]'::jsonb;
 alter table public.commission_pools add column if not exists pos_import jsonb;
+
+-- ============================================================
+-- สิทธิ์ "ไม่เห็นเงินเดือน" (migration pay_visibility_roomrent_advances)
+-- ------------------------------------------------------------
+-- can_manage_payroll = false → ห้ามเข้า เงินเดือน / คอมมิชชั่น / เบิกเงิน · ค่าห้องพนักงาน + งานเสริมประจำ (UI ซ่อนยอดเงิน) ยังเข้าได้
+-- can_access_advances(): owner หรือ BM ที่มีสิทธิ์เงินเดือน (+ เมนูเปิด)
+-- can_access_roomrent(): owner หรือ มีสิทธิ์เงินเดือน หรือ BM ที่เมนู roomrent เปิด → policy bm_roomrent ใช้ฟังก์ชันนี้แทน can_manage_payroll()
+-- ============================================================
