@@ -19,6 +19,12 @@ h1, h2, h3, h4 {
 h2 { font-size: 1.25rem; line-height: 1.85rem; }
 h3 { font-size: 1.0625rem; line-height: 1.6rem; }
 
+/* ============ ช่องตัวเลข: ไม่เอาลูกศรขึ้น/ลง (ทั้งแอป) ============ */
+/* ลูกศรเกะกะในตาราง + กดพลาดบนมือถือ — ตัวเลขพิมพ์เอาอย่างเดียว (user ขอ 2026-10-02) */
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
+
 /* ============ THEME COLOR VARIABLES ============ */
 /* แต่ละธีมกำหนดค่าสีหลัก (primary) + สีรอง (accent) เป็น RGB channels */
 /* สีพื้น (stone/white) และสีสถานะ (red/sky/rose) คงเดิมทุกธีม */
