@@ -26,9 +26,9 @@ npm run build    # ยืนยันแล้วว่า build ผ่าน �
 ```
 มี `.env.local` + `.env.example` แล้ว, เพิ่ม `.gitignore` แล้ว (repo เดิมไม่มี)
 
-## Database schema (public, 22 tables, เปิด RLS ทุกตาราง)
+## Database schema (public, 23 tables, เปิด RLS ทุกตาราง)
 - **Core:** businesses, zones, positions, employees, user_profiles
-- **Payroll:** payrolls, payroll_items, salary_changes, commission_pools, room_rent_pools, advance_pools, recurring_task_pools, public_holidays
+- **Payroll:** payrolls, payroll_items, salary_changes, commission_pools, room_rent_pools, advance_pools, recurring_task_pools, recurring_task_pay, public_holidays
 - **Order:** display_order (ลำดับพนักงาน/โซน/แผนก)
 - **Ops:** contractors, contractor_visits, expense_requests, app_settings
 - **System:** notifications, notification_reads, push_subscriptions, audit_log
@@ -68,7 +68,9 @@ Multi-tenant: scope ด้วย `business_id` + `zone_id`. RLS ใช้ SECURI
 
 ## สิทธิ์ "ไม่เห็นเงินเดือน" (user_profiles.can_manage_payroll = false) — เคาะกับ user 2026-10-02
 - **ซ่อน:** เงินเดือน · คอมมิชชั่น · เบิกเงิน (เมนู + route ใน App.jsx + RLS `can_access_advances` ต้องมีสิทธิ์เงินเดือน)
-- **เห็น:** ค่าห้องพนักงาน (RLS `can_access_roomrent` — BM ที่เมนูเปิด) · งานเสริมประจำ แต่ `canSeePay=false` ซ่อนค่าจ้าง/ยอดรวม (ซ่อนที่ UI — ข้อมูลยังมาถึง client เหมือน employees pay fields)
+- **เห็น:** ค่าห้องพนักงาน (RLS `can_access_roomrent` — BM ที่เมนูเปิด) · งานเสริมประจำ แต่ไม่มีเงิน — **ปิดระดับ DB**: ค่าจ้างอยู่ตาราง `recurring_task_pay`
+  (RLS เฉพาะมีสิทธิ์เงินเดือน) `tasks` jsonb ไม่มี defaultPay/amount แล้ว · `ops.recurringTask` รวม/แยกเงินให้ (`mergeRecurringPay`/`splitRecurringPay`)
+  · trigger `trg_copy_recurring_pay` คัดลอกค่าจ้างให้พูลเดือนใหม่ (คนสร้างอาจไม่มีสิทธิ์) · `canSeePay=false` ยังซ่อนช่องเงินใน UI ด้วย
 - หน้าผู้ใช้ระบบ: ตัวเลือกเมนู "เบิกเงิน" ขึ้นเฉพาะคนมีสิทธิ์เงินเดือน · "ค่าห้องพนักงาน" ขึ้นทุก BM
 
 ## คอมมิชชั่น: นำเข้า Loyverse ตัดรายการ "รายวัน"

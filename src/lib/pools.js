@@ -34,6 +34,37 @@ function roomRentMapFromPool(pool) {
   return m;
 }
 
+// ---- ค่าจ้างงานเสริมประจำเก็บแยกตาราง recurring_task_pay (RLS: เฉพาะคนมีสิทธิ์เงินเดือน) ----
+// tasks ใน DB ไม่มีเงิน (id/name/headcount/assignments[].empId) · แถว pay: { taskId, empId ('' = ค่าตั้งต้นของงาน), amount }
+// แยกเงินออกจาก tasks ก่อนบันทึก → { tasks (ไม่มีเงิน), pay (แถวที่จะเขียนลงตาราง pay) }
+function splitRecurringPay(tasks) {
+  const clean = [], pay = [];
+  (tasks || []).forEach((t) => {
+    const { defaultPay, ...rest } = t;
+    const def = Number(defaultPay) || 0;
+    if (def) pay.push({ taskId: t.id, empId: '', amount: def });
+    const assignments = (t.assignments || []).map((a) => {
+      const { amount, ...ar } = a || {};
+      if (ar.empId && amount != null && amount !== '' && Number.isFinite(Number(amount))) pay.push({ taskId: t.id, empId: ar.empId, amount: Number(amount) });
+      return ar;
+    });
+    clean.push({ ...rest, assignments });
+  });
+  return { tasks: clean, pay };
+}
+// รวมแถว pay กลับเข้า tasks ให้โค้ดส่วนอื่น (หน้างานเสริม, เงินเดือน) ใช้รูปเดิม: defaultPay + assignments[].amount
+function mergeRecurringPay(tasks, payRows) {
+  const byTask = {};
+  (payRows || []).forEach((r) => {
+    const b = (byTask[r.taskId] ||= { def: null, emp: {} });
+    if (!r.empId) b.def = Number(r.amount) || 0; else b.emp[r.empId] = Number(r.amount) || 0;
+  });
+  return (tasks || []).map((t) => {
+    const b = byTask[t.id] || { def: null, emp: {} };
+    return { ...t, defaultPay: b.def ?? 0, assignments: (t.assignments || []).map((a) => ({ ...a, amount: a?.empId && b.emp[a.empId] != null ? b.emp[a.empId] : null })) };
+  });
+}
+
 // แปลงพูล "งานเสริมประจำ" → map: empId -> [{ label, amount }] (ค่าจ้างต่อคน ที่จะบวกเข้าเงินเดือน)
 function recurringTaskMapFromPool(pool) {
   const m = {};
@@ -75,6 +106,8 @@ export {
   roomTotal,
   roomUnits,
   roomRentMapFromPool,
+  splitRecurringPay,
+  mergeRecurringPay,
   recurringTaskMapFromPool,
   missingRecurringTasks,
   advanceMapFromPool,

@@ -356,3 +356,22 @@ alter table public.commission_pools add column if not exists pos_import jsonb;
 -- can_access_advances(): owner หรือ BM ที่มีสิทธิ์เงินเดือน (+ เมนูเปิด)
 -- can_access_roomrent(): owner หรือ มีสิทธิ์เงินเดือน หรือ BM ที่เมนู roomrent เปิด → policy bm_roomrent ใช้ฟังก์ชันนี้แทน can_manage_payroll()
 -- ============================================================
+
+-- ============================================================
+-- งานเสริมประจำ: ค่าจ้างแยกตาราง recurring_task_pay (migration recurring_task_pay_split)
+-- ------------------------------------------------------------
+-- recurring_task_pools.tasks ไม่มีเงินแล้ว (id/name/headcount/assignments[].empId) · ค่าจ้างอยู่ใน recurring_task_pay
+--   (pool_id, task_id, emp_id '' = ค่าตั้งต้นของงาน / uuid = เฉพาะคน, amount) · RLS: owner หรือ BM ที่ can_manage_payroll (ธุรกิจที่ดูแล)
+-- → คนไม่มีสิทธิ์เงินเดือนเปิดหน้างานเสริมได้โดยไม่มียอดเงินส่งถึงเครื่องเลย
+-- trigger trg_copy_recurring_pay (after insert, security definer): พูลเดือนใหม่คัดลอกค่าจ้างของ task_id เดิมจากเดือนก่อนให้
+--   (คนสร้างพูลเดือนใหม่อาจไม่มีสิทธิ์เขียนตาราง pay)
+-- แอป: ops.recurringTask.getByPeriod/upsert ใน App.jsx แยก/รวมเงินด้วย splitRecurringPay/mergeRecurringPay (lib/pools.js)
+-- ============================================================
+create table if not exists public.recurring_task_pay (
+  pool_id   uuid    not null references public.recurring_task_pools(id) on delete cascade,
+  task_id   text    not null,
+  emp_id    text    not null default '',
+  amount    numeric not null default 0,
+  primary key (pool_id, task_id, emp_id)
+);
+alter table public.recurring_task_pay enable row level security;

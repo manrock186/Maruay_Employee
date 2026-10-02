@@ -5,6 +5,7 @@ import { applyTheme } from './lib/format.js';
 import { businessPositionId } from './lib/business.js';
 import { MONTH_NAMES, fmtMoney } from './lib/payroll.js';
 import { sortByOrder, orderRowsToMap, applySubsetOrder, allDepartments, stripEmployeePay, stripPositionPay } from './lib/order.js';
+import { splitRecurringPay, mergeRecurringPay } from './lib/pools.js';
 import { LoadingScreen, PageLoading } from './ui/index.jsx';
 import { AuthScreen } from './components/AuthScreen.jsx';
 import { PendingScreen } from './components/PendingScreen.jsx';
@@ -706,19 +707,39 @@ export default function App() {
         return fromDB(data);
       },
     },
+    // งานเสริมประจำ — "ค่าจ้าง" เก็บแยกตาราง recurring_task_pay (RLS: เฉพาะคนมีสิทธิ์เงินเดือน)
+    // คนไม่มีสิทธิ์จึงได้ tasks ที่ไม่มีเงินเลย (ปิดระดับ DB ไม่ใช่แค่ซ่อนที่หน้าจอ) · คนมีสิทธิ์ได้ tasks รวมเงินกลับมารูปเดิม
     recurringTask: {
       getByPeriod: async (businessId, year, month) => {
         const { data, error } = await supabase.from('recurring_task_pools').select('*')
           .eq('business_id', businessId).eq('period_year', year).eq('period_month', month).maybeSingle();
         if (error) { console.error(error); return null; }
-        return data ? fromDB(data) : null;
+        if (!data) return null;
+        const pool = fromDB(data);
+        if (canPayRef.current) {
+          const { data: pay, error: e2 } = await supabase.from('recurring_task_pay').select('*').eq('pool_id', pool.id);
+          if (e2) console.error(e2);
+          pool.tasks = mergeRecurringPay(pool.tasks, fromDB(pay || []));
+        }
+        return pool;
       },
       upsert: async (d) => {
+        const { tasks, pay } = splitRecurringPay(d.tasks || []);
         const { data, error } = await supabase.from('recurring_task_pools')
-          .upsert({ ...toDB(d), updated_at: new Date().toISOString() }, { onConflict: 'business_id,period_year,period_month' })
+          .upsert({ ...toDB({ ...d, tasks }), updated_at: new Date().toISOString() }, { onConflict: 'business_id,period_year,period_month' })
           .select().single();
         if (error) { alert('บันทึกงานเสริมประจำไม่สำเร็จ: ' + error.message); return null; }
-        return fromDB(data);
+        const pool = fromDB(data);
+        if (!canPayRef.current) return pool; // ไม่มีสิทธิ์เงินเดือน: แตะเฉพาะชื่องาน/คน ค่าจ้างเดิมในตาราง pay อยู่ครบ (trigger คัดลอกให้เดือนใหม่)
+        // มีสิทธิ์: เขียนค่าจ้างทั้งชุดใหม่ (ลบของพูลนี้แล้วใส่ใหม่ จะได้ไม่เหลือค่าของงาน/คนที่ถูกเอาออก)
+        const { error: e1 } = await supabase.from('recurring_task_pay').delete().eq('pool_id', pool.id);
+        if (e1) { alert('บันทึกค่าจ้างงานเสริมไม่สำเร็จ: ' + e1.message); return pool; }
+        if (pay.length) {
+          const { error: e2 } = await supabase.from('recurring_task_pay').insert(pay.map((r) => ({ pool_id: pool.id, task_id: r.taskId, emp_id: r.empId, amount: r.amount })));
+          if (e2) { alert('บันทึกค่าจ้างงานเสริมไม่สำเร็จ: ' + e2.message); return pool; }
+        }
+        pool.tasks = mergeRecurringPay(pool.tasks, pay);
+        return pool;
       },
     },
     advance: {

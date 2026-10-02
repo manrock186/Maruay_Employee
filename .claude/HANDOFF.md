@@ -6,6 +6,29 @@
 
 ---
 
+## 2026-10-02 (4) — งานเสริมประจำ: ค่าจ้างปิดสนิทระดับ DB (ตาราง recurring_task_pay)
+
+**ทำไม:** user ขอให้คนที่ "ไม่เห็นเงินเดือน" ไม่ได้รับยอดเงินของงานเสริมประจำเลย ไม่ใช่แค่ซ่อนที่หน้าจอ — เดิมค่าจ้างอยู่ใน `recurring_task_pools.tasks` (jsonb)
+ซึ่ง RLS เป็นระดับแถว ตัดฟิลด์ใน JSON ไม่ได้ → ย้ายเงินออกเป็นตารางแยกที่มี RLS ของตัวเอง
+
+**DB** — migration `recurring_task_pay_split`
+- ตาราง `recurring_task_pay (pool_id, task_id, emp_id '' = ค่าตั้งต้น / uuid = เฉพาะคน, amount)` RLS owner / BM ที่ can_manage_payroll (ธุรกิจที่ดูแล)
+- ย้ายข้อมูลเดิม: 29 งาน → 29 ค่าตั้งต้น + 3 ค่าเฉพาะคน · ตัด `defaultPay`/`amount` ออกจาก jsonb ทุกพูล (ตรวจแล้ว 0 ฟิลด์เหลือ)
+- trigger `trg_copy_recurring_pay` (after insert, security definer): พูลเดือนใหม่คัดลอกค่าจ้างของ task_id เดิมจากเดือนก่อน —
+  จำเป็นเพราะคนสร้างพูลเดือนใหม่ (ดึงงานจากเดือนก่อน) มักไม่มีสิทธิ์เงินเดือน เขียนตาราง pay เองไม่ได้ · เทสใน transaction: สร้าง พ.ย. จาก ต.ค. → คัดลอก 6 งานถูก แล้ว rollback
+- จำลอง JWT ของ BM ไม่มีสิทธิ์: เห็นพูล 5 แถว · pay 0 แถว · JSON ไม่มีเงิน ✓
+- (apply_migration ถูกยกเลิกรอบแรกเพราะมี `drop trigger if exists` — ตัดออกแล้วผ่าน)
+
+**โค้ด** — `lib/pools.js` เพิ่ม `splitRecurringPay` / `mergeRecurringPay` · `App.jsx` `ops.recurringTask.getByPeriod` รวมเงินกลับให้คนมีสิทธิ์ (`canPayRef`)
+/ `upsert` แยกเงินออกก่อนเขียนพูล แล้วเขียนตาราง pay ทั้งชุด (ลบ+ใส่ใหม่) เฉพาะคนมีสิทธิ์ — คนไม่มีสิทธิ์แตะแค่ชื่องาน/คน ค่าจ้างเดิมอยู่ครบ
+**หน้างานเสริม/เงินเดือน/คอม ไม่ต้องแก้** เพราะได้ tasks รูปเดิม (defaultPay + assignments[].amount) · เทส node: split→merge ครบ, idempotent, คนไม่มีสิทธิ์ได้ map ว่าง
+
+**ข้อควรระวัง:** ลบตาราง/แก้ชื่อ task id จะทำให้ค่าจ้างหลุด (ผูกด้วย task_id) · `syncNotifications` อ่าน assignments จาก jsonb ตรงๆ ไม่ต้องใช้เงิน จึงไม่กระทบ
+
+**ตรวจแล้ว:** lint + build ผ่าน · เทส production: ดูข้างล่าง
+
+---
+
 ## 2026-10-02 (3) — Loyverse ตัดรายการ "รายวัน" + สิทธิ์ "ไม่เห็นเงินเดือน": ซ่อนเบิกเงิน เปิดค่าห้องพนักงาน
 
 **Loyverse:** รายการที่ชื่อ/หมวดมีคำว่า "รายวัน" ไม่เอามาคิดคอม (`EXCLUDE_KEYWORDS` ใน `lib/commission.js`) — กล่องนำเข้าโชว์ "ตัดออกไม่คิดคอม N รายการ (กำไร X): ชื่อ…"
