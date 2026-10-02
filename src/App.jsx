@@ -28,6 +28,8 @@ const CommissionPage = lazy(() => import('./pages/CommissionPage.jsx').then((m) 
 const PayrollPage = lazy(() => import('./pages/PayrollPage.jsx').then((m) => ({ default: m.PayrollPage })));
 const UsersPage = lazy(() => import('./pages/UsersPage.jsx').then((m) => ({ default: m.UsersPage })));
 const SettingsPage = lazy(() => import('./pages/SettingsPage.jsx').then((m) => ({ default: m.SettingsPage })));
+const MyFormsPage = lazy(() => import('./pages/DataFormsPage.jsx').then((m) => ({ default: m.MyFormsPage })));
+const DataFormsAdminPage = lazy(() => import('./pages/DataFormsPage.jsx').then((m) => ({ default: m.DataFormsAdminPage })));
 
 
 // ============ MAIN APP ============
@@ -48,6 +50,9 @@ export default function App() {
   const [notiReads, setNotiReads] = useState([]); // [{notificationId, userId}]
   const [publicHolidaysRaw, setPublicHolidays] = useState([]); // วันหยุดนักขัตฤกษ์ (ทั้งระบบ)
   const publicHolidays = useMemo(() => [...publicHolidaysRaw].sort((a, b) => String(a.holidayDate).localeCompare(String(b.holidayDate))), [publicHolidaysRaw]);
+  const [dataForms, setDataForms] = useState([]);       // แบบฟอร์มข้อมูลประจำเดือน (RLS: เจ้าของ/คนมีสิทธิ์เงินเดือน เห็นทั้งหมด · คนอื่นเห็นเฉพาะที่ถูกมอบหมาย)
+  const [myFormsPending, setMyFormsPending] = useState(0); // ฟอร์มที่ถูกมอบหมายให้ฉัน ที่ยังไม่ได้ส่งของเดือนนี้ (badge ที่เมนู)
+  const [formsEpoch, setFormsEpoch] = useState(0);      // +1 ทุกครั้งที่ส่งฟอร์ม → นับ badge ใหม่
 
   // ลำดับที่ผู้ใช้ลากจัดเอง (เก็บใน display_order) — จัดครั้งเดียวตรงนี้
   // ตัวแปร employees/zones ที่โค้ดข้างล่างใช้ทั้งหมดจึงเรียงตามที่จัดไว้ ทุกหน้าเหมือนกัน
@@ -137,7 +142,7 @@ export default function App() {
     let cancelled = false;
     setDataLoading(true);
     (async () => {
-      const [b, z, p, e, up, noti, reads, settingsRow, orderRows, holidayRows] = await Promise.all([
+      const [b, z, p, e, up, noti, reads, settingsRow, orderRows, holidayRows, formRows] = await Promise.all([
         supabase.from('businesses').select('*').order('created_at'),
         supabase.from('zones').select('*').order('created_at'),
         supabase.from('positions').select('*').order('created_at'),
@@ -150,6 +155,7 @@ export default function App() {
         supabase.from('app_settings').select('expiry_warn_months, birthday_notify_enabled, birthday_warn_days').eq('id', 1).maybeSingle(),
         supabase.from('display_order').select('*'),
         supabase.from('public_holidays').select('*'),
+        supabase.from('data_forms').select('*').order('sort_order'),
       ]);
       if (cancelled) return;
       if (settingsRow?.data?.expiry_warn_months != null) setExpiryWarnMonths(settingsRow.data.expiry_warn_months);
@@ -168,6 +174,7 @@ export default function App() {
       setNotiReads(fromDB(reads.data || []));
       setOrderMap(orderRowsToMap(fromDB(orderRows.data || [])));
       setPublicHolidays(fromDB(holidayRows.data || []));
+      setDataForms(fromDB(formRows.data || []));
       // เลือกธุรกิจเริ่มต้น
       const allBiz = b.data || [];
       const allZones = z.data || [];
@@ -252,13 +259,14 @@ export default function App() {
       lastRefetch = Date.now();
       const seq = ++refetchSeq;
       const epoch = writeEpochRef.current;
-      const [b2, z2, p2, e2, o2, h2] = await Promise.all([
+      const [b2, z2, p2, e2, o2, h2, f2] = await Promise.all([
         supabase.from('businesses').select('*').order('created_at'),
         supabase.from('zones').select('*').order('created_at'),
         supabase.from('positions').select('*').order('created_at'),
         supabase.from('employees').select('*').order('created_at'),
         supabase.from('display_order').select('*'),
         supabase.from('public_holidays').select('*'),
+        supabase.from('data_forms').select('*').order('sort_order'),
       ]);
       if (cancelled || seq !== refetchSeq) return;
       // ทิ้งผลลัพธ์ถ้ามีการบันทึกในเครื่องระหว่างรอ (ไม่งั้นข้อมูลเก่าจะทับสิ่งที่เพิ่งกดบันทึก)
@@ -276,6 +284,8 @@ export default function App() {
       if (e2.data) { const rows = fromDB(e2.data); if (!canPay) rows.forEach(stripEmployeePay); setEmployees(rows); }
       if (o2.data) setOrderMap(orderRowsToMap(fromDB(o2.data)));
       if (h2.data) setPublicHolidays(fromDB(h2.data));
+      // ฟอร์มที่ถูกย้ายไปมอบหมายคนอื่นจะไม่ส่ง realtime มาหาเรา (RLS กรองแถวที่เราไม่เห็นแล้ว) → ดึงทั้งตารางแทนที่ของเดิม
+      if (f2.data) setDataForms(fromDB(f2.data));
     };
     // display_order เป็นตารางเล็ก (ไม่มีรูป) ดึงใหม่ทั้งตารางถูกกว่าไล่ diff ทีละแถว
     let orderTimer = null;
@@ -299,6 +309,13 @@ export default function App() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications' }, handle(setNotifications))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'display_order' }, () => { reloadOrder(); })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'public_holidays' }, handle(setPublicHolidays))
+      // ฟอร์มที่เพิ่งถูกมอบหมายให้เรา มาถึงเป็น UPDATE ทั้งที่ยังไม่มีในเครื่อง (RLS เพิ่งเปิดให้เห็น) → ต้อง upsert ไม่ใช่ map ทับ
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'data_forms' }, (payload) => {
+        const { eventType, new: nv, old: ov } = payload;
+        if (eventType === 'DELETE') { setDataForms((prev) => prev.filter((r) => r.id !== ov.id)); return; }
+        const row = fromDB(nv);
+        setDataForms((prev) => (prev.some((r) => r.id === row.id) ? prev.map((r) => (r.id === row.id ? row : r)) : [...prev, row]));
+      })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'notification_reads' }, (payload) => {
         const { eventType, new: nv, old: ov } = payload;
         if (eventType === 'INSERT') setNotiReads((prev) => prev.some((r) => r.notificationId === nv.notification_id && r.userId === nv.user_id) ? prev : [...prev, fromDB(nv)]);
@@ -311,6 +328,35 @@ export default function App() {
 
     return () => { cancelled = true; clearTimeout(orderTimer); document.removeEventListener('visibilitychange', onVisible); supabase.removeChannel(ch); };
   }, [profile?.id, profile?.role]);
+
+  // ---- แบบฟอร์มข้อมูลที่มอบหมายให้ฉัน + badge "ยังไม่ส่งเดือนนี้" ที่เมนู "ส่งข้อมูล" ----
+  const myForms = useMemo(() => dataForms.filter((f) => f.active !== false && f.assigneeUserId === profile?.id), [dataForms, profile?.id]);
+  useEffect(() => {
+    if (!profile || !myForms.length) { setMyFormsPending(0); return; }
+    let cancelled = false;
+    (async () => {
+      const d = new Date(); const y = d.getFullYear(), m = d.getMonth() + 1;
+      const [{ data, error }, visible] = await Promise.all([
+        supabase.from('data_form_submissions').select('form_id,status').eq('period_year', y).eq('period_month', m).in('form_id', myForms.map((f) => f.id)),
+        // ฟอร์มที่ถูกย้ายไปให้คนอื่นไม่ส่ง realtime มาหาเรา (มองไม่เห็นแล้ว) → เช็กว่าที่ถืออยู่ยังเห็นได้จริง ถ้าไม่ก็เอาออก
+        supabase.from('data_forms').select('id'),
+      ]);
+      if (cancelled) return;
+      if (visible.data) {
+        const ids = new Set(visible.data.map((r) => r.id));
+        // สร้าง array ใหม่เฉพาะตอนมีของหาย ไม่งั้น myForms เปลี่ยน ref → effect นี้วนไม่รู้จบ
+        setDataForms((prev) => (prev.some((f) => !ids.has(f.id)) ? prev.filter((f) => ids.has(f.id)) : prev));
+      }
+      if (error) { console.error(error); return; }
+      const done = new Set((data || []).filter((r) => r.status === 'submitted').map((r) => r.form_id));
+      setMyFormsPending(myForms.filter((f) => !done.has(f.id)).length);
+    })();
+    return () => { cancelled = true; };
+  }, [profile?.id, myForms, formsEpoch]);
+  // หน้า "ส่งข้อมูล" ของคนที่ไม่ใช่เจ้าของ อยู่ได้เฉพาะตอนยังมีฟอร์มที่มอบหมายให้ — ถูกย้ายไปให้คนอื่นแล้วกลับไปภาพรวม ไม่ค้างหน้าเปล่า
+  useEffect(() => {
+    if (view === 'myforms' && profile && !profile.isOwner && !myForms.length) setView('dashboard');
+  }, [view, profile, myForms]);
 
   // ---- HANDLERS ----
   const changeBusiness = (id) => { setActiveBusinessId(id || null); setActiveZoneId(null); };
@@ -469,7 +515,7 @@ export default function App() {
   // ---- SYNC LOCAL STATE ----
   // อัปเดต state ทันทีหลังบันทึก ไม่รอ realtime (realtime อาจหลุด/ช้า/ถูก RLS กรอง
   // ทำให้ผู้ใช้กด "บันทึก" แล้วหน้าจอไม่เปลี่ยน ทั้งที่ข้อมูลเข้า DB แล้ว)
-  const localSetters = { businesses: setBusinesses, zones: setZones, positions: setPositions, employees: setEmployees, user_profiles: setProfiles, notifications: setNotifications, public_holidays: setPublicHolidays };
+  const localSetters = { businesses: setBusinesses, zones: setZones, positions: setPositions, employees: setEmployees, user_profiles: setProfiles, notifications: setNotifications, public_holidays: setPublicHolidays, data_forms: setDataForms };
   const localTransform = (table, row) => {
     if (canPayRef.current) return row;
     if (table === 'employees') return stripEmployeePay(row);
@@ -634,6 +680,36 @@ export default function App() {
     publicHoliday: {
       add: (d) => insertRow('public_holidays', d),
       delete: (id) => deleteRow('public_holidays', id),
+    },
+    // แบบฟอร์มข้อมูลประจำเดือน — เจ้าของสร้าง/มอบหมาย (RLS: owner เท่านั้นที่เขียน data_forms)
+    dataForm: {
+      add: (d) => insertRow('data_forms', d),
+      update: (id, d) => updateRow('data_forms', id, { ...d, updatedAt: new Date().toISOString() }),
+      delete: (id) => deleteRow('data_forms', id),
+    },
+    // ข้อมูลที่ผู้ถูกมอบหมายส่งมาแต่ละงวด — เจ้าของ/ผู้ถูกมอบหมายเขียน · เจ้าของ/คนมีสิทธิ์เงินเดือน/ผู้ถูกมอบหมาย อ่าน
+    dataSubmission: {
+      get: async (formId, year, month) => {
+        const { data, error } = await supabase.from('data_form_submissions').select('*')
+          .eq('form_id', formId).eq('period_year', year).eq('period_month', month).maybeSingle();
+        if (error) { console.error(error); return null; }
+        return data ? fromDB(data) : null;
+      },
+      // ทุกฟอร์มของงวด (ใช้ในหน้าคอม) — RLS กรองให้เห็นเฉพาะที่มีสิทธิ์
+      listByPeriod: async (year, month) => {
+        const { data, error } = await supabase.from('data_form_submissions').select('*')
+          .eq('period_year', year).eq('period_month', month);
+        if (error) { console.error(error); return []; }
+        return fromDB(data || []);
+      },
+      upsert: async (d) => {
+        const { data, error } = await supabase.from('data_form_submissions')
+          .upsert(toDB(d), { onConflict: 'form_id,period_year,period_month' })
+          .select().single();
+        if (error) { alert('บันทึกข้อมูลไม่สำเร็จ: ' + error.message); return null; }
+        setFormsEpoch((n) => n + 1);
+        return fromDB(data);
+      },
     },
     payrollItem: {
       listByPayrolls: async (ids) => {
@@ -827,6 +903,8 @@ export default function App() {
         activeBusinessId={activeBusinessId}
         setActiveBusinessId={changeBusiness}
         onThemeChange={changeTheme}
+        myFormCount={myForms.length}
+        myFormsPending={myFormsPending}
         open={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
       />
@@ -931,6 +1009,25 @@ export default function App() {
             employees={employees}
             positions={positions}
             activeBusinessId={activeBusinessId}
+            dataForms={dataForms}
+            profiles={profiles}
+            ops={ops}
+          />
+        )}
+        {view === 'myforms' && (profile.isOwner || myForms.length > 0) && (
+          <MyFormsPage
+            forms={dataForms}
+            profile={profile}
+            profiles={profiles}
+            businesses={businesses}
+            ops={ops}
+          />
+        )}
+        {view === 'dataforms' && profile.isOwner && (
+          <DataFormsAdminPage
+            forms={dataForms}
+            profiles={profiles}
+            businesses={businesses}
             ops={ops}
           />
         )}

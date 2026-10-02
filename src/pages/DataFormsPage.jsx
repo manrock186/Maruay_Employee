@@ -1,0 +1,323 @@
+import React, { useState, useEffect, useMemo } from 'react';
+import { ClipboardList, FileText, Plus, Trash2, Check, Send, ChevronLeft, ChevronRight, ArrowUp, ArrowDown, Pencil, UserCheck, AlertCircle, Table2 } from 'lucide-react';
+import { MONTH_NAMES, fmt } from '../lib/payroll.js';
+import { FIELD_TYPES, COLUMN_TYPES, SOURCES, newKey, normalizeFields, answerProgress, isSubmitted, editedAfterSubmit, prevPeriod, nextPeriod } from '../lib/dataForms.js';
+import { FieldInput } from '../components/DataFormFields.jsx';
+import { Modal, FormField, FormActions, EmptyState, PageHeader } from '../ui/index.jsx';
+
+// คนที่ไม่ใช่เจ้าของโหลด profiles มาแค่ของตัวเอง → ชื่อคนอื่นหาไม่เจอเป็นเรื่องปกติ
+const profileName = (profiles, id) => (profiles || []).find((p) => p.id === id)?.name || (id ? 'ผู้ใช้อื่น' : 'ยังไม่มอบหมาย');
+const bizName = (businesses, id) => (id ? (businesses.find((b) => b.id === id)?.name || '—') : 'ทุกธุรกิจ');
+
+// ============ หน้า "ส่งข้อมูล" — ผู้ถูกมอบหมายกรอกข้อมูลประจำเดือน (เจ้าของเห็นทุกฟอร์ม กรอกแทนได้) ============
+function MyFormsPage({ forms, profile, profiles, businesses, ops }) {
+  const now = new Date();
+  const myForms = useMemo(() => (forms || []).filter((f) => f.active !== false && (profile.isOwner || f.assigneeUserId === profile.id)).sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0)), [forms, profile]);
+  const [formId, setFormId] = useState(null);
+  const [year, setYear] = useState(now.getFullYear());
+  const [month, setMonth] = useState(now.getMonth() + 1);
+  const [sub, setSub] = useState(null);       // แถว submission ของงวดนี้ (null = ยังไม่มี)
+  const [prevSub, setPrevSub] = useState(null);
+  const [answers, setAnswers] = useState({});
+  const [note, setNote] = useState('');
+  const [dirty, setDirty] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const form = myForms.find((f) => f.id === formId) || myForms[0] || null;
+  const fields = useMemo(() => normalizeFields(form?.fields), [form]);
+  useEffect(() => { if (form && form.id !== formId) setFormId(form.id); }, [form, formId]);
+
+  useEffect(() => {
+    if (!form) return;
+    let cancelled = false;
+    setLoading(true);
+    (async () => {
+      const pp = prevPeriod(year, month);
+      const [cur, prev] = await Promise.all([ops.dataSubmission.get(form.id, year, month), ops.dataSubmission.get(form.id, pp.year, pp.month)]);
+      if (cancelled) return;
+      setSub(cur); setPrevSub(prev);
+      setAnswers(cur?.answers && typeof cur.answers === 'object' ? cur.answers : {});
+      setNote(cur?.note || '');
+      setDirty(false); setLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [form?.id, year, month]);
+
+  const setAnswer = (key, v) => { setAnswers((a) => ({ ...a, [key]: v })); setDirty(true); };
+  const progress = useMemo(() => answerProgress(fields, answers), [fields, answers]);
+  const submitted = isSubmitted(sub);
+  const edited = editedAfterSubmit(sub);
+
+  const persist = async (status) => {
+    if (!form) return;
+    if (status === 'submitted' && progress.missingRequired.length) { alert(`กรุณากรอกช่องที่จำเป็นก่อนส่ง: ${progress.missingRequired.join(', ')}`); return; }
+    setSaving(true);
+    const nowISO = new Date().toISOString();
+    const payload = {
+      formId: form.id, periodYear: year, periodMonth: month, answers, note: note.trim() || null,
+      status: status === 'submitted' ? 'submitted' : (submitted ? 'submitted' : 'draft'),
+      updatedAt: nowISO,
+    };
+    if (status === 'submitted') { payload.submittedBy = profile.id; payload.submittedAt = nowISO; }
+    const saved = await ops.dataSubmission.upsert(payload);
+    setSaving(false);
+    if (saved) { setSub(saved); setDirty(false); if (status === 'submitted') alert(`ส่งข้อมูล "${form.name}" งวด ${MONTH_NAMES[month - 1]} ${year + 543} เรียบร้อย`); }
+  };
+
+  const changePeriod = (p) => {
+    if (dirty && !window.confirm('มีข้อมูลที่ยังไม่ได้บันทึก — เปลี่ยนเดือนโดยไม่บันทึก?')) return;
+    setYear(p.year); setMonth(p.month);
+  };
+  const changeForm = (id) => {
+    if (dirty && !window.confirm('มีข้อมูลที่ยังไม่ได้บันทึก — เปลี่ยนฟอร์มโดยไม่บันทึก?')) return;
+    setFormId(id);
+  };
+
+  if (!myForms.length) return (
+    <div className="h-full overflow-auto"><PageHeader title="ส่งข้อมูล" /><div className="p-4 md:p-8"><EmptyState icon={ClipboardList} title="ยังไม่มีแบบฟอร์มที่มอบหมายให้คุณ" description="เมื่อเจ้าของระบบมอบหมายแบบฟอร์มให้ จะแสดงที่นี่" /></div></div>
+  );
+
+  return (
+    <div className="h-full overflow-auto">
+      <PageHeader title="ส่งข้อมูล" subtitle={form ? `${form.name} — งวด ${MONTH_NAMES[month - 1]} ${year + 543}` : ''}>
+        <div className="flex gap-2">
+          <button onClick={() => persist('draft')} disabled={saving || loading || !form} className="flex items-center gap-2 px-3 py-2 bg-white hover:bg-stone-50 border border-stone-300 disabled:opacity-50 text-stone-700 rounded-lg text-sm font-medium"><Check className="w-4 h-4" />{submitted ? 'บันทึกการแก้ไข' : 'บันทึกร่าง'}</button>
+          <button onClick={() => persist('submitted')} disabled={saving || loading || !form} className="flex items-center gap-2 px-4 py-2 bg-emerald-900 hover:bg-emerald-800 disabled:opacity-50 text-white rounded-lg text-sm font-medium"><Send className="w-4 h-4" />{saving ? 'กำลังบันทึก...' : (submitted ? 'ส่งอีกครั้ง' : 'ส่งข้อมูล')}</button>
+        </div>
+      </PageHeader>
+      <div className="p-4 md:p-6 space-y-4 max-w-4xl">
+        {myForms.length > 1 && (
+          <div className="flex flex-wrap gap-2">
+            {myForms.map((f) => (
+              <button key={f.id} onClick={() => changeForm(f.id)} className={`px-3 py-1.5 rounded-lg text-sm border ${form?.id === f.id ? 'bg-emerald-900 text-white border-emerald-900' : 'bg-white text-stone-700 border-stone-300 hover:bg-stone-50'}`}>{f.name}</button>
+            ))}
+          </div>
+        )}
+        <div className="flex flex-wrap items-center gap-2">
+          <button onClick={() => changePeriod(prevPeriod(year, month))} className="p-2 rounded-lg border border-stone-300 bg-white hover:bg-stone-50" aria-label="เดือนก่อน"><ChevronLeft className="w-4 h-4" /></button>
+          <select value={month} onChange={(e) => changePeriod({ year, month: Number(e.target.value) })} className="px-3 py-2 border border-stone-300 rounded-lg bg-white">
+            {MONTH_NAMES.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
+          </select>
+          <select value={year} onChange={(e) => changePeriod({ year: Number(e.target.value), month })} className="px-3 py-2 border border-stone-300 rounded-lg bg-white">
+            {[now.getFullYear() + 1, now.getFullYear(), now.getFullYear() - 1, now.getFullYear() - 2].map((y) => <option key={y} value={y}>{y + 543}</option>)}
+          </select>
+          <button onClick={() => changePeriod(nextPeriod(year, month))} className="p-2 rounded-lg border border-stone-300 bg-white hover:bg-stone-50" aria-label="เดือนถัดไป"><ChevronRight className="w-4 h-4" /></button>
+          {loading ? <span className="text-xs text-stone-400">กำลังโหลด...</span> : (
+            <span className={`text-xs px-2 py-1 rounded-full ${submitted ? 'bg-emerald-100 text-emerald-800' : sub ? 'bg-amber-100 text-amber-800' : 'bg-stone-100 text-stone-500'}`}>
+              {submitted ? `ส่งแล้ว ${fmt(sub.submittedAt)}${sub.submittedBy && sub.submittedBy !== profile.id ? ` โดย ${profileName(profiles, sub.submittedBy)}` : ''}${edited ? ' · แก้ไขหลังส่ง' : ''}` : sub ? `ร่าง (บันทึก ${fmt(sub.updatedAt)})` : 'ยังไม่ได้กรอก'}
+            </span>
+          )}
+          {dirty && <span className="text-xs text-amber-700">ยังไม่ได้บันทึก</span>}
+        </div>
+
+        {form && (
+          <div className="bg-white border border-stone-200 rounded-xl p-4 md:p-5 space-y-4">
+            <div className="flex items-start justify-between gap-3 flex-wrap">
+              <div>
+                <h3 className="font-medium text-stone-800">{form.name}</h3>
+                {form.description && <p className="text-sm text-stone-500 mt-0.5">{form.description}</p>}
+                <p className="text-xs text-stone-400 mt-1">{bizName(businesses, form.businessId)} · ผู้กรอก: {profileName(profiles, form.assigneeUserId)}{form.source === 'maruay-property' ? ' · (phase 2: ดึงจาก maruay-property)' : ''}</p>
+              </div>
+              <span className="text-xs text-stone-500">กรอกแล้ว {progress.filled}/{progress.total} ช่อง</span>
+            </div>
+            {!fields.length && <p className="text-sm text-stone-400">ฟอร์มนี้ยังไม่มีช่องให้กรอก — แจ้งเจ้าของระบบ</p>}
+            {fields.map((f) => (
+              <FieldInput key={f.key} field={f} value={answers[f.key]} prevValue={prevSub?.answers?.[f.key]} onChange={(v) => setAnswer(f.key, v)} disabled={saving} />
+            ))}
+            <FormField label="หมายเหตุถึงผู้คิดคอม">
+              <textarea rows={2} value={note} onChange={(e) => { setNote(e.target.value); setDirty(true); }} disabled={saving} className="w-full px-3 py-2 border border-stone-300 rounded-lg text-sm resize-y" placeholder="ถ้ามี" />
+            </FormField>
+            <p className="text-xs text-stone-400">ตัวเลขจางๆ ในช่อง = ค่าของเดือนก่อน (ดูเทียบได้ ไม่ได้ถูกนำมาใช้) · "บันทึกร่าง" เก็บไว้ก่อน · "ส่งข้อมูล" แจ้งว่าพร้อมให้คิดคอมได้แล้ว</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ============ หน้า "แบบฟอร์มข้อมูล" — เจ้าของสร้างฟอร์ม / กำหนดช่อง / มอบหมายผู้กรอก ============
+function DataFormsAdminPage({ forms, profiles, businesses, ops }) {
+  const [editing, setEditing] = useState(null); // null | { ...form } (id ว่าง = สร้างใหม่)
+  const sorted = useMemo(() => [...(forms || [])].sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0) || String(a.createdAt || '').localeCompare(String(b.createdAt || ''))), [forms]);
+  const assignable = useMemo(() => (profiles || []).filter((p) => p.role && p.role !== 'pending'), [profiles]);
+
+  const blank = () => ({ id: null, key: newKey('form'), name: '', description: '', businessId: '', assigneeUserId: '', source: 'manual', active: true, sortOrder: (sorted.length + 1), fields: [] });
+  const remove = async (f) => {
+    if (!window.confirm(`ลบแบบฟอร์ม "${f.name}"? ข้อมูลที่เคยส่งมาทุกเดือนของฟอร์มนี้จะถูกลบไปด้วย`)) return;
+    await ops.dataForm.delete(f.id);
+  };
+  const toggleActive = (f) => ops.dataForm.update(f.id, { active: !(f.active !== false) });
+
+  return (
+    <div className="h-full overflow-auto">
+      <PageHeader title="แบบฟอร์มข้อมูล" subtitle="ฟอร์มที่ให้ผู้จัดการกรอกทุกเดือน เพื่อนำไปประกอบการคิดคอมมิชชั่น">
+        <button onClick={() => setEditing(blank())} className="flex items-center gap-2 px-4 py-2 bg-emerald-900 hover:bg-emerald-800 text-white rounded-lg text-sm font-medium"><Plus className="w-4 h-4" />สร้างแบบฟอร์ม</button>
+      </PageHeader>
+      <div className="p-4 md:p-6 space-y-3 max-w-4xl">
+        <p className="text-sm text-stone-500">ใครถูกมอบหมาย จะเห็นเมนู "ส่งข้อมูล" ตามบัญชีผู้ใช้ของตัวเอง — เปลี่ยนคนกรอกได้ที่นี่โดยไม่ต้องแก้ฟอร์ม · ข้อมูลที่ส่งมาจะไปโชว์ในหน้าคอมมิชชั่นของงวดนั้น</p>
+        {!sorted.length && <EmptyState icon={FileText} title="ยังไม่มีแบบฟอร์ม" description="สร้างแบบฟอร์มแรก เช่น ค่าน้ำ-ค่าไฟประจำเดือน" action={<button onClick={() => setEditing(blank())} className="px-4 py-2 bg-emerald-900 text-white rounded-lg text-sm">สร้างแบบฟอร์ม</button>} />}
+        {sorted.map((f) => {
+          const fs = normalizeFields(f.fields);
+          return (
+            <div key={f.id} className={`bg-white border rounded-xl p-4 ${f.active === false ? 'border-stone-200 opacity-60' : 'border-stone-200'}`}>
+              <div className="flex items-start justify-between gap-3 flex-wrap">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h3 className="font-medium text-stone-800">{f.name}</h3>
+                    {f.active === false && <span className="text-[10px] px-1.5 py-0.5 rounded bg-stone-100 text-stone-500">ปิดใช้</span>}
+                    {f.source === 'maruay-property' && <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-100 text-sky-700">maruay-property</span>}
+                  </div>
+                  {f.description && <p className="text-sm text-stone-500 mt-0.5">{f.description}</p>}
+                  <p className="text-xs text-stone-500 mt-1.5 flex items-center gap-1 flex-wrap"><UserCheck className="w-3.5 h-3.5 text-emerald-700" />ผู้กรอก: <b className={f.assigneeUserId ? 'text-stone-700' : 'text-amber-700'}>{profileName(profiles, f.assigneeUserId)}</b> · {bizName(businesses, f.businessId)} · {fs.length} ช่อง{fs.some((x) => x.type === 'table') ? ` (ตาราง ${fs.filter((x) => x.type === 'table').length})` : ''}</p>
+                </div>
+                <div className="flex items-center gap-1">
+                  <button onClick={() => setEditing({ ...f, businessId: f.businessId || '', assigneeUserId: f.assigneeUserId || '', description: f.description || '', fields: fs })} className="flex items-center gap-1 px-2.5 py-1.5 text-sm text-stone-700 hover:bg-stone-100 rounded-lg"><Pencil className="w-3.5 h-3.5" />แก้ไข</button>
+                  <button onClick={() => toggleActive(f)} className="px-2.5 py-1.5 text-sm text-stone-600 hover:bg-stone-100 rounded-lg">{f.active === false ? 'เปิดใช้' : 'ปิดใช้'}</button>
+                  <button onClick={() => remove(f)} className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg" title="ลบ"><Trash2 className="w-4 h-4" /></button>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {editing && <FormEditorModal form={editing} profiles={assignable} businesses={businesses} ops={ops} onClose={() => setEditing(null)} />}
+    </div>
+  );
+}
+
+// ---- โมดัลแก้ฟอร์ม + ตัวแก้ช่อง ----
+function FormEditorModal({ form, profiles, businesses, ops, onClose }) {
+  const [f, setF] = useState(form);
+  const [saving, setSaving] = useState(false);
+  const set = (patch) => setF((x) => ({ ...x, ...patch }));
+  const setField = (i, patch) => set({ fields: f.fields.map((x, idx) => (idx === i ? { ...x, ...patch } : x)) });
+  const addField = (type) => set({ fields: [...f.fields, { key: newKey(), label: '', type, unit: '', hint: '', required: false, ...(type === 'table' ? { columns: [{ key: newKey('c'), label: '', type: 'number' }], rows: [] } : {}) }] });
+  const rmField = (i) => set({ fields: f.fields.filter((_, idx) => idx !== i) });
+  const move = (i, dir) => {
+    const j = i + dir; if (j < 0 || j >= f.fields.length) return;
+    const arr = [...f.fields]; [arr[i], arr[j]] = [arr[j], arr[i]]; set({ fields: arr });
+  };
+
+  const save = async () => {
+    const name = (f.name || '').trim();
+    if (!name) { alert('กรุณาใส่ชื่อแบบฟอร์ม'); return; }
+    const fields = normalizeFields(f.fields).map((x) => ({ ...x, label: (x.label || '').trim() }));
+    const noLabel = fields.filter((x) => !x.label);
+    if (noLabel.length) { alert('มีช่องที่ยังไม่ได้ตั้งชื่อ — ใส่ชื่อหรือลบช่องนั้นก่อน'); return; }
+    const badTable = fields.find((x) => x.type === 'table' && (!x.columns.length || x.columns.some((c) => !(c.label || '').trim()) || x.rows.some((r) => !(r.label || '').trim())));
+    if (badTable) { alert(`ตาราง "${badTable.label}" ต้องมีอย่างน้อย 1 คอลัมน์ และคอลัมน์/แถวทุกอันต้องมีชื่อ`); return; }
+    setSaving(true);
+    const payload = {
+      key: f.key, name, description: (f.description || '').trim() || null,
+      businessId: f.businessId || null, assigneeUserId: f.assigneeUserId || null,
+      source: f.source || 'manual', active: f.active !== false, sortOrder: Number(f.sortOrder) || 0, fields,
+      updatedAt: new Date().toISOString(),
+    };
+    const ok = f.id ? await ops.dataForm.update(f.id, payload) : await ops.dataForm.add(payload);
+    setSaving(false);
+    if (ok) onClose();
+  };
+
+  const inputCls = 'w-full px-3 py-2 border border-stone-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/40';
+  const smallCls = 'px-2 py-1.5 border border-stone-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/40';
+  return (
+    <Modal title={f.id ? 'แก้ไขแบบฟอร์ม' : 'สร้างแบบฟอร์ม'} onClose={onClose} wide>
+      <div className="space-y-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <FormField label="ชื่อแบบฟอร์ม" required><input value={f.name} onChange={(e) => set({ name: e.target.value })} className={inputCls} placeholder="เช่น ค่าน้ำ-ค่าไฟ ประจำเดือน" /></FormField>
+          <FormField label="ผู้กรอก (มอบหมายตามบัญชีผู้ใช้)">
+            <select value={f.assigneeUserId} onChange={(e) => set({ assigneeUserId: e.target.value })} className={inputCls}>
+              <option value="">— ยังไม่มอบหมาย —</option>
+              {profiles.map((p) => <option key={p.id} value={p.id}>{p.name || p.id}</option>)}
+            </select>
+          </FormField>
+          <FormField label="ธุรกิจที่เกี่ยวข้อง">
+            <select value={f.businessId} onChange={(e) => set({ businessId: e.target.value })} className={inputCls}>
+              <option value="">ทุกธุรกิจ / ส่วนกลาง</option>
+              {businesses.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+            </select>
+          </FormField>
+          <FormField label="ที่มาของข้อมูล">
+            <select value={f.source || 'manual'} onChange={(e) => set({ source: e.target.value })} className={inputCls}>
+              {SOURCES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+            </select>
+          </FormField>
+        </div>
+        <FormField label="คำอธิบาย (โชว์ให้ผู้กรอกเห็น)"><textarea rows={2} value={f.description} onChange={(e) => set({ description: e.target.value })} className={`${inputCls} resize-y`} /></FormField>
+        <div className="flex items-center gap-4 text-sm">
+          <label className="flex items-center gap-2"><input type="checkbox" checked={f.active !== false} onChange={(e) => set({ active: e.target.checked })} className="w-4 h-4 accent-emerald-700" />เปิดใช้งาน</label>
+          <label className="flex items-center gap-2">ลำดับ <input type="number" value={f.sortOrder ?? 0} onChange={(e) => set({ sortOrder: e.target.value })} className={`${smallCls} w-16 text-right`} /></label>
+        </div>
+
+        <div className="border-t border-stone-200 pt-3">
+          <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
+            <h4 className="text-sm font-medium text-stone-700">ช่องที่ให้กรอก ({f.fields.length})</h4>
+            <div className="flex flex-wrap gap-1">
+              {FIELD_TYPES.map((t) => <button key={t.value} type="button" onClick={() => addField(t.value)} className="flex items-center gap-1 px-2 py-1 text-xs bg-stone-100 hover:bg-stone-200 rounded-md text-stone-700">{t.value === 'table' ? <Table2 className="w-3 h-3" /> : <Plus className="w-3 h-3" />}{t.label}</button>)}
+            </div>
+          </div>
+          {!f.fields.length && <p className="text-xs text-stone-400 flex items-center gap-1"><AlertCircle className="w-3.5 h-3.5" />ยังไม่มีช่อง — กดปุ่มด้านบนเพื่อเพิ่ม (ตัวเลข / ข้อความ / ตาราง)</p>}
+          <div className="space-y-2">
+            {f.fields.map((x, i) => (
+              <div key={x.key} className="border border-stone-200 rounded-lg p-3 bg-stone-50/60 space-y-2">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-white border border-stone-200 text-stone-500">{FIELD_TYPES.find((t) => t.value === x.type)?.label || x.type}</span>
+                  <input value={x.label} onChange={(e) => setField(i, { label: e.target.value })} className={`${smallCls} flex-1 min-w-[10rem] bg-white`} placeholder="ชื่อช่อง เช่น ค่าช้อนส้อม" />
+                  {x.type === 'number' && <input value={x.unit || ''} onChange={(e) => setField(i, { unit: e.target.value })} className={`${smallCls} w-20 bg-white`} placeholder="หน่วย" />}
+                  <label className="flex items-center gap-1 text-xs text-stone-600"><input type="checkbox" checked={!!x.required} onChange={(e) => setField(i, { required: e.target.checked })} className="accent-emerald-700" />จำเป็น</label>
+                  <div className="flex items-center">
+                    <button type="button" onClick={() => move(i, -1)} disabled={i === 0} className="p-1 text-stone-400 hover:text-stone-700 disabled:opacity-30" title="เลื่อนขึ้น"><ArrowUp className="w-3.5 h-3.5" /></button>
+                    <button type="button" onClick={() => move(i, 1)} disabled={i === f.fields.length - 1} className="p-1 text-stone-400 hover:text-stone-700 disabled:opacity-30" title="เลื่อนลง"><ArrowDown className="w-3.5 h-3.5" /></button>
+                    <button type="button" onClick={() => rmField(i)} className="p-1 text-red-400 hover:text-red-600" title="ลบช่อง"><Trash2 className="w-3.5 h-3.5" /></button>
+                  </div>
+                </div>
+                <input value={x.hint || ''} onChange={(e) => setField(i, { hint: e.target.value })} className={`${smallCls} w-full bg-white`} placeholder="คำอธิบายใต้ช่อง (ถ้ามี)" />
+                {x.type === 'table' && <TableDefEditor field={x} onChange={(patch) => setField(i, patch)} smallCls={smallCls} />}
+              </div>
+            ))}
+          </div>
+        </div>
+        <FormActions onCancel={onClose} onSubmit={save} submitLabel={saving ? 'กำลังบันทึก...' : 'บันทึกแบบฟอร์ม'} />
+      </div>
+    </Modal>
+  );
+}
+
+function TableDefEditor({ field, onChange, smallCls }) {
+  const cols = field.columns || [];
+  const rows = field.rows || [];
+  const setCol = (i, patch) => onChange({ columns: cols.map((c, idx) => (idx === i ? { ...c, ...patch } : c)) });
+  const setRow = (i, patch) => onChange({ rows: rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r)) });
+  const dynamic = rows.length === 0;
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+      <div>
+        <div className="flex items-center justify-between mb-1"><span className="text-xs font-medium text-stone-600">คอลัมน์ ({cols.length})</span><button type="button" onClick={() => onChange({ columns: [...cols, { key: newKey('c'), label: '', type: 'number' }] })} className="text-xs text-emerald-700 hover:underline flex items-center gap-1"><Plus className="w-3 h-3" />เพิ่มคอลัมน์</button></div>
+        <div className="space-y-1">
+          {cols.map((c, i) => (
+            <div key={c.key} className="flex items-center gap-1">
+              <input value={c.label} onChange={(e) => setCol(i, { label: e.target.value })} className={`${smallCls} flex-1 bg-white`} placeholder="ชื่อคอลัมน์" />
+              <select value={c.type} onChange={(e) => setCol(i, { type: e.target.value })} className={`${smallCls} bg-white`}>{COLUMN_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}</select>
+              <button type="button" onClick={() => onChange({ columns: cols.filter((_, idx) => idx !== i) })} className="p-1 text-red-400 hover:text-red-600"><Trash2 className="w-3.5 h-3.5" /></button>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div>
+        <div className="flex items-center justify-between mb-1"><span className="text-xs font-medium text-stone-600">แถว ({rows.length})</span><button type="button" onClick={() => onChange({ rows: [...rows, { key: newKey('r'), label: '' }] })} className="text-xs text-emerald-700 hover:underline flex items-center gap-1"><Plus className="w-3 h-3" />เพิ่มแถว</button></div>
+        {dynamic && <p className="text-[11px] text-stone-400 mb-1">ไม่กำหนดแถว = ผู้กรอกเพิ่มแถวเองได้ (เช่น รายชื่อผู้เช่าที่เข้า-ออก)</p>}
+        <div className="space-y-1">
+          {rows.map((r, i) => (
+            <div key={r.key} className="flex items-center gap-1">
+              <input value={r.label} onChange={(e) => setRow(i, { label: e.target.value })} className={`${smallCls} flex-1 bg-white`} placeholder="ชื่อแถว เช่น ค่าไฟ 7003xxxx" />
+              <button type="button" onClick={() => onChange({ rows: rows.filter((_, idx) => idx !== i) })} className="p-1 text-red-400 hover:text-red-600"><Trash2 className="w-3.5 h-3.5" /></button>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export { MyFormsPage, DataFormsAdminPage };

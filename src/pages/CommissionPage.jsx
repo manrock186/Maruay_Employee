@@ -1,15 +1,18 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Users, Plus, Trash2, Banknote, Check, Percent, Upload, ClipboardPaste, ChevronDown, ChevronUp, X, RefreshCw, Layers, AlertCircle } from 'lucide-react';
+import { Users, Plus, Trash2, Banknote, Check, Percent, Upload, ClipboardPaste, ChevronDown, ChevronUp, X, RefreshCw, Layers, AlertCircle, ClipboardList, ArrowRight } from 'lucide-react';
 import { dispName, isActive } from '../lib/format.js';
 import { NO_DEPT, employeeDepartment } from '../lib/order.js';
 import { MONTH_NAMES, payMonthLabel, fmtMoney, fmt, holidayBalance } from '../lib/payroll.js';
 import { parseLoyverseText, computeCommission } from '../lib/commission.js';
+import { normalizeFields, numericSummary, isSubmitted, editedAfterSubmit } from '../lib/dataForms.js';
+import { AnswersView } from '../components/DataFormFields.jsx';
 import { FormField, EmptyState, PageHeader } from '../ui/index.jsx';
 
 // ============ COMMISSION PAGE (คอมมิชชั่น) ============
 // ก้อนที่ 1 (POS): กองกลาง = กำไร Loyverse − รายการหัก → × % ต่อคน → หักวันหยุดเกินสิทธิ (÷30) → ส่วนที่หายแบ่งในแผนก
 // ก้อนที่ 2 (ร้านค้า): ใส่ยอดมือไปก่อน (จะทำรายละเอียดทีหลัง)
-function CommissionPage({ businesses, employees, positions, activeBusinessId, ops }) {
+// ข้อมูลจากผู้จัดการ (แบบฟอร์มข้อมูลประจำเดือน) โชว์ในก้อนที่ 1 — กดใส่ตัวเลขเป็นรายการหักได้เลย ไม่ต้องพิมพ์ซ้ำ
+function CommissionPage({ businesses, employees, positions, activeBusinessId, dataForms = [], profiles = [], ops }) {
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth() + 1);
@@ -28,6 +31,8 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, op
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState(null);
   const [dedCarried, setDedCarried] = useState(false); // รายการหักถูกดึงมาจากเดือนก่อน (ยังไม่บันทึก)
+  const [submissions, setSubmissions] = useState({}); // formId -> ข้อมูลที่ผู้จัดการส่งมาของงวดนี้
+  const [openForm, setOpenForm] = useState(null);     // formId ที่กางดูรายละเอียด
   const fileRef = useRef(null);
 
   const business = businesses.find((b) => b.id === activeBusinessId);
@@ -41,14 +46,25 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, op
     return m;
   };
 
+  // ฟอร์มที่เกี่ยวกับธุรกิจนี้ (หรือส่วนกลาง) ที่ยังเปิดใช้ — เรียงตาม sort_order
+  const periodForms = useMemo(() => (dataForms || []).filter((f) => f.active !== false && (!f.businessId || f.businessId === activeBusinessId)).sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0)), [dataForms, activeBusinessId]);
+  const loadSubmissions = async () => {
+    const rows = await ops.dataSubmission.listByPeriod(year, month);
+    const m = {}; rows.forEach((s) => { m[s.formId] = s; });
+    return m;
+  };
+  const refreshSubmissions = async () => { setSubmissions(await loadSubmissions()); };
+
   useEffect(() => {
     if (!activeBusinessId) return;
     let cancelled = false;
     setLoading(true);
     (async () => {
-      const [pool, pe] = await Promise.all([ops.commission.getByPeriod(activeBusinessId, year, month), loadPayrollExcess()]);
+      const [pool, pe, subs] = await Promise.all([ops.commission.getByPeriod(activeBusinessId, year, month), loadPayrollExcess(), loadSubmissions()]);
       if (cancelled) return;
       setPayrollExcess(pe);
+      setSubmissions(subs);
+      setOpenForm(null);
       const emFromProfile = () => { const em = {}; bizEmployees.forEach((e) => { if (e.commissionPct != null) em[e.id] = { pct: e.commissionPct, amount: '', pct2: '', amount2: '', excessDays: '' }; }); return em; };
       if (pool) {
         setDedCarried(false);
@@ -71,7 +87,7 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, op
         const prevPool = await ops.commission.getByPeriod(activeBusinessId, prev.y, prev.m);
         if (cancelled) return;
         if (prevPool && (prevPool.deductions || []).length) {
-          setDeductions(prevPool.deductions.map((d) => ({ label: d.label || '', amount: '' })));
+          setDeductions(prevPool.deductions.map((d) => ({ label: d.label || '', amount: '', ...(d.srcKey ? { srcKey: d.srcKey } : {}) })));
           setDedCarried(true);
         } else {
           setDeductions([]); setDedCarried(false);
@@ -140,6 +156,27 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, op
   const addDeduction = () => setDeductions((d) => [...d, { label: '', amount: '' }]);
   const setDed = (i, patch) => setDeductions((d) => d.map((x, idx) => idx === i ? { ...x, ...patch } : x));
   const rmDed = (i) => setDeductions((d) => d.filter((_, idx) => idx !== i));
+  // ใส่ตัวเลขจากฟอร์มผู้จัดการเป็นรายการหัก — จับคู่ด้วย srcKey (ฟอร์ม.ช่อง) ก่อน แล้วค่อยชื่อ (ตัดช่องว่าง) → ทับยอดเดิม · ไม่เจอ → เพิ่มแถวใหม่
+  const findDed = (list, srcKey, label) => {
+    const key = String(label || '').trim();
+    let i = srcKey ? list.findIndex((x) => x.srcKey === srcKey) : -1;
+    if (i < 0) i = list.findIndex((x) => String(x.label || '').trim() === key);
+    return i;
+  };
+  const applyFromForm = (srcKey, label, amount) => {
+    const key = String(label || '').trim();
+    setDeductions((d) => {
+      const i = findDed(d, srcKey, key);
+      if (i >= 0) return d.map((x, idx) => (idx === i ? { ...x, amount, srcKey } : x));
+      return [...d, { label: key, amount, srcKey }];
+    });
+    setDedCarried(false);
+  };
+  const dedAmountOf = (srcKey, label) => {
+    const i = findDed(deductions, srcKey, label);
+    const x = i >= 0 ? deductions[i] : null;
+    return x && x.amount !== '' && x.amount != null ? Number(x.amount) : null;
+  };
 
   const refreshExcess = async () => { setPayrollExcess(await loadPayrollExcess()); };
 
@@ -174,7 +211,8 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, op
         posItems: posItems || [],
         posImport: posImport || null,
         pool2Total: Number(pool2Total) || 0,
-        deductions: deductions.map((d) => ({ label: d.label || '', amount: Number(d.amount) || 0 })),
+        // srcKey = ฟอร์ม.ช่อง ที่ตัวเลขมาจาก (ถ้ากดจากข้อมูลผู้จัดการ) — เดือนถัดไปจะได้จับคู่ถูกแม้เปลี่ยนชื่อช่อง
+        deductions: deductions.map((d) => ({ label: d.label || '', amount: Number(d.amount) || 0, ...(d.srcKey ? { srcKey: d.srcKey } : {}) })),
         entries: entryList, note: note.trim() || null,
       });
       if (!ok) return;
@@ -287,6 +325,58 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, op
               <p className="text-xs text-stone-400 mt-1">{posImport ? 'เติมจากไฟล์ที่นำเข้า — แก้ทับได้' : 'นำเข้าไฟล์ด้านบน หรือกรอกเอง'}</p>
             </FormField>
           </div>
+          {periodForms.length > 0 && (
+            <div className="rounded-lg border border-sky-200 bg-sky-50/50 p-3 space-y-2">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <div className="flex items-center gap-1.5 text-sm font-medium text-sky-900"><ClipboardList className="w-4 h-4" />ข้อมูลจากผู้จัดการ งวด {MONTH_NAMES[month - 1]} {year + 543}</div>
+                <button onClick={refreshSubmissions} className="text-xs px-2 py-1 bg-white hover:bg-stone-50 border border-stone-200 rounded-md text-stone-600 flex items-center gap-1"><RefreshCw className="w-3 h-3" />โหลดใหม่</button>
+              </div>
+              {periodForms.map((f) => {
+                const s = submissions[f.id];
+                const fields = normalizeFields(f.fields);
+                const nums = s ? numericSummary(fields, s.answers) : [];
+                const who = profiles.find((p) => p.id === f.assigneeUserId)?.name || (f.assigneeUserId ? 'ผู้ใช้อื่น' : 'ยังไม่มอบหมาย');
+                const open = openForm === f.id;
+                return (
+                  <div key={f.id} className="bg-white rounded-md border border-sky-100 p-2.5">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <div className="text-sm text-stone-800">
+                        <b>{f.name}</b> <span className="text-xs text-stone-500">· {who}</span>
+                        {' '}
+                        {!s ? <span className="text-xs px-1.5 py-0.5 rounded bg-stone-100 text-stone-500">ยังไม่ส่ง</span>
+                          : isSubmitted(s) ? <span className="text-xs px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800">ส่งแล้ว {fmt(s.submittedAt)}{editedAfterSubmit(s) ? <b className="text-amber-700"> · แก้ไขหลังส่ง {fmt(s.updatedAt)}</b> : ''}</span>
+                          : <span className="text-xs px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">ร่าง (ยังไม่กดส่ง) {fmt(s.updatedAt)}</span>}
+                      </div>
+                      {s && <button onClick={() => setOpenForm(open ? null : f.id)} className="text-xs text-sky-700 hover:underline flex items-center gap-1">{open ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}{open ? 'ซ่อนรายละเอียด' : 'ดูรายละเอียด'}</button>}
+                    </div>
+                    {s?.note && <p className="text-xs text-stone-600 mt-1 whitespace-pre-wrap">หมายเหตุ: {s.note}</p>}
+                    {nums.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5 mt-2">
+                        {nums.map((n) => {
+                          const srcKey = `${f.id}.${n.key}`;
+                          const cur = dedAmountOf(srcKey, n.label);
+                          const applied = cur != null && Math.abs(cur - n.amount) < 0.005;
+                          const apply = () => {
+                            if (!isSubmitted(s) && !window.confirm(`ข้อมูลนี้ยังเป็น "ร่าง" (ผู้จัดการยังไม่กดส่ง) — ใช้ตัวเลขนี้เลย?`)) return;
+                            applyFromForm(srcKey, n.label, n.amount);
+                          };
+                          return (
+                            <button key={n.key} onClick={apply} title={applied ? 'ใส่เป็นรายการหักแล้ว' : `ใส่ "${n.label}" = ${fmtMoney(n.amount)} เป็นรายการหัก`}
+                              className={`flex items-center gap-1 px-2 py-1 rounded-md text-xs border ${applied ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-stone-50 hover:bg-amber-50 border-stone-200 hover:border-amber-300 text-stone-700'}`}>
+                              <span>{n.label}</span><b>{fmtMoney(n.amount)}</b>{applied ? <Check className="w-3 h-3" /> : <ArrowRight className="w-3 h-3" />}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                    {s && !nums.length && <p className="text-xs text-stone-400 mt-1">ไม่มีตัวเลขในข้อมูลที่ส่งมา</p>}
+                    {open && s && <div className="mt-2 pt-2 border-t border-stone-100"><AnswersView fields={fields} answers={s.answers} /></div>}
+                  </div>
+                );
+              })}
+              <p className="text-[11px] text-stone-500">กดตัวเลข → ใส่เป็นรายการหักด้านล่าง (ชื่อเดียวกันจะทับยอดเดิม) · ตั้งค่าฟอร์ม/คนกรอกที่เมนู "แบบฟอร์มข้อมูล"</p>
+            </div>
+          )}
           <div>
             <div className="flex items-center justify-between mb-1">
               <span className="text-xs font-medium text-stone-600">รายการหัก (น้ำไฟรวม, น้ำไฟที่ขาดทุน, ช้อนส้อม ฯลฯ)</span>

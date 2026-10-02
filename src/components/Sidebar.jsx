@@ -1,11 +1,11 @@
 import React from 'react';
-import { Users, Building2, Settings, LogOut, X, Home, Shield, Eye, Network, User, KeyRound, Crown, Award, Clock, Wallet, Banknote, Percent, Sparkles } from 'lucide-react';
+import { Users, Building2, Settings, LogOut, X, Home, Shield, Eye, Network, User, KeyRound, Crown, Award, Clock, Wallet, Banknote, Percent, Sparkles, ClipboardList, FileText } from 'lucide-react';
 import { supabase } from '../supabase.js';
 import { ThemePicker } from './ThemePicker.jsx';
 import { PushToggle } from './PushToggle.jsx';
 
 // ============ SIDEBAR ============
-function Sidebar({ view, setView, profile, businesses, zones, activeBusinessId, setActiveBusinessId, notiBell, onThemeChange, open, onClose }) {
+function Sidebar({ view, setView, profile, businesses, zones, activeBusinessId, setActiveBusinessId, notiBell, onThemeChange, myFormCount = 0, myFormsPending = 0, open, onClose }) {
   const isOwner = profile.isOwner;
   const isBM = profile.isBM;
   const isZM = profile.isZM;
@@ -28,6 +28,9 @@ function Sidebar({ view, setView, profile, businesses, zones, activeBusinessId, 
     { id: 'roomrent', label: 'ค่าห้องพนักงาน', icon: KeyRound, show: (isOwner || (isBM && navAllowed('roomrent'))) },
     { id: 'recurringtasks', label: 'งานเสริมประจำ', icon: Sparkles, show: (isOwner || (isBM && navAllowed('recurringtasks'))) },
     { id: 'advances', label: 'เบิกเงิน', icon: Banknote, show: profile.canManagePayroll && (isOwner || (isBM && navAllowed('advances'))) },
+    // "ส่งข้อมูล" โชว์ตามการมอบหมายรายบัญชี (ไม่ขึ้นกับ role/เมนูที่เปิด) — เจ้าของเห็นเสมอเพื่อกรอกแทน/ตรวจ
+    { id: 'myforms', label: 'ส่งข้อมูล', icon: ClipboardList, show: isOwner || myFormCount > 0, badge: myFormsPending },
+    { id: 'dataforms', label: 'แบบฟอร์มข้อมูล', icon: FileText, show: isOwner },
     { id: 'users', label: 'ผู้ใช้ระบบ', icon: Shield, show: isOwner },
     { id: 'auditlog', label: 'ประวัติการแก้ไข', icon: Clock, show: isOwner },
     { id: 'settings', label: 'ตั้งค่า', icon: Settings, show: isOwner },

@@ -6,6 +6,40 @@
 
 ---
 
+## 2026-10-02 (5) — แบบฟอร์มข้อมูลประจำเดือน: ผู้จัดการกรอกค่าน้ำไฟ / ผู้เช่า-ค่าเช่า → ใช้ในหน้าคอม
+
+**ทำไม:** user ขอหน้าให้ "ผู้ใช้บางคน" กรอกข้อมูลประกอบคิดคอมทุกเดือน (ผู้จัดการ A: ค่าน้ำไฟจากบิลการไฟฟ้า/ประปา · ผู้จัดการ B: ผู้เช่าเข้าออก + ค่าเช่ารวมแต่ละตึก)
+phase 1 คีย์มือ · phase 2 ดึงจากแอพ maruay-property · **แต่ละฟอร์ม assign ตามบัญชีผู้ใช้** เปลี่ยนคนกรอกได้ ใครถูกมอบหมายก็เห็นหน้านั้น
+
+**DB** — migration `data_forms_monthly_submissions` + `data_forms_scope_payroll_bm_by_business`
+- `data_forms` (key, name, description, business_id?, assignee_user_id → user_profiles set null, fields jsonb, source manual|maruay-property, active, sort_order)
+- `data_form_submissions` (form_id cascade, period_year/month, answers jsonb, note, status draft|submitted, submitted_by/at, unique ต่อฟอร์ม+งวด)
+- helper `is_form_assignee(form)` (ฟอร์มต้อง active) · `can_view_form(business, assignee)` = owner / ผู้ถูกมอบหมาย / BM มีสิทธิ์เงินเดือนเฉพาะธุรกิจที่ดูแล
+- RLS: ฟอร์มเขียน owner เท่านั้น · submissions เขียน owner หรือผู้ถูกมอบหมาย · ลบ owner · realtime เฉพาะ data_forms
+- seed 2 ฟอร์ม: "ค่าน้ำ-ค่าไฟ ประจำเดือน" (ตลาด; ตารางบิลไฟ/น้ำ 6 แถว × 4 คอลัมน์ตาม Excel, ตารางเก็บจากร้านค้า 5 แถว × หน้า/หลัง, ช้อนส้อม, หมายเหตุ)
+  มอบหมายผู้จัดการตลาด · "ผู้เช่าเข้า-ออก และค่าเช่าแต่ละตึก" (ส่วนกลาง; ตาราง 4 ตึก × เข้า/ออก/ห้องมีผู้เช่า/ค่าเช่ารวม, รายละเอียด, หมายเหตุ) มอบหมายผู้จัดการอพาร์ตเมนต์
+- จำลอง JWT: ผู้จัดการ A เห็นเฉพาะฟอร์มตัวเอง · insert ให้ฟอร์มของอีกคน → RLS error ✓ · update data_forms → 0 แถว ✓ · BM ไม่มีฟอร์ม → เห็น 0 ✓
+
+**โค้ด**
+- `lib/dataForms.js` ใหม่: ชนิดช่อง, `normalizeFields` (key ตามตำแหน่งถ้าไม่มี — ห้ามสุ่ม), `tableRows/tableColumnTotals` (ตารางแถวคงที่ = object, เพิ่มแถวเอง = array),
+  `numericSummary` (ช่องตัวเลข + ผลรวมคอลัมน์ตัวเลข → ปุ่มใส่รายการหัก), `answerProgress`, `editedAfterSubmit` · เทส node ผ่าน
+- `components/DataFormFields.jsx` ใหม่: `FieldInput`/`TableInput` (placeholder = ค่าเดือนก่อน, แถวรวม, เพิ่ม/ลบแถว, เตือนเมื่อรูปตารางเปลี่ยน) · `AnswersView` อ่านอย่างเดียว
+- `pages/DataFormsPage.jsx` ใหม่: `MyFormsPage` (เลือกฟอร์ม/เดือน, บันทึกร่าง, ส่ง/ส่งอีกครั้ง, ป้ายสถานะ, กันเปลี่ยนเดือนทั้งที่ยังไม่บันทึก)
+  · `DataFormsAdminPage` + `FormEditorModal` (ชื่อ/คำอธิบาย/ธุรกิจ/ผู้กรอก/ที่มา/เปิดใช้/ลำดับ + ตัวแก้ช่อง: เพิ่มตามชนิด, เลื่อน, ลบ, ตารางมีตัวแก้คอลัมน์+แถว)
+- `App.jsx`: state `dataForms` โหลด/refetch/realtime (handler upsert) · `myForms` + badge `myFormsPending` (เช็ก id ที่ยังเห็นด้วย ตัดฟอร์มที่ถูกย้ายออก)
+  · `ops.dataForm` / `ops.dataSubmission.get/listByPeriod/upsert` · route `myforms` (owner หรือมีฟอร์ม) / `dataforms` (owner) · กันค้างหน้า myforms เมื่อฟอร์มหาย
+- `Sidebar.jsx`: เมนู "ส่งข้อมูล" (badge ยังไม่ส่งเดือนนี้) + "แบบฟอร์มข้อมูล"
+- `CommissionPage.jsx`: กล่อง "ข้อมูลจากผู้จัดการ งวดนี้" ในก้อน 1 — สถานะ (ยังไม่ส่ง/ร่าง/ส่งแล้ว/แก้ไขหลังส่ง), ปุ่มตัวเลข → ใส่/ทับรายการหัก (จับคู่ srcKey ก่อนชื่อ),
+  ดูรายละเอียดคำตอบ, โหลดใหม่ · deductions เก็บ `srcKey` · ร่างใช้ได้แต่ confirm
+
+**Review (subagent) แก้แล้ว:** RLS BM-payroll ไม่ scope ธุรกิจ → `can_view_form` · realtime UPDATE ของแถวใหม่หาย → upsert · key สุ่มใหม่ทุก render → key ตามตำแหน่ง
+· ฟอร์มถูกย้ายแล้วค้าง → เช็ก id ใน badge effect + guard view · placeholder เดือนก่อนจัดรูปเงินเฉพาะ number · `Number('')`=0 ติ๊กถูกผิด · badge นับซ้ำ · เรียง sortOrder
+**ยังไม่ทำ (ให้ user เคาะ):** badge นับ "เดือนปัจจุบัน" — ถ้าบิลน้ำไฟของเดือน M มาต้นเดือน M+1 อาจอยากให้นับเดือนก่อนแทน
+
+**ตรวจแล้ว:** lint + build ผ่าน · เทส production: ดูท้าย entry นี้ (เติมหลังเทส)
+
+---
+
 ## 2026-10-02 (4) — งานเสริมประจำ: ค่าจ้างปิดสนิทระดับ DB (ตาราง recurring_task_pay)
 
 **ทำไม:** user ขอให้คนที่ "ไม่เห็นเงินเดือน" ไม่ได้รับยอดเงินของงานเสริมประจำเลย ไม่ใช่แค่ซ่อนที่หน้าจอ — เดิมค่าจ้างอยู่ใน `recurring_task_pools.tasks` (jsonb)

@@ -26,9 +26,10 @@ npm run build    # ยืนยันแล้วว่า build ผ่าน �
 ```
 มี `.env.local` + `.env.example` แล้ว, เพิ่ม `.gitignore` แล้ว (repo เดิมไม่มี)
 
-## Database schema (public, 23 tables, เปิด RLS ทุกตาราง)
+## Database schema (public, 25 tables, เปิด RLS ทุกตาราง)
 - **Core:** businesses, zones, positions, employees, user_profiles
 - **Payroll:** payrolls, payroll_items, salary_changes, commission_pools, room_rent_pools, advance_pools, recurring_task_pools, recurring_task_pay, public_holidays
+- **Data forms:** data_forms, data_form_submissions (แบบฟอร์มข้อมูลประจำเดือนที่ผู้จัดการกรอก → ประกอบคิดคอม)
 - **Order:** display_order (ลำดับพนักงาน/โซน/แผนก)
 - **Ops:** contractors, contractor_visits, expense_requests, app_settings
 - **System:** notifications, notification_reads, push_subscriptions, audit_log
@@ -76,6 +77,21 @@ Multi-tenant: scope ด้วย `business_id` + `zone_id`. RLS ใช้ SECURI
 ## คอมมิชชั่น: นำเข้า Loyverse ตัดรายการ "รายวัน"
 - `EXCLUDE_KEYWORDS = ['รายวัน']` ใน `lib/commission.js` — ชื่อสินค้า/หมวดที่มีคำนี้ไม่เอามารวมกำไร โชว์ในกล่องนำเข้าว่าตัดอะไรไป (เก็บใน pos_import.excluded)
 
+## แบบฟอร์มข้อมูลประจำเดือน (data_forms) — ตั้งแต่ 2026-10-02 · `lib/dataForms.js` · `pages/DataFormsPage.jsx` · `components/DataFormFields.jsx`
+- **ทำไม:** คอมก้อน 1 ต้องใช้ตัวเลขจากผู้จัดการแต่ละคน (ค่าน้ำไฟจากบิล / ผู้เช่าเข้าออก + ค่าเช่าแต่ละตึก) — เจ้าของสร้างฟอร์มแล้ว **มอบหมายตามบัญชีผู้ใช้**
+  (`assignee_user_id`) เปลี่ยนคนกรอกได้โดยไม่แก้ฟอร์ม · phase 1 คีย์มือ (`source=manual`) · phase 2 ดึงจาก maruay-property (`source=maruay-property`, โครง answers เดียวกัน)
+- **เมนู:** "ส่งข้อมูล" (`myforms`) โชว์ให้ใครก็ตามที่มีฟอร์ม active มอบหมายให้ (ไม่ขึ้นกับ role/allowed_views) + เจ้าของเสมอ (กรอกแทน/ตรวจ) · badge = ฟอร์มที่เดือนนี้ยังไม่กด "ส่ง"
+  · "แบบฟอร์มข้อมูล" (`dataforms`) เจ้าของสร้าง/แก้ช่อง/มอบหมาย
+- **ช่อง (fields jsonb):** number / text / date / textarea / table (คอลัมน์ number|text · แถวคงที่ หรือ rows ว่าง = ผู้กรอกเพิ่มแถวเอง) · **key ต้องคงที่** คำตอบเก่าผูกกับ key
+  (`normalizeFields` ใช้ key ตามตำแหน่ง `f0/c0/r0` ถ้าไม่มี — ห้ามสุ่มใหม่) · เปลี่ยนตารางคงที่↔เพิ่มแถวเองหลังมีคนกรอก → ของเก่าแสดงไม่ได้ (UI เตือน)
+- **Submission:** 1 แถวต่อ (form, ปี, เดือน) · `status` draft|submitted · "บันทึกร่าง" ไม่แตะ submitted_* · "ส่ง/ส่งอีกครั้ง" ตั้ง submitted_by/at · แก้หลังส่ง >1 นาที = ป้าย "แก้ไขหลังส่ง" (ทั้งสองหน้า)
+  · ช่องโชว์ค่าเดือนก่อนเป็น placeholder (ดูเทียบ ไม่ถูกใช้)
+- **หน้าคอม:** กล่อง "ข้อมูลจากผู้จัดการ" ในก้อน 1 — ฟอร์มของธุรกิจนั้น + ส่วนกลาง · ตัวเลข (ช่อง number + ผลรวมคอลัมน์ตัวเลขของตาราง) กดแล้วใส่/ทับรายการหัก
+  จับคู่ด้วย `srcKey` (`formId.fieldKey[.colKey]`) ก่อน แล้วค่อยชื่อ · ร่างใช้ได้แต่ถาม confirm · deductions เก็บ srcKey ไปด้วย (ดึงชื่อเดือนก่อนก็ติดมา)
+- **RLS:** `can_view_form(business, assignee)` = owner / ผู้ถูกมอบหมาย / BM มีสิทธิ์เงินเดือนเฉพาะธุรกิจที่ดูแล (ส่วนกลาง null เห็นได้) · data_forms เขียน owner เท่านั้น
+  · submissions เขียน owner หรือ `is_form_assignee` (ฟอร์มต้อง active) · realtime เฉพาะ data_forms (handler upsert เพราะคนที่เพิ่งถูกมอบหมายได้ UPDATE ของแถวที่ไม่เคยมี)
+  · ฟอร์มที่ถูกย้ายไปคนอื่นไม่ส่ง event มาหาคนเดิม → effect badge เช็ก id ที่ยังเห็นแล้วตัดออก + refetchCore ดึงทั้งตาราง
+
 ## TODO / ไอเดียพัฒนาต่อ
 - `src/App.jsx` เป็นไฟล์ยักษ์ไฟล์เดียว → candidate สำหรับ refactor (code-split, แยก component)
 - (เพิ่มรายการที่นี่เมื่อคิดออก)
@@ -93,20 +109,21 @@ src/
   App.jsx      ~915 บรรทัด — state + ops + realtime + routing เท่านั้น ไม่มี page component แล้ว
   supabase.js  client + fromDB/toDB
   lib/         logic ล้วน ไม่มี JSX · ไม่มี circular
-    format · probation · business · holidays · pools · payroll · print · storage · push · order · hooks · commission
-    (payroll → holidays → probation · business → probation · commission ไม่ import ใคร)
+    format · probation · business · holidays · pools · payroll · print · storage · push · order · hooks · commission · dataForms
+    (payroll → holidays → probation · business → probation · commission/dataForms ไม่ import ใคร)
   ui/index.jsx    Modal, FormField, FormActions, EmptyState, PageHeader, LoadingScreen,
                   PageLoading, Avatar, PillRadio, InfoItem, DetailBlock, EditorRow
   components/     ErrorBoundary, PushToggle, AuthScreen, PendingScreen, NotificationBell,
                   ThemePicker, Sidebar   (Sidebar → ThemePicker + PushToggle)
-  pages/          13 หน้า หน้าละไฟล์ — component ย่อยที่ใช้เฉพาะหน้านั้นอยู่ไฟล์เดียวกัน
+                  DataFormFields (FieldInput/TableInput/AnswersView — ใช้ทั้ง DataFormsPage และ CommissionPage)
+  pages/          14 ไฟล์ (DataFormsPage มี 2 หน้า: MyFormsPage + DataFormsAdminPage) — component ย่อยที่ใช้เฉพาะหน้านั้นอยู่ไฟล์เดียวกัน
                   (EmployeesPage มี ResignModal/SalaryRaise/DetailModal/IDCard/EmployeeForm/Doc*)
                   (PayrollPage มี PrintSlipsModal/PayrollEditor/QuickEntry/ItemsModal)
                   **ไม่มีหน้าไหน import หน้าอื่น และไม่มีหน้าไหน import App.jsx**
 ```
 
 ## Code splitting
-`App.jsx` โหลด 12 หน้าแบบ `React.lazy` (ยกเว้น `Dashboard` ที่เป็นหน้าแรก) ห่อด้วย
+`App.jsx` โหลด 14 หน้าแบบ `React.lazy` (ยกเว้น `Dashboard` ที่เป็นหน้าแรก) ห่อด้วย
 `<ErrorBoundary><Suspense fallback={<PageLoading/>}>` · `vite.config.js` แยก `vendor-react` / `vendor-supabase`
 
 | | ก่อน | หลัง |
