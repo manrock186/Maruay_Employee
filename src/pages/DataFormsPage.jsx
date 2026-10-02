@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { ClipboardList, FileText, Plus, Trash2, Check, Send, ChevronLeft, ChevronRight, ArrowUp, ArrowDown, Pencil, UserCheck, AlertCircle, Table2 } from 'lucide-react';
+import { ClipboardList, FileText, Plus, Trash2, Check, Send, ChevronLeft, ChevronRight, ArrowUp, ArrowDown, Pencil, UserCheck, AlertCircle, Table2, CalendarRange, List } from 'lucide-react';
 import { MONTH_NAMES, fmt } from '../lib/payroll.js';
-import { FIELD_TYPES, COLUMN_TYPES, SOURCES, newKey, normalizeFields, answerProgress, isSubmitted, editedAfterSubmit, prevPeriod, nextPeriod } from '../lib/dataForms.js';
+import { FIELD_TYPES, COLUMN_TYPES, SOURCES, newKey, normalizeFields, isLedgerTable, answerProgress, isSubmitted, editedAfterSubmit, prevPeriod, nextPeriod } from '../lib/dataForms.js';
 import { FieldInput } from '../components/DataFormFields.jsx';
 import { Modal, FormField, FormActions, EmptyState, PageHeader } from '../ui/index.jsx';
 
@@ -23,10 +23,29 @@ function MyFormsPage({ forms, profile, profiles, businesses, ops }) {
   const [dirty, setDirty] = useState(false);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  // ตารางแบบ Excel (ledger): ค่าของทุกเดือนในปีนี้ { [month]: answers } + สถานะ · มุมมอง 'year' (ทั้งปี) / 'month' (รายการเป็นแถว) — มือถือเริ่มที่ 'month'
+  const [yearSubs, setYearSubs] = useState({});
+  const [ledgerView, setLedgerView] = useState(() => (typeof window !== 'undefined' && window.matchMedia('(min-width: 768px)').matches ? 'year' : 'month'));
 
   const form = myForms.find((f) => f.id === formId) || myForms[0] || null;
   const fields = useMemo(() => normalizeFields(form?.fields), [form]);
+  const hasLedger = fields.some(isLedgerTable);
   useEffect(() => { if (form && form.id !== formId) setFormId(form.id); }, [form, formId]);
+
+  // ค่าของเดือนอื่นในปี (เฉพาะฟอร์มที่มีตารางแบบ Excel) — โหลดใหม่เมื่อเปลี่ยนฟอร์ม/ปี และหลังบันทึก (sub เปลี่ยน)
+  useEffect(() => {
+    if (!form || !hasLedger) { setYearSubs({}); return; }
+    let cancelled = false;
+    (async () => {
+      const rows = await ops.dataSubmission.listByForm(form.id, year);
+      if (cancelled) return;
+      const m = {}; rows.forEach((s) => { m[s.periodMonth] = s; });
+      setYearSubs(m);
+    })();
+    return () => { cancelled = true; };
+  }, [form?.id, year, hasLedger, sub?.updatedAt]);
+  const yearAnswersFor = (key) => { const o = {}; Object.entries(yearSubs).forEach(([m, s]) => { o[Number(m)] = s?.answers?.[key]; }); return o; };
+  const yearStatus = useMemo(() => { const o = {}; Object.entries(yearSubs).forEach(([m, s]) => { o[Number(m)] = s?.status; }); return o; }, [yearSubs]);
 
   useEffect(() => {
     if (!form) return;
@@ -86,7 +105,7 @@ function MyFormsPage({ forms, profile, profiles, businesses, ops }) {
           <button onClick={() => persist('submitted')} disabled={saving || loading || !form} className="flex items-center gap-2 px-4 py-2 bg-emerald-900 hover:bg-emerald-800 disabled:opacity-50 text-white rounded-lg text-sm font-medium"><Send className="w-4 h-4" />{saving ? 'กำลังบันทึก...' : (submitted ? 'ส่งอีกครั้ง' : 'ส่งข้อมูล')}</button>
         </div>
       </PageHeader>
-      <div className="p-4 md:p-6 space-y-4 max-w-4xl">
+      <div className={`p-4 md:p-6 space-y-4 ${hasLedger ? 'max-w-[1600px]' : 'max-w-4xl'}`}>
         {myForms.length > 1 && (
           <div className="flex flex-wrap gap-2">
             {myForms.map((f) => (
@@ -122,8 +141,17 @@ function MyFormsPage({ forms, profile, profiles, businesses, ops }) {
               <span className="text-xs text-stone-500">กรอกแล้ว {progress.filled}/{progress.total} ช่อง</span>
             </div>
             {!fields.length && <p className="text-sm text-stone-400">ฟอร์มนี้ยังไม่มีช่องให้กรอก — แจ้งเจ้าของระบบ</p>}
+            {hasLedger && (
+              <div className="flex items-center gap-1 text-xs">
+                <span className="text-stone-500 mr-1">มุมมองตาราง:</span>
+                <button type="button" onClick={() => setLedgerView('year')} className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg border ${ledgerView === 'year' ? 'bg-emerald-900 text-white border-emerald-900' : 'bg-white text-stone-700 border-stone-300 hover:bg-stone-50'}`}><CalendarRange className="w-3.5 h-3.5" />ทั้งปี (แบบ Excel)</button>
+                <button type="button" onClick={() => setLedgerView('month')} className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg border ${ledgerView === 'month' ? 'bg-emerald-900 text-white border-emerald-900' : 'bg-white text-stone-700 border-stone-300 hover:bg-stone-50'}`}><List className="w-3.5 h-3.5" />เฉพาะเดือนนี้</button>
+                {ledgerView === 'year' && <span className="text-stone-400 ml-1">แถวสีเหลือง = เดือนที่กำลังกรอก · เดือนอื่นดูอย่างเดียว กดชื่อเดือนเพื่อไปกรอกเดือนนั้น</span>}
+              </div>
+            )}
             {fields.map((f) => (
-              <FieldInput key={f.key} field={f} value={answers[f.key]} prevValue={prevSub?.answers?.[f.key]} onChange={(v) => setAnswer(f.key, v)} disabled={saving} />
+              <FieldInput key={f.key} field={f} value={answers[f.key]} prevValue={prevSub?.answers?.[f.key]} onChange={(v) => setAnswer(f.key, v)} disabled={saving}
+                period={{ year, month }} ledgerView={ledgerView} yearAnswers={isLedgerTable(f) ? yearAnswersFor(f.key) : undefined} yearStatus={yearStatus} onPickMonth={(m) => changePeriod({ year, month: m })} />
             ))}
             <FormField label="หมายเหตุถึงผู้คิดคอม">
               <textarea rows={2} value={note} onChange={(e) => { setNote(e.target.value); setDirty(true); }} disabled={saving} className="w-full px-3 py-2 border border-stone-300 rounded-lg text-sm resize-y" placeholder="ถ้ามี" />
@@ -289,31 +317,49 @@ function TableDefEditor({ field, onChange, smallCls }) {
   const rows = field.rows || [];
   const setCol = (i, patch) => onChange({ columns: cols.map((c, idx) => (idx === i ? { ...c, ...patch } : c)) });
   const setRow = (i, patch) => onChange({ rows: rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r)) });
+  const moveRow = (i, dir) => { const j = i + dir; if (j < 0 || j >= rows.length) return; const arr = [...rows]; [arr[i], arr[j]] = [arr[j], arr[i]]; onChange({ rows: arr }); };
   const dynamic = rows.length === 0;
+  const ledger = field.layout === 'ledger';
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-      <div>
-        <div className="flex items-center justify-between mb-1"><span className="text-xs font-medium text-stone-600">คอลัมน์ ({cols.length})</span><button type="button" onClick={() => onChange({ columns: [...cols, { key: newKey('c'), label: '', type: 'number' }] })} className="text-xs text-emerald-700 hover:underline flex items-center gap-1"><Plus className="w-3 h-3" />เพิ่มคอลัมน์</button></div>
-        <div className="space-y-1">
-          {cols.map((c, i) => (
-            <div key={c.key} className="flex items-center gap-1">
-              <input value={c.label} onChange={(e) => setCol(i, { label: e.target.value })} className={`${smallCls} flex-1 bg-white`} placeholder="ชื่อคอลัมน์" />
-              <select value={c.type} onChange={(e) => setCol(i, { type: e.target.value })} className={`${smallCls} bg-white`}>{COLUMN_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}</select>
-              <button type="button" onClick={() => onChange({ columns: cols.filter((_, idx) => idx !== i) })} className="p-1 text-red-400 hover:text-red-600"><Trash2 className="w-3.5 h-3.5" /></button>
-            </div>
-          ))}
+    <div className="space-y-3">
+      {!dynamic && (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-stone-700 bg-white border border-stone-200 rounded-md px-2.5 py-2">
+          <label className="flex items-center gap-1.5"><input type="checkbox" checked={ledger} onChange={(e) => onChange({ layout: e.target.checked ? 'ledger' : 'list' })} className="accent-emerald-700" />แสดงแบบตารางทั้งปี (เหมือน Excel: เดือนเป็นแถว รายการเป็นคอลัมน์)</label>
+          <label className="flex items-center gap-1.5"><input type="checkbox" checked={!!field.summaryRows} onChange={(e) => onChange({ summaryRows: e.target.checked })} className="accent-emerald-700" />หน้าคอมโชว์ตัวเลขรายแถว + รวมรายกลุ่ม</label>
         </div>
-      </div>
-      <div>
-        <div className="flex items-center justify-between mb-1"><span className="text-xs font-medium text-stone-600">แถว ({rows.length})</span><button type="button" onClick={() => onChange({ rows: [...rows, { key: newKey('r'), label: '' }] })} className="text-xs text-emerald-700 hover:underline flex items-center gap-1"><Plus className="w-3 h-3" />เพิ่มแถว</button></div>
-        {dynamic && <p className="text-[11px] text-stone-400 mb-1">ไม่กำหนดแถว = ผู้กรอกเพิ่มแถวเองได้ (เช่น รายชื่อผู้เช่าที่เข้า-ออก)</p>}
-        <div className="space-y-1">
-          {rows.map((r, i) => (
-            <div key={r.key} className="flex items-center gap-1">
-              <input value={r.label} onChange={(e) => setRow(i, { label: e.target.value })} className={`${smallCls} flex-1 bg-white`} placeholder="ชื่อแถว เช่น ค่าไฟ 7003xxxx" />
-              <button type="button" onClick={() => onChange({ rows: rows.filter((_, idx) => idx !== i) })} className="p-1 text-red-400 hover:text-red-600"><Trash2 className="w-3.5 h-3.5" /></button>
-            </div>
-          ))}
+      )}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div>
+          <div className="flex items-center justify-between mb-1"><span className="text-xs font-medium text-stone-600">คอลัมน์ ({cols.length})</span><button type="button" onClick={() => onChange({ columns: [...cols, { key: newKey('c'), label: '', type: 'number' }] })} className="text-xs text-emerald-700 hover:underline flex items-center gap-1"><Plus className="w-3 h-3" />เพิ่มคอลัมน์</button></div>
+          <div className="space-y-1">
+            {cols.map((c, i) => (
+              <div key={c.key} className="flex items-center gap-1">
+                <input value={c.label} onChange={(e) => setCol(i, { label: e.target.value })} className={`${smallCls} flex-1 min-w-[6rem] bg-white`} placeholder="ชื่อคอลัมน์" />
+                <select value={c.type} onChange={(e) => setCol(i, { type: e.target.value })} className={`${smallCls} bg-white`}>{COLUMN_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}</select>
+                {c.type === 'text' && <input value={c.placeholder || ''} onChange={(e) => setCol(i, { placeholder: e.target.value })} className={`${smallCls} w-28 bg-white`} placeholder="ค่าจาง {month}" title="ข้อความจางในช่อง — ใช้ {month} = ชื่อเดือนที่กรอก, {year} = ปี พ.ศ." />}
+                <button type="button" onClick={() => onChange({ columns: cols.filter((_, idx) => idx !== i) })} className="p-1 text-red-400 hover:text-red-600"><Trash2 className="w-3.5 h-3.5" /></button>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div>
+          <div className="flex items-center justify-between mb-1"><span className="text-xs font-medium text-stone-600">แถว / รายการ ({rows.length})</span><button type="button" onClick={() => onChange({ rows: [...rows, { key: newKey('r'), label: '', sub: '', group: rows[rows.length - 1]?.group || '', hint: '' }] })} className="text-xs text-emerald-700 hover:underline flex items-center gap-1"><Plus className="w-3 h-3" />เพิ่มแถว</button></div>
+          {dynamic && <p className="text-[11px] text-stone-400 mb-1">ไม่กำหนดแถว = ผู้กรอกเพิ่มแถวเองได้ (เช่น รายชื่อผู้เช่าที่เข้า-ออก)</p>}
+          {!dynamic && <p className="text-[11px] text-stone-400 mb-1">กลุ่ม = หัวข้อรวมแถว (เช่น ค่าไฟ / ค่าน้ำ) · คำอธิบาย = ข้อความใต้ชื่อ (เช่น สถานที่) · หมายเหตุ = โชว์ตอนเอาเมาส์ชี้ (เช่น ที่อยู่)</p>}
+          <div className="space-y-1">
+            {rows.map((r, i) => (
+              <div key={r.key} className="flex items-center gap-1 flex-wrap">
+                <input value={r.group || ''} onChange={(e) => setRow(i, { group: e.target.value })} className={`${smallCls} w-20 bg-white`} placeholder="กลุ่ม" list={`df_groups_${field.key}`} />
+                <input value={r.label} onChange={(e) => setRow(i, { label: e.target.value })} className={`${smallCls} flex-1 min-w-[6rem] bg-white`} placeholder="ชื่อแถว เช่น เลขบัญชี" />
+                <input value={r.sub || ''} onChange={(e) => setRow(i, { sub: e.target.value })} className={`${smallCls} w-28 bg-white`} placeholder="คำอธิบาย" />
+                <input value={r.hint || ''} onChange={(e) => setRow(i, { hint: e.target.value })} className={`${smallCls} w-24 bg-white`} placeholder="หมายเหตุ" />
+                <button type="button" onClick={() => moveRow(i, -1)} disabled={i === 0} className="p-1 text-stone-400 hover:text-stone-700 disabled:opacity-30" title="เลื่อนขึ้น"><ArrowUp className="w-3.5 h-3.5" /></button>
+                <button type="button" onClick={() => moveRow(i, 1)} disabled={i === rows.length - 1} className="p-1 text-stone-400 hover:text-stone-700 disabled:opacity-30" title="เลื่อนลง"><ArrowDown className="w-3.5 h-3.5" /></button>
+                <button type="button" onClick={() => onChange({ rows: rows.filter((_, idx) => idx !== i) })} className="p-1 text-red-400 hover:text-red-600"><Trash2 className="w-3.5 h-3.5" /></button>
+              </div>
+            ))}
+          </div>
+          {!dynamic && <datalist id={`df_groups_${field.key}`}>{[...new Set(rows.map((r) => r.group).filter(Boolean))].map((g) => <option key={g} value={g} />)}</datalist>}
         </div>
       </div>
     </div>

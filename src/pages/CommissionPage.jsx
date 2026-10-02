@@ -350,25 +350,36 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, da
                       {s && <button onClick={() => setOpenForm(open ? null : f.id)} className="text-xs text-sky-700 hover:underline flex items-center gap-1">{open ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}{open ? 'ซ่อนรายละเอียด' : 'ดูรายละเอียด'}</button>}
                     </div>
                     {s?.note && <p className="text-xs text-stone-600 mt-1 whitespace-pre-wrap">หมายเหตุ: {s.note}</p>}
-                    {nums.length > 0 && (
-                      <div className="flex flex-wrap gap-1.5 mt-2">
-                        {nums.map((n) => {
-                          const srcKey = `${f.id}.${n.key}`;
-                          const cur = dedAmountOf(srcKey, n.label);
-                          const applied = cur != null && Math.abs(cur - n.amount) < 0.005;
-                          const apply = () => {
-                            if (!isSubmitted(s) && !window.confirm(`ข้อมูลนี้ยังเป็น "ร่าง" (ผู้จัดการยังไม่กดส่ง) — ใช้ตัวเลขนี้เลย?`)) return;
-                            applyFromForm(srcKey, n.label, n.amount);
-                          };
-                          return (
-                            <button key={n.key} onClick={apply} title={`${n.group ? `${n.group} › ` : ''}${n.label} = ${fmtMoney(n.amount)}${applied ? ' (ใส่เป็นรายการหักแล้ว)' : ' — กดเพื่อใส่เป็นรายการหัก'}`}
-                              className={`flex items-center gap-1 px-2 py-1 rounded-md text-xs border ${applied ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-stone-50 hover:bg-amber-50 border-stone-200 hover:border-amber-300 text-stone-700'}`}>
-                              <span>{n.label}</span><b>{fmtMoney(n.amount)}</b>{applied ? <Check className="w-3 h-3" /> : <ArrowRight className="w-3 h-3" />}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
+                    {nums.length > 0 && (() => {
+                      // จัดชิปเป็นกลุ่มตามหัวข้อในฟอร์ม (ค่าไฟ / ค่าน้ำ / …) — ฟอร์มที่ไม่มีกลุ่มก็เป็นแถวเดียว
+                      const groupsInOrder = [...new Set(nums.map((n) => n.group || ''))];
+                      const chip = (n) => {
+                        const srcKey = `${f.id}.${n.key}`;
+                        const cur = dedAmountOf(srcKey, n.label);
+                        const applied = cur != null && Math.abs(cur - n.amount) < 0.005;
+                        const apply = () => {
+                          if (!isSubmitted(s) && !window.confirm('ข้อมูลนี้ยังเป็น "ร่าง" (ผู้จัดการยังไม่กดส่ง) — ใช้ตัวเลขนี้เลย?')) return;
+                          applyFromForm(srcKey, n.label, n.amount);
+                        };
+                        return (
+                          <button key={n.key} onClick={apply} title={`${n.group ? `${n.group} › ` : ''}${n.label} = ${fmtMoney(n.amount)}${applied ? ' (ใส่เป็นรายการหักแล้ว)' : ' — กดเพื่อใส่เป็นรายการหัก'}`}
+                            className={`flex items-center gap-1 px-2 py-1 rounded-md text-xs border ${applied ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : n.kind === 'group' || n.kind === 'column' ? 'bg-amber-50/60 hover:bg-amber-50 border-amber-200 text-stone-800' : 'bg-stone-50 hover:bg-amber-50 border-stone-200 hover:border-amber-300 text-stone-700'}`}>
+                            <span>{n.label}</span><b>{fmtMoney(n.amount)}</b>{applied ? <Check className="w-3 h-3" /> : <ArrowRight className="w-3 h-3" />}
+                          </button>
+                        );
+                      };
+                      if (groupsInOrder.length <= 1) return <div className="flex flex-wrap gap-1.5 mt-2">{nums.map(chip)}</div>;
+                      return (
+                        <div className="mt-2 space-y-1.5">
+                          {groupsInOrder.map((g) => (
+                            <div key={g || '_'} className="flex flex-wrap items-center gap-1.5">
+                              {g && <span className="text-[11px] font-semibold text-emerald-900 w-16 shrink-0">{g}</span>}
+                              {nums.filter((n) => (n.group || '') === g).map(chip)}
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })()}
                     {s && !nums.length && <p className="text-xs text-stone-400 mt-1">ไม่มีตัวเลขในข้อมูลที่ส่งมา</p>}
                     {open && s && <div className="mt-2 pt-2 border-t border-stone-100"><AnswersView fields={fields} answers={s.answers} /></div>}
                   </div>

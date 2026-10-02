@@ -695,6 +695,13 @@ export default function App() {
         if (error) { console.error(error); return null; }
         return data ? fromDB(data) : null;
       },
+      // ทุกเดือนของฟอร์มในปีหนึ่ง (ตารางแบบ Excel ในหน้าส่งข้อมูล โชว์ทั้งปี)
+      listByForm: async (formId, year) => {
+        const { data, error } = await supabase.from('data_form_submissions').select('*')
+          .eq('form_id', formId).eq('period_year', year).order('period_month');
+        if (error) { console.error(error); return []; }
+        return fromDB(data || []);
+      },
       // ทุกฟอร์มของงวด (ใช้ในหน้าคอม) — RLS กรองให้เห็นเฉพาะที่มีสิทธิ์
       listByPeriod: async (year, month) => {
         const { data, error } = await supabase.from('data_form_submissions').select('*')
