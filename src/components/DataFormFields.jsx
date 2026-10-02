@@ -11,7 +11,7 @@ const prevHint = (v, type) => (isBlank(v) ? '' : `เดือนก่อน ${
 
 // period = { year, month } ของงวดที่กำลังกรอก · ledgerView: 'year' (ตารางทั้งปีแบบ Excel) | 'month' (รายการเป็นแถว)
 // yearAnswers/yearStatus = ค่าของเดือนอื่นในปีเดียวกัน (สำหรับ ledger) { [month]: tableValue } / { [month]: 'submitted'|'draft' }
-function FieldInput({ field, value, onChange, prevValue, disabled, period, ledgerView = 'month', yearAnswers, yearStatus, onPickMonth }) {
+function FieldInput({ field, value, onChange, prevValue, disabled, period, ledgerView = 'month', yearAnswers, yearStatus, onPickMonth, onChangeMonth }) {
   const id = `df_${field.key}`;
   const label = (
     <label htmlFor={id} className="block text-sm font-medium text-stone-700 mb-1">
@@ -30,7 +30,7 @@ function FieldInput({ field, value, onChange, prevValue, disabled, period, ledge
       <div>
         {label}
         {ledger
-          ? <LedgerYearTable field={field} year={period.year} month={period.month} value={value} onChange={onChange} yearAnswers={yearAnswers} yearStatus={yearStatus} disabled={disabled} onPickMonth={onPickMonth} />
+          ? <LedgerYearTable field={field} year={period.year} month={period.month} value={value} onChange={onChange} onChangeMonth={onChangeMonth} yearAnswers={yearAnswers} yearStatus={yearStatus} disabled={disabled} onPickMonth={onPickMonth} />
           : <TableInput field={field} value={value} onChange={onChange} prevValue={prevValue} disabled={disabled} period={period} />}
         {field.hint && <p className="text-xs text-stone-400 mt-1">{field.hint}</p>}
       </div>
@@ -144,16 +144,21 @@ function TableInput({ field, value, onChange, prevValue, disabled, period }) {
 }
 
 // ตาราง "ทั้งปี" แบบ Excel ของผู้จัดการ: เดือนเป็นแถว · รายการ (บัญชี) เป็นคอลัมน์ (มีหัวกลุ่ม ค่าไฟ/ค่าน้ำ/…) · แต่ละรายการมีคอลัมน์ย่อยตาม field.columns
-// เดือนที่เลือกเป็นช่องกรอก เดือนอื่นอ่านอย่างเดียว (จาก submissions ของปีนั้น) · กดชื่อเดือนเพื่อย้ายไปกรอกเดือนนั้น
-function LedgerYearTable({ field, year, month, value, onChange, yearAnswers = {}, yearStatus = {}, disabled, onPickMonth }) {
+// **ทุกเดือนกรอกได้** (บิลมาช้า/เร็ว รอบบิลไม่ตรงเดือน ผู้จัดการหยอดลงเดือนที่บิลมา) — เดือนที่เลือกไฮไลต์ (สถานะ/ปุ่มส่งเป็นของเดือนนั้น)
+// เดือนอื่นแก้ผ่าน onChangeMonth(m, value) → หน้าเก็บเป็นร่างของเดือนนั้นแล้วบันทึกพร้อมกัน · กดชื่อเดือนเพื่อย้ายเดือนที่เลือก
+function LedgerYearTable({ field, year, month, value, onChange, onChangeMonth, yearAnswers = {}, yearStatus = {}, disabled, onPickMonth }) {
   const cols = field.columns || [];
   const items = field.rows || [];
   const groups = rowGroups(field);
-  const cur = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
-  const setCell = (rowKey, colKey, v) => onChange({ ...cur, [rowKey]: { ...(cur[rowKey] || {}), [colKey]: v } });
-  const valueOf = (m) => (m === month ? cur : (yearAnswers[m] && typeof yearAnswers[m] === 'object' && !Array.isArray(yearAnswers[m]) ? yearAnswers[m] : {}));
+  const asObj = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : {});
+  const valueOf = (m) => asObj(m === month ? value : yearAnswers[m]);
+  const setCell = (m, rowKey, colKey, v) => {
+    const curV = valueOf(m);
+    const next = { ...curV, [rowKey]: { ...(curV[rowKey] || {}), [colKey]: v } };
+    if (m === month) onChange(next); else onChangeMonth?.(m, next);
+  };
   const numCols = cols.filter((c) => c.type === 'number');
-  // ยอดรวมทั้งปีต่อรายการ (ใช้ค่าสดของเดือนที่กำลังกรอก)
+  // ยอดรวมทั้งปีต่อรายการ (ใช้ค่าสดที่กำลังพิมพ์)
   const yearTotal = (rowKey, colKey) => [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].reduce((s, m) => s + (Number(valueOf(m)?.[rowKey]?.[colKey]) || 0), 0);
   if (!cols.length || !items.length) return <p className="text-xs text-stone-400">ตารางนี้ยังไม่ได้กำหนดคอลัมน์/รายการ — แจ้งเจ้าของระบบ</p>;
   const stickyCls = 'sticky left-0 z-10 bg-white';
@@ -189,21 +194,16 @@ function LedgerYearTable({ field, year, month, value, onChange, yearAnswers = {}
             return (
               <tr key={m} className={`border-t border-stone-100 ${active ? 'bg-amber-50' : ''}`}>
                 <td className={`${stickyCls} ${active ? 'bg-amber-50' : ''} px-3 py-1 border-r border-stone-200 whitespace-nowrap`}>
-                  <button type="button" onClick={() => !active && onPickMonth?.(m)} disabled={active || !onPickMonth} className={`text-left ${active ? 'font-semibold text-amber-900' : 'text-stone-700 hover:underline'}`}>
-                    {mName}{active && <span className="text-[10px] font-normal ml-1">← กรอกเดือนนี้</span>}
+                  <button type="button" onClick={() => !active && onPickMonth?.(m)} disabled={active || !onPickMonth} className={`text-left ${active ? 'font-semibold text-amber-900' : 'text-stone-700 hover:underline'}`} title={active ? '' : 'กดเพื่อเลือกเดือนนี้ (ดูสถานะ/ส่งข้อมูลของเดือนนั้น)'}>
+                    {mName}{active && <span className="text-[10px] font-normal ml-1">← เดือนที่เลือก</span>}
                   </button>
-                  {!active && st && <span className={`ml-1.5 text-[10px] ${st === 'submitted' ? 'text-emerald-700' : 'text-stone-400'}`}>{st === 'submitted' ? '✓' : 'ร่าง'}</span>}
+                  {st && <span className={`ml-1.5 text-[10px] ${st === 'submitted' ? 'text-emerald-700' : 'text-stone-400'}`}>{st === 'submitted' ? '✓ ส่งแล้ว' : 'ร่าง'}</span>}
                 </td>
-                {items.map((r) => cols.map((c, ci) => {
-                  const cell = v?.[r.key]?.[c.key];
-                  return (
-                    <td key={`${r.key}.${c.key}`} className={`px-1 py-0.5 ${ci === 0 ? 'border-l border-stone-200' : ''} ${c.type === 'number' ? 'text-right' : 'text-left'}`}>
-                      {active
-                        ? <CellInput compact col={c} value={cell} onChange={(val) => setCell(r.key, c.key, val)} disabled={disabled} placeholder={c.type === 'number' ? '0' : resolvePlaceholder(c.placeholder, { year, month })} />
-                        : <span className={`block px-1 py-1 text-xs whitespace-nowrap ${isBlank(cell) ? 'text-stone-300' : 'text-stone-600'}`}>{isBlank(cell) ? '—' : (c.type === 'number' ? fmtMoney(cell) : String(cell))}</span>}
-                    </td>
-                  );
-                }))}
+                {items.map((r) => cols.map((c, ci) => (
+                  <td key={`${r.key}.${c.key}`} className={`px-1 py-0.5 ${ci === 0 ? 'border-l border-stone-200' : ''}`}>
+                    <CellInput compact col={c} value={v?.[r.key]?.[c.key]} onChange={(val) => setCell(m, r.key, c.key, val)} disabled={disabled} placeholder={c.type === 'number' ? '0' : resolvePlaceholder(c.placeholder, { year, month: m })} />
+                  </td>
+                )))}
               </tr>
             );
           })}

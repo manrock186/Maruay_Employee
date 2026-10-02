@@ -702,6 +702,13 @@ export default function App() {
         if (error) { console.error(error); return []; }
         return fromDB(data || []);
       },
+      // หลายปีของฟอร์มเดียว (หน้าคอมใช้หา "ยอดล่าสุดที่มี" ของแต่ละบัญชี ข้ามเดือน/ปี)
+      listByFormYears: async (formId, years) => {
+        const { data, error } = await supabase.from('data_form_submissions').select('*')
+          .eq('form_id', formId).in('period_year', years).order('period_year').order('period_month');
+        if (error) { console.error(error); return []; }
+        return fromDB(data || []);
+      },
       // ทุกฟอร์มของงวด (ใช้ในหน้าคอม) — RLS กรองให้เห็นเฉพาะที่มีสิทธิ์
       listByPeriod: async (year, month) => {
         const { data, error } = await supabase.from('data_form_submissions').select('*')
@@ -758,6 +765,13 @@ export default function App() {
           .select().single();
         if (error) { alert('บันทึกคอมไม่สำเร็จ: ' + error.message); return null; }
         return fromDB(data);
+      },
+      // รายการหักของทุกพูลคอม (ทุกธุรกิจที่เห็น, 2 ปีล่าสุด) — ใช้เตือนว่าตัวเลขจากฟอร์มผู้จัดการ "เคยใช้คิดคอมงวดไหนแล้ว"
+      listDeductionSources: async () => {
+        const y = new Date().getFullYear();
+        const { data, error } = await supabase.from('commission_pools').select('business_id, period_year, period_month, deductions').gte('period_year', y - 1);
+        if (error) { console.error(error); return []; }
+        return fromDB(data || []);
       },
       // อัปเดตช่องคอมในแถวเงินเดือนที่มีอยู่แล้วของงวด (เฉพาะที่ยังไม่ปิดงวด) — คอมจะได้ไม่เข้าเฉพาะคนที่ยังไม่ทำเงินเดือน
       // คืน { updated, failed: [employeeId] } — แถวที่อัปเดตไม่ได้ (error หรือ RLS บล็อก = 0 แถว) ต้องบอกผู้ใช้ ไม่กลืนเงียบ

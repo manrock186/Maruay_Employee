@@ -63,6 +63,10 @@ function tableRows(field, value) {
 
 // ข้อความจางในช่อง text ของตาราง — แทน {month} {year} ด้วยงวดที่กำลังกรอก
 const MONTH_TH = ['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน', 'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
+const MONTH_ABBR = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
+// ป้ายงวดสั้นๆ เช่น "ก.ย. 69"
+const periodLabel = (p) => (p?.month ? `${MONTH_ABBR[p.month - 1]} ${String(p.year + 543).slice(2)}` : '');
+const periodKey = (p) => (p?.month ? `${p.year}-${String(p.month).padStart(2, '0')}` : '');
 const resolvePlaceholder = (text, period) => String(text || '')
   .replace(/\{month\}/g, period?.month ? MONTH_TH[period.month - 1] : '')
   .replace(/\{year\}/g, period?.year ? String(period.year + 543) : '');
@@ -78,12 +82,30 @@ function tableColumnTotals(field, value) {
   return totals;
 }
 
-// ตัวเลขทั้งหมดที่ดึงไปใช้ต่อได้ (เช่น กดใส่เป็นรายการหักคอม)
-// → [{ key, label, amount, kind: 'field' | 'column' }]
-function numericSummary(fields, answers) {
+// ---------- ตัวเลขที่ดึงไปใช้ต่อได้ (ชิปในหน้าคอม → ใส่เป็นรายการหัก) ----------
+// ตารางแบบ Excel (ledger) ใช้กติกา "ยอดล่าสุดที่มี" ของแต่ละบัญชี: บิลมาช้า/เร็ว รอบบิลไม่ตรงเดือน ผู้จัดการจึงหยอดลงเดือนไหนก็ได้
+//   → หา (ปี,เดือน) ล่าสุดที่ช่องนั้นมีค่า ไม่สนว่าเป็นเดือนของงวดคอมหรือไม่ · ชิปบอกเดือนที่มาด้วย (period) · ยอดรวมกลุ่ม/คอลัมน์รวมจากค่าล่าสุดของแต่ละแถว (mixed = มาจากหลายเดือน)
+// ช่องอื่น (ตัวเลขเดี่ยว / ตารางธรรมดา) ใช้ค่าของงวดนั้นเท่านั้น
+// subs: [{ year, month, answers, status }] ทุกเดือนที่โหลดมา · period: งวดคอม { year, month }
+// → [{ key, label, amount, kind: 'field'|'row'|'group'|'column', group, period: {year,month}|null, mixed, status }]
+const periodNum = (p) => (p ? p.year * 100 + p.month : 0);
+// ค่าล่าสุดของเซลล์หนึ่งข้ามทุกเดือนที่โหลดมา → { value, year, month, status } | null
+function latestCell(subs, fieldKey, rowKey, colKey) {
+  let best = null;
+  (subs || []).forEach((s) => {
+    const t = s?.answers?.[fieldKey];
+    const v = rowKey == null ? t : (t && typeof t === 'object' && !Array.isArray(t) ? t[rowKey]?.[colKey] : undefined);
+    if (isBlank(v)) return;
+    if (!best || periodNum(s) > periodNum(best)) best = { value: v, year: s.year, month: s.month, status: s.status };
+  });
+  return best;
+}
+function latestNumericSummary(fields, subs, period) {
   const out = [];
-  const a = answers && typeof answers === 'object' ? answers : {};
   const fs = normalizeFields(fields);
+  const periodSub = (subs || []).find((s) => s.year === period?.year && s.month === period?.month);
+  const a = periodSub?.answers && typeof periodSub.answers === 'object' ? periodSub.answers : {};
+  const pOf = (s) => (s ? { year: s.year, month: s.month } : null);
   // ชื่อรายการหักใช้ชื่อคอลัมน์สั้นๆ ("คงเหลือใช้ของศูนย์อาหาร") — ถ้าชื่อคอลัมน์ซ้ำกันข้ามตาราง/ซ้ำกับช่องตัวเลข ค่อยนำหน้าด้วยชื่อตาราง
   const labelCount = {};
   fs.forEach((f) => {
@@ -92,39 +114,51 @@ function numericSummary(fields, answers) {
   });
   fs.forEach((f) => {
     if (f.type === 'number') {
-      if (!isBlank(a[f.key])) out.push({ key: f.key, label: f.label || f.key, amount: r2(a[f.key]), kind: 'field' });
-    } else if (f.type === 'table') {
-      const totals = tableColumnTotals(f, a[f.key]);
-      const rows = tableRows(f, a[f.key]);
-      const numCols = (f.columns || []).filter((c) => c.type === 'number');
-      // ชื่อคอลัมน์ต่อท้ายเฉพาะเมื่อตารางมีคอลัมน์ตัวเลขหลายอัน (ตารางน้ำไฟมี "ยอดสุทธิ" อันเดียว ไม่ต้องย้ำ)
-      const colSuffix = (c) => (numCols.length > 1 ? ` — ${c.label || c.key}` : '');
-      // ตัวเลขรายแถว (เช่น ยอดบิลแต่ละบัญชี) + ยอดรวมรายกลุ่ม (ค่าไฟรวม/ค่าน้ำรวม) — เฉพาะตารางที่ตั้ง summaryRows
-      if (f.summaryRows && !isDynamicTable(f)) {
-        numCols.forEach((c) => {
-          rows.forEach((r) => {
-            if (isBlank(r.cells[c.key])) return;
-            out.push({ key: `${f.key}.${r.key}.${c.key}`, label: `${r.label}${r.sub ? ` ${r.sub}` : ''}${colSuffix(c)}`, amount: r2(r.cells[c.key]), kind: 'row', group: r.group || f.label || f.key });
-          });
-          rowGroups(f).forEach((g) => {
-            if (!g) return;
-            const inGroup = rows.filter((r) => (r.group || '') === g && !isBlank(r.cells[c.key]));
-            if (inGroup.length < 2) return; // กลุ่มที่มีแถวเดียว ยอดรวมซ้ำกับแถว ไม่ต้องโชว์
-            out.push({ key: `${f.key}.group:${g}.${c.key}`, label: `${g} รวม${colSuffix(c)}`, amount: r2(inGroup.reduce((s, r) => s + num(r.cells[c.key]), 0)), kind: 'group', group: g });
-          });
-        });
-      }
+      if (!isBlank(a[f.key])) out.push({ key: f.key, label: f.label || f.key, amount: r2(a[f.key]), kind: 'field', period: pOf(periodSub), mixed: false, status: periodSub?.status });
+      return;
+    }
+    if (f.type !== 'table') return;
+    const numCols = (f.columns || []).filter((c) => c.type === 'number');
+    // ชื่อคอลัมน์ต่อท้ายเฉพาะเมื่อตารางมีคอลัมน์ตัวเลขหลายอัน (ตารางน้ำไฟมี "ยอดสุทธิ" อันเดียว ไม่ต้องย้ำ)
+    const colSuffix = (c) => (numCols.length > 1 ? ` — ${c.label || c.key}` : '');
+    const ledger = isLedgerTable(f);
+    // ค่าของแต่ละแถว: ledger = ล่าสุดข้ามเดือน · อื่นๆ = งวดนี้
+    const cellOf = (r, c) => (ledger ? latestCell(subs, f.key, r.key, c.key) : (periodSub && !isBlank(a[f.key]?.[r.key]?.[c.key]) ? { value: a[f.key][r.key][c.key], year: periodSub.year, month: periodSub.month, status: periodSub.status } : null));
+    const rows = tableRows(f, a[f.key]);
+    const sumOf = (cells) => {
+      const amount = r2(cells.reduce((t, x) => t + num(x.value), 0));
+      const periods = [...new Set(cells.map((x) => periodNum(x)))];
+      const latest = cells.reduce((b, x) => (!b || periodNum(x) > periodNum(b) ? x : b), null);
+      return { amount, period: pOf(latest), mixed: periods.length > 1, status: cells.every((x) => x.status === 'submitted') ? 'submitted' : 'draft' };
+    };
+    if (f.summaryRows && !isDynamicTable(f)) {
       numCols.forEach((c) => {
-        // คอลัมน์ที่ไม่มีใครกรอกเลย ไม่ต้องโชว์เป็น 0 ให้รก
-        const any = rows.some((r) => !isBlank(r.cells[c.key]));
-        if (!any) return;
-        const label = c.label && labelCount[c.label] === 1 ? c.label : `${f.label || f.key} — ${c.label || c.key}`;
-        out.push({ key: `${f.key}.${c.key}`, label: f.summaryRows ? `${label} (รวมทุกรายการ)` : label, amount: totals[c.key] || 0, kind: 'column', group: f.summaryRows ? 'รวม' : (f.label || f.key) });
+        rows.forEach((r) => {
+          const cell = cellOf(r, c);
+          if (!cell) return;
+          out.push({ key: `${f.key}.${r.key}.${c.key}`, label: `${r.label}${r.sub ? ` ${r.sub}` : ''}${colSuffix(c)}`, amount: r2(cell.value), kind: 'row', group: r.group || f.label || f.key, period: pOf(cell), mixed: false, status: cell.status });
+        });
+        rowGroups(f).forEach((g) => {
+          if (!g) return;
+          const cells = rows.filter((r) => (r.group || '') === g).map((r) => cellOf(r, c)).filter(Boolean);
+          if (cells.length < 2) return; // กลุ่มที่มีแถวเดียว ยอดรวมซ้ำกับแถว ไม่ต้องโชว์
+          out.push({ key: `${f.key}.group:${g}.${c.key}`, label: `${g} รวม${colSuffix(c)}`, kind: 'group', group: g, ...sumOf(cells) });
+        });
       });
     }
+    numCols.forEach((c) => {
+      const cells = isDynamicTable(f)
+        ? rows.map((r) => (!isBlank(r.cells[c.key]) && periodSub ? { value: r.cells[c.key], year: periodSub.year, month: periodSub.month, status: periodSub.status } : null)).filter(Boolean)
+        : rows.map((r) => cellOf(r, c)).filter(Boolean);
+      if (!cells.length) return; // คอลัมน์ที่ไม่มีใครกรอกเลย ไม่ต้องโชว์เป็น 0 ให้รก
+      const label = c.label && labelCount[c.label] === 1 ? c.label : `${f.label || f.key} — ${c.label || c.key}`;
+      out.push({ key: `${f.key}.${c.key}`, label: f.summaryRows ? `${label} (รวมทุกรายการ)` : label, kind: 'column', group: f.summaryRows ? 'รวม' : (f.label || f.key), ...sumOf(cells) });
+    });
   });
   return out;
 }
+// แบบงวดเดียว (ไม่มีข้อมูลเดือนอื่น) — ใช้ตอนมีแค่ answers ของงวดนั้น
+const numericSummary = (fields, answers, period = { year: 0, month: 0 }) => latestNumericSummary(fields, [{ year: period.year, month: period.month, answers, status: 'submitted' }], period);
 
 // นับความคืบหน้าการกรอก (ช่องเดี่ยว + เซลล์ตารางแบบแถวคงที่) → { filled, total, missingRequired: [label] }
 function answerProgress(fields, answers) {
@@ -164,10 +198,16 @@ export {
   rowGroups,
   resolvePlaceholder,
   MONTH_TH,
+  MONTH_ABBR,
+  periodLabel,
+  periodKey,
   tableShapeMismatch,
   tableRows,
   tableColumnTotals,
   numericSummary,
+  latestNumericSummary,
+  latestCell,
+  periodNum,
   answerProgress,
   isSubmitted,
   editedAfterSubmit,

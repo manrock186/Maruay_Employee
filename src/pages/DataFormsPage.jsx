@@ -25,6 +25,8 @@ function MyFormsPage({ forms, profile, profiles, businesses, ops }) {
   const [saving, setSaving] = useState(false);
   // ตารางแบบ Excel (ledger): ค่าของทุกเดือนในปีนี้ { [month]: answers } + สถานะ · มุมมอง 'year' (ทั้งปี) / 'month' (รายการเป็นแถว) — มือถือเริ่มที่ 'month'
   const [yearSubs, setYearSubs] = useState({});
+  const [yearEdits, setYearEdits] = useState({});   // { [month]: answers } ที่แก้ในตารางทั้งปี สำหรับเดือนอื่นที่ไม่ใช่เดือนที่เลือก (ยังไม่บันทึก)
+  const [yearReload, setYearReload] = useState(0);
   const [ledgerView, setLedgerView] = useState(() => (typeof window !== 'undefined' && window.matchMedia('(min-width: 768px)').matches ? 'year' : 'month'));
 
   const form = myForms.find((f) => f.id === formId) || myForms[0] || null;
@@ -40,11 +42,15 @@ function MyFormsPage({ forms, profile, profiles, businesses, ops }) {
       const rows = await ops.dataSubmission.listByForm(form.id, year);
       if (cancelled) return;
       const m = {}; rows.forEach((s) => { m[s.periodMonth] = s; });
-      setYearSubs(m);
+      setYearSubs(m); setYearEdits({});
     })();
     return () => { cancelled = true; };
-  }, [form?.id, year, hasLedger, sub?.updatedAt]);
-  const yearAnswersFor = (key) => { const o = {}; Object.entries(yearSubs).forEach(([m, s]) => { o[Number(m)] = s?.answers?.[key]; }); return o; };
+  }, [form?.id, year, hasLedger, sub?.updatedAt, yearReload]);
+  // ค่าของเดือนอื่นที่โชว์ในตารางทั้งปี = ที่บันทึกไว้ ทับด้วยที่กำลังแก้
+  const yearAnswersFor = (key) => { const o = {}; Object.entries(yearSubs).forEach(([m, s]) => { o[Number(m)] = s?.answers?.[key]; }); Object.entries(yearEdits).forEach(([m, a]) => { o[Number(m)] = a?.[key]; }); return o; };
+  const setMonthAnswer = (m, key, v) => setYearEdits((prev) => ({ ...prev, [m]: { ...(prev[m] || yearSubs[m]?.answers || {}), [key]: v } }));
+  const editedMonths = Object.keys(yearEdits).map(Number);
+  const anyDirty = dirty || editedMonths.length > 0;
   const yearStatus = useMemo(() => { const o = {}; Object.entries(yearSubs).forEach(([m, s]) => { o[Number(m)] = s?.status; }); return o; }, [yearSubs]);
 
   useEffect(() => {
@@ -80,17 +86,32 @@ function MyFormsPage({ forms, profile, profiles, businesses, ops }) {
     };
     if (status === 'submitted') { payload.submittedBy = profile.id; payload.submittedAt = nowISO; }
     const saved = await ops.dataSubmission.upsert(payload);
+    // เดือนอื่นที่แก้ในตารางทั้งปี → บันทึกเป็นของเดือนนั้น · กด "ส่ง" = ทุกเดือนที่แก้ถือว่าส่งด้วย (ผู้จัดการหยอดเสร็จแล้วกดส่งทีเดียว) · "บันทึก" = คงสถานะเดิม
+    const failedMonths = [];
+    for (const m of editedMonths) {
+      if (m === month) continue; // เดือนที่เลือกบันทึกไปแล้วด้านบน
+      const existing = yearSubs[m];
+      const p2 = { formId: form.id, periodYear: year, periodMonth: m, answers: yearEdits[m], status: status === 'submitted' || existing?.status === 'submitted' ? 'submitted' : 'draft', updatedAt: nowISO };
+      if (status === 'submitted') { p2.submittedBy = profile.id; p2.submittedAt = nowISO; }
+      const ok = await ops.dataSubmission.upsert(p2);
+      if (!ok) failedMonths.push(m);
+    }
     setSaving(false);
-    if (saved) { setSub(saved); setDirty(false); if (status === 'submitted') alert(`ส่งข้อมูล "${form.name}" งวด ${MONTH_NAMES[month - 1]} ${year + 543} เรียบร้อย`); }
+    if (!saved) return;
+    setSub(saved); setDirty(false);
+    if (failedMonths.length) { alert(`บันทึกเดือน ${failedMonths.map((m) => MONTH_NAMES[m - 1]).join(', ')} ไม่สำเร็จ — ลองใหม่อีกครั้ง`); setYearEdits((prev) => Object.fromEntries(Object.entries(prev).filter(([m]) => failedMonths.includes(Number(m))))); }
+    else setYearEdits({});
+    setYearReload((n) => n + 1);
+    if (status === 'submitted') alert(`ส่งข้อมูล "${form.name}" งวด ${MONTH_NAMES[month - 1]} ${year + 543} เรียบร้อย${editedMonths.length && !failedMonths.length ? ` (ส่งเดือนอื่นที่แก้ไว้ด้วย ${editedMonths.length} เดือน)` : ''}`);
   };
 
   const changePeriod = (p) => {
-    if (dirty && !window.confirm('มีข้อมูลที่ยังไม่ได้บันทึก — เปลี่ยนเดือนโดยไม่บันทึก?')) return;
-    setYear(p.year); setMonth(p.month);
+    if (anyDirty && !window.confirm('มีข้อมูลที่ยังไม่ได้บันทึก — เปลี่ยนเดือนโดยไม่บันทึก?')) return;
+    setYearEdits({}); setYear(p.year); setMonth(p.month);
   };
   const changeForm = (id) => {
-    if (dirty && !window.confirm('มีข้อมูลที่ยังไม่ได้บันทึก — เปลี่ยนฟอร์มโดยไม่บันทึก?')) return;
-    setFormId(id);
+    if (anyDirty && !window.confirm('มีข้อมูลที่ยังไม่ได้บันทึก — เปลี่ยนฟอร์มโดยไม่บันทึก?')) return;
+    setYearEdits({}); setFormId(id);
   };
 
   if (!myForms.length) return (
@@ -101,7 +122,7 @@ function MyFormsPage({ forms, profile, profiles, businesses, ops }) {
     <div className="h-full overflow-auto">
       <PageHeader title="ส่งข้อมูล" subtitle={form ? `${form.name} — งวด ${MONTH_NAMES[month - 1]} ${year + 543}` : ''}>
         <div className="flex gap-2">
-          <button onClick={() => persist('draft')} disabled={saving || loading || !form} className="flex items-center gap-2 px-3 py-2 bg-white hover:bg-stone-50 border border-stone-300 disabled:opacity-50 text-stone-700 rounded-lg text-sm font-medium"><Check className="w-4 h-4" />{submitted ? 'บันทึกการแก้ไข' : 'บันทึกร่าง'}</button>
+          <button onClick={() => persist('draft')} disabled={saving || loading || !form} className="flex items-center gap-2 px-3 py-2 bg-white hover:bg-stone-50 border border-stone-300 disabled:opacity-50 text-stone-700 rounded-lg text-sm font-medium"><Check className="w-4 h-4" />{editedMonths.length ? `บันทึก (${editedMonths.length + 1} เดือน)` : submitted ? 'บันทึกการแก้ไข' : 'บันทึกร่าง'}</button>
           <button onClick={() => persist('submitted')} disabled={saving || loading || !form} className="flex items-center gap-2 px-4 py-2 bg-emerald-900 hover:bg-emerald-800 disabled:opacity-50 text-white rounded-lg text-sm font-medium"><Send className="w-4 h-4" />{saving ? 'กำลังบันทึก...' : (submitted ? 'ส่งอีกครั้ง' : 'ส่งข้อมูล')}</button>
         </div>
       </PageHeader>
@@ -127,7 +148,7 @@ function MyFormsPage({ forms, profile, profiles, businesses, ops }) {
               {submitted ? `ส่งแล้ว ${fmt(sub.submittedAt)}${sub.submittedBy && sub.submittedBy !== profile.id ? ` โดย ${profileName(profiles, sub.submittedBy)}` : ''}${edited ? ' · แก้ไขหลังส่ง' : ''}` : sub ? `ร่าง (บันทึก ${fmt(sub.updatedAt)})` : 'ยังไม่ได้กรอก'}
             </span>
           )}
-          {dirty && <span className="text-xs text-amber-700">ยังไม่ได้บันทึก</span>}
+          {anyDirty && <span className="text-xs text-amber-700">ยังไม่ได้บันทึก{editedMonths.length ? ` (แก้เดือนอื่นด้วย: ${editedMonths.sort((a, b) => a - b).map((m) => MONTH_NAMES[m - 1]).join(', ')})` : ''}</span>}
         </div>
 
         {form && (
@@ -146,12 +167,12 @@ function MyFormsPage({ forms, profile, profiles, businesses, ops }) {
                 <span className="text-stone-500 mr-1">มุมมองตาราง:</span>
                 <button type="button" onClick={() => setLedgerView('year')} className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg border ${ledgerView === 'year' ? 'bg-emerald-900 text-white border-emerald-900' : 'bg-white text-stone-700 border-stone-300 hover:bg-stone-50'}`}><CalendarRange className="w-3.5 h-3.5" />ทั้งปี (แบบ Excel)</button>
                 <button type="button" onClick={() => setLedgerView('month')} className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg border ${ledgerView === 'month' ? 'bg-emerald-900 text-white border-emerald-900' : 'bg-white text-stone-700 border-stone-300 hover:bg-stone-50'}`}><List className="w-3.5 h-3.5" />เฉพาะเดือนนี้</button>
-                {ledgerView === 'year' && <span className="text-stone-400 ml-1">แถวสีเหลือง = เดือนที่กำลังกรอก · เดือนอื่นดูอย่างเดียว กดชื่อเดือนเพื่อไปกรอกเดือนนั้น</span>}
+                {ledgerView === 'year' && <span className="text-stone-400 ml-1">หยอดลงเดือนไหนก็ได้ (บิลมาช้า/เร็วไม่เท่ากัน) กด "บันทึก" ทีเดียว · แถวสีเหลือง = เดือนที่เลือก (สถานะ/ปุ่มส่งเป็นของเดือนนั้น) กดชื่อเดือนเพื่อเปลี่ยน</span>}
               </div>
             )}
             {fields.map((f) => (
               <FieldInput key={f.key} field={f} value={answers[f.key]} prevValue={prevSub?.answers?.[f.key]} onChange={(v) => setAnswer(f.key, v)} disabled={saving}
-                period={{ year, month }} ledgerView={ledgerView} yearAnswers={isLedgerTable(f) ? yearAnswersFor(f.key) : undefined} yearStatus={yearStatus} onPickMonth={(m) => changePeriod({ year, month: m })} />
+                period={{ year, month }} ledgerView={ledgerView} yearAnswers={isLedgerTable(f) ? yearAnswersFor(f.key) : undefined} yearStatus={yearStatus} onPickMonth={(m) => changePeriod({ year, month: m })} onChangeMonth={(m, v) => setMonthAnswer(m, f.key, v)} />
             ))}
             <FormField label="หมายเหตุถึงผู้คิดคอม">
               <textarea rows={2} value={note} onChange={(e) => { setNote(e.target.value); setDirty(true); }} disabled={saving} className="w-full px-3 py-2 border border-stone-300 rounded-lg text-sm resize-y" placeholder="ถ้ามี" />
