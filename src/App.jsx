@@ -766,6 +766,19 @@ export default function App() {
         if (error) { alert('บันทึกคอมไม่สำเร็จ: ' + error.message); return null; }
         return fromDB(data);
       },
+      // ตั้งค่าคอมรายธุรกิจ (ไม่ผูกงวด) — สาธารณูปโภค: รายการบิลที่เป็นรายจ่าย / รายรับจากผู้เช่า / วิธีหัก
+      getSettings: async (businessId) => {
+        const { data, error } = await supabase.from('commission_settings').select('*').eq('business_id', businessId).maybeSingle();
+        if (error) { console.error(error); return null; }
+        return data ? fromDB(data) : null;
+      },
+      saveSettings: async (businessId, patch) => {
+        const { data, error } = await supabase.from('commission_settings')
+          .upsert({ business_id: businessId, ...toDB(patch), updated_at: new Date().toISOString() }, { onConflict: 'business_id' })
+          .select().single();
+        if (error) { alert('บันทึกการตั้งค่าไม่สำเร็จ: ' + error.message); return null; }
+        return fromDB(data);
+      },
       // รายการหักของทุกพูลคอม (ทุกธุรกิจที่เห็น, 2 ปีล่าสุด) — ใช้เตือนว่าตัวเลขจากฟอร์มผู้จัดการ "เคยใช้คิดคอมงวดไหนแล้ว"
       listDeductionSources: async () => {
         const y = new Date().getFullYear();

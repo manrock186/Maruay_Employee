@@ -6,6 +6,8 @@ import { MONTH_NAMES, payMonthLabel, fmtMoney, fmt, holidayBalance } from '../li
 import { parseLoyverseText, computeCommission } from '../lib/commission.js';
 import { normalizeFields, numericSummary, latestNumericSummary, isLedgerTable, isSubmitted, editedAfterSubmit, periodKey, periodLabel } from '../lib/dataForms.js';
 import { AnswersView, groupTone } from '../components/DataFormFields.jsx';
+import { UtilityPanel } from '../components/UtilityPanel.jsx';
+import { computeUtility, utilityFormIds } from '../lib/utility.js';
 import { FormField, EmptyState, PageHeader } from '../ui/index.jsx';
 
 // ============ COMMISSION PAGE (คอมมิชชั่น) ============
@@ -33,7 +35,8 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, da
   const [dedCarried, setDedCarried] = useState(false); // รายการหักถูกดึงมาจากเดือนก่อน (ยังไม่บันทึก)
   const [submissions, setSubmissions] = useState({}); // formId -> ข้อมูลที่ผู้จัดการส่งมาของงวดนี้
   const [formHistory, setFormHistory] = useState({}); // formId -> [{year, month, answers, status}] ทุกเดือนที่โหลด (ฟอร์มตารางแบบ Excel: ใช้ "ยอดล่าสุดที่มี")
-  const [usedSources, setUsedSources] = useState({}); // `${srcKey}@${srcPeriod}` -> [{businessId, year, month}] งวดคอมอื่นที่เคยใช้ตัวเลขนี้แล้ว
+  const [usedSources, setUsedSources] = useState({});
+  const [utilCfg, setUtilCfg] = useState(null);        // ตั้งค่าสาธารณูปโภคของธุรกิจนี้ (commission_settings.utility) — ใช้ทุกเดือน // `${srcKey}@${srcPeriod}` -> [{businessId, year, month}] งวดคอมอื่นที่เคยใช้ตัวเลขนี้แล้ว
   const [openForm, setOpenForm] = useState(null);     // formId ที่กางดูรายละเอียด
   const fileRef = useRef(null);
 
@@ -50,11 +53,12 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, da
 
   // ฟอร์มที่เกี่ยวกับธุรกิจนี้ (หรือส่วนกลาง) ที่ยังเปิดใช้ — เรียงตาม sort_order
   const periodForms = useMemo(() => (dataForms || []).filter((f) => f.active !== false && (!f.businessId || f.businessId === activeBusinessId)).sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0)), [dataForms, activeBusinessId]);
-  const loadSubmissions = async () => {
+  const loadSubmissions = async (cfg = utilCfg) => {
     const rows = await ops.dataSubmission.listByPeriod(year, month);
     const m = {}; rows.forEach((s) => { m[s.formId] = s; });
-    // ฟอร์มที่มีตารางแบบ Excel → โหลดทุกเดือน ปีก่อน-ปีนี้-ปีหน้า เพื่อหา "ยอดล่าสุดที่มี" ของแต่ละบัญชี
-    const ledgerForms = periodForms.filter((f) => normalizeFields(f.fields).some(isLedgerTable));
+    // ฟอร์มที่มีตารางแบบ Excel + ฟอร์มที่ใช้คิดสาธารณูปโภค → โหลดทุกเดือน ปีก่อน-ปีนี้-ปีหน้า เพื่อหา "ยอดล่าสุดที่มี"
+    const utilIds = new Set(utilityFormIds(cfg));
+    const ledgerForms = periodForms.filter((f) => utilIds.has(f.id) || normalizeFields(f.fields).some(isLedgerTable));
     const hist = {};
     await Promise.all(ledgerForms.map(async (f) => {
       const list = await ops.dataSubmission.listByFormYears(f.id, [year - 1, year, year + 1]);
@@ -65,7 +69,11 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, da
     const used = {};
     pools.forEach((pl) => {
       if (pl.businessId === activeBusinessId && pl.periodYear === year && pl.periodMonth === month) return; // งวดนี้เอง = "ใส่แล้ว" ไม่ใช่ "เคยใช้"
-      (pl.deductions || []).forEach((d) => { if (d.srcKey && d.srcPeriod) (used[`${d.srcKey}@${d.srcPeriod}`] ||= []).push({ businessId: pl.businessId, year: pl.periodYear, month: pl.periodMonth }); });
+      (pl.deductions || []).forEach((d) => {
+        const add = (k, p) => { if (k && p) (used[`${k}@${p}`] ||= []).push({ businessId: pl.businessId, year: pl.periodYear, month: pl.periodMonth }); };
+        add(d.srcKey, d.srcPeriod);
+        (d.sources || []).forEach((x) => add(x.srcKey, x.srcPeriod)); // รายการหักอัตโนมัติ (สาธารณูปโภค) เก็บที่มาหลายช่อง
+      });
     });
     return { m, hist, used };
   };
@@ -78,8 +86,15 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, da
     let cancelled = false;
     setLoading(true);
     (async () => {
-      const [pool, pe, subs] = await Promise.all([ops.commission.getByPeriod(activeBusinessId, year, month), loadPayrollExcess(), loadSubmissions()]);
+      const settings = await ops.commission.getSettings(activeBusinessId);
+      const cfg = settings?.utility && Object.keys(settings.utility).length ? settings.utility : null;
+      const [pool, pe, subs] = await Promise.all([ops.commission.getByPeriod(activeBusinessId, year, month), loadPayrollExcess(), loadSubmissions(cfg)]);
       if (cancelled) return;
+      setUtilCfg(cfg);
+      // รายการหักอัตโนมัติ (สาธารณูปโภค) คำนวณสดทุกครั้ง ไม่เอาของที่บันทึกไว้มาเป็นแถวแก้มือ
+      // + ถ้าเปิดสาธารณูปโภคแล้ว ตัดแถวมือที่มาจากฟอร์มที่ใช้คิดอยู่ (กันหักซ้ำ) และแถวชื่อ "น้ำไฟ…" แบบเก่าจาก Excel
+      const utilIds = utilityFormIds(cfg);
+      const manualOnly = (list) => (list || []).filter((d) => !d.auto && !(cfg?.enabled && ((d.srcKey && utilIds.some((id) => String(d.srcKey).startsWith(`${id}.`))) || /น้ำไฟ/.test(d.label || ''))));
       setPayrollExcess(pe);
       applySubmissions(subs);
       setOpenForm(null);
@@ -90,7 +105,7 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, da
         setPosItems(Array.isArray(pool.posItems) ? pool.posItems : []);
         setPosImport(pool.posImport || null);
         setPool2Total(pool.pool2Total ?? '');
-        setDeductions(pool.deductions || []);
+        setDeductions(manualOnly(pool.deductions));
         setNote(pool.note || '');
         const em = {};
         (pool.entries || []).forEach((e) => { em[e.employeeId] = { pct: e.pct ?? '', amount: e.amount ?? '', pct2: e.pct2 ?? '', amount2: e.amount2 ?? '', excessDays: e.excessDays ?? '' }; });
@@ -104,8 +119,9 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, da
         const prev = month === 1 ? { y: year - 1, m: 12 } : { y: year, m: month - 1 };
         const prevPool = await ops.commission.getByPeriod(activeBusinessId, prev.y, prev.m);
         if (cancelled) return;
-        if (prevPool && (prevPool.deductions || []).length) {
-          setDeductions(prevPool.deductions.map((d) => ({ label: d.label || '', amount: '', ...(d.srcKey ? { srcKey: d.srcKey } : {}) })));
+        const carry = manualOnly(prevPool?.deductions);
+        if (carry.length) {
+          setDeductions(carry.map((d) => ({ label: d.label || '', amount: '', ...(d.srcKey ? { srcKey: d.srcKey } : {}) })));
           setDedCarried(true);
         } else {
           setDeductions([]); setDedCarried(false);
@@ -135,7 +151,18 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, da
   const clearImport = () => { setPosItems([]); setPosImport(null); };
 
   // ---- คำนวณ ----
-  const poolValue = (Number(posProfit) || 0) - deductions.reduce((s, d) => s + (Number(d.amount) || 0), 0);
+  // สาธารณูปโภค: รายจ่าย (บิลที่เลือก) vs รายรับจากผู้เช่า → รายการหักอัตโนมัติ
+  const util = useMemo(() => computeUtility(utilCfg, periodForms, formHistory, { year, month }), [utilCfg, periodForms, formHistory, year, month]);
+  const autoDeds = util.deductions;
+  const utilFormSet = useMemo(() => new Set(utilCfg?.enabled ? utilityFormIds(utilCfg) : []), [utilCfg]);
+  const saveUtilCfg = async (cfg) => {
+    const res = await ops.commission.saveSettings(activeBusinessId, { utility: cfg });
+    if (!res) return false;
+    setUtilCfg(cfg);
+    applySubmissions(await loadSubmissions(cfg));
+    return true;
+  };
+  const poolValue = (Number(posProfit) || 0) - [...autoDeds, ...deductions].reduce((s, d) => s + (Number(d.amount) || 0), 0);
   const pool2Value = Number(pool2Total) || 0;
   const setEntry = (empId, patch) => setEntries((prev) => ({ ...prev, [empId]: { ...prev[empId], ...patch } }));
   const computedFor = (empId) => Math.round(poolValue * (Number(entries[empId]?.pct) || 0) / 100 * 100) / 100;
@@ -230,7 +257,7 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, da
         posImport: posImport || null,
         pool2Total: Number(pool2Total) || 0,
         // srcKey = ฟอร์ม.ช่อง ที่ตัวเลขมาจาก (ถ้ากดจากข้อมูลผู้จัดการ) — เดือนถัดไปจะได้จับคู่ถูกแม้เปลี่ยนชื่อช่อง
-        deductions: deductions.map((d) => ({ label: d.label || '', amount: Number(d.amount) || 0, ...(d.srcKey ? { srcKey: d.srcKey } : {}), ...(d.srcKey && d.srcPeriod ? { srcPeriod: d.srcPeriod } : {}) })),
+        deductions: [...autoDeds.map((d) => ({ label: d.label, amount: d.amount, auto: d.auto, sources: d.sources })), ...deductions.map((d) => ({ label: d.label || '', amount: Number(d.amount) || 0, ...(d.srcKey ? { srcKey: d.srcKey } : {}), ...(d.srcKey && d.srcPeriod ? { srcPeriod: d.srcPeriod } : {}) }))],
         entries: entryList, note: note.trim() || null,
       });
       if (!ok) return;
@@ -343,6 +370,7 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, da
               <p className="text-xs text-stone-400 mt-1">{posImport ? 'เติมจากไฟล์ที่นำเข้า — แก้ทับได้' : 'นำเข้าไฟล์ด้านบน หรือกรอกเอง'}</p>
             </FormField>
           </div>
+          <UtilityPanel config={utilCfg} result={util} forms={periodForms} usedSources={usedSources} period={{ year, month }} onSaveConfig={saveUtilCfg} disabled={saving || loading} />
           {periodForms.length > 0 && (
             <div className="rounded-lg border border-sky-200 bg-sky-50/50 p-3 space-y-2">
               <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -354,7 +382,8 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, da
                 const fields = normalizeFields(f.fields);
                 const ledger = fields.some(isLedgerTable);
                 // ตารางแบบ Excel: ชิป = ยอดล่าสุดที่มีของแต่ละบัญชี (อาจมาจากเดือนอื่น) · ฟอร์มอื่น: ค่าของงวดนี้
-                const nums = ledger ? latestNumericSummary(fields, formHistory[f.id] || [], { year, month }) : (s ? numericSummary(fields, s.answers, { year, month }) : []);
+                const inUtility = utilFormSet.has(f.id); // ฟอร์มที่ใช้คิดในกล่องสาธารณูปโภคแล้ว → ไม่ต้องมีชิปให้กดซ้ำ
+                const nums = inUtility ? [] : ledger ? latestNumericSummary(fields, formHistory[f.id] || [], { year, month }) : (s ? numericSummary(fields, s.answers, { year, month }) : []);
                 const warnCount = nums.filter((n) => n.kind === 'row' || n.kind === 'field').filter((n) => usedSources[`${f.id}.${n.key}@${periodKey(n.period)}`]).length;
                 const who = profiles.find((p) => p.id === f.assigneeUserId)?.name || (f.assigneeUserId ? 'ผู้ใช้อื่น' : 'ยังไม่มอบหมาย');
                 const open = openForm === f.id;
@@ -417,7 +446,8 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, da
                         </div>
                       );
                     })()}
-                    {s && !nums.length && <p className="text-xs text-stone-400 mt-1">ไม่มีตัวเลขในข้อมูลที่ส่งมา</p>}
+                    {inUtility && <p className="text-[11px] text-stone-500 mt-1">ใช้คำนวณในกล่อง "สาธารณูปโภค" ด้านบนอัตโนมัติ (เปลี่ยนรายการได้ที่ปุ่ม "เลือกรายการ / วิธีหัก")</p>}
+                    {s && !inUtility && !nums.length && <p className="text-xs text-stone-400 mt-1">ไม่มีตัวเลขในข้อมูลที่ส่งมา</p>}
                     {open && s && <div className="mt-2 pt-2 border-t border-stone-100"><AnswersView fields={fields} answers={s.answers} /></div>}
                   </div>
                 );
@@ -427,14 +457,21 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, da
           )}
           <div>
             <div className="flex items-center justify-between mb-1">
-              <span className="text-xs font-medium text-stone-600">รายการหัก (น้ำไฟรวม, น้ำไฟที่ขาดทุน, ช้อนส้อม ฯลฯ)</span>
+              <span className="text-xs font-medium text-stone-600">รายการหัก (ช้อนส้อม ฯลฯ){autoDeds.length > 0 && ' — แถวสาธารณูปโภคคำนวณให้อัตโนมัติ'}</span>
               <button onClick={addDeduction} className="text-xs text-emerald-700 hover:underline flex items-center gap-1"><Plus className="w-3 h-3" />เพิ่มรายการหัก</button>
             </div>
             <div className="space-y-2">
               {dedCarried && deductions.length > 0 && (
                 <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">ดึงชื่อรายการหักจากเดือนก่อนมาให้แล้ว — ใส่ตัวเลขของเดือนนี้ แล้วกดบันทึก</p>
               )}
-              {deductions.length === 0 && <p className="text-xs text-stone-400">ยังไม่มีรายการหัก</p>}
+              {autoDeds.map((d) => (
+                <div key={d.auto} className="flex items-center gap-2" title="คำนวณจากกล่องสาธารณูปโภค — แก้ที่ปุ่ม เลือกรายการ / วิธีหัก">
+                  <div className="flex-1 px-3 py-1.5 border border-yellow-200 bg-yellow-50 rounded-lg text-sm text-stone-700 flex items-center gap-1.5"><span className="text-[10px] px-1 rounded bg-yellow-200 text-yellow-900">อัตโนมัติ</span>{d.label}</div>
+                  <div className={`w-32 px-3 py-1.5 border border-yellow-200 bg-yellow-50 rounded-lg text-sm text-right tabular-nums ${d.amount < 0 ? 'text-emerald-700' : 'text-stone-800'}`}>{fmtMoney(d.amount)}</div>
+                  <span className="w-7" />
+                </div>
+              ))}
+              {deductions.length === 0 && !autoDeds.length && <p className="text-xs text-stone-400">ยังไม่มีรายการหัก</p>}
               {deductions.map((d, i) => (
                 <div key={i} className="flex items-center gap-2">
                   <input value={d.label} onChange={(e) => setDed(i, { label: e.target.value })} className="flex-1 px-3 py-1.5 border border-stone-300 rounded-lg text-sm" placeholder="เช่น น้ำไฟรวม" />
