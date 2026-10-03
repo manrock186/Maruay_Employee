@@ -455,3 +455,24 @@ create policy data_form_submissions_update on public.data_form_submissions for u
 drop policy if exists data_form_submissions_delete on public.data_form_submissions;
 create policy data_form_submissions_delete on public.data_form_submissions for delete to authenticated using (public.current_role() = 'owner');
 alter publication supabase_realtime add table public.data_forms;
+
+-- ============================================================
+-- ตั้งค่าคอมรายธุรกิจ: สาธารณูปโภค (migration commission_settings_utility) — ดู src/lib/utility.js
+-- utility = { enabled, mode: 'excel'|'net'|'expense', expense: [{formId,fieldKey,rowKey,colKey}], income: [{formId,fieldKey,rowKey,colKey,divisor}] }
+-- ============================================================
+create table if not exists public.commission_settings (
+  business_id uuid primary key references public.businesses(id) on delete cascade,
+  utility     jsonb not null default '{}'::jsonb,
+  updated_at  timestamptz not null default now()
+);
+alter table public.commission_settings enable row level security;
+drop policy if exists commission_settings_read on public.commission_settings;
+create policy commission_settings_read on public.commission_settings for select to authenticated
+  using (public.current_role() = 'owner' or (public.can_manage_payroll() and business_id = any(public.current_business_ids())));
+drop policy if exists commission_settings_insert on public.commission_settings;
+create policy commission_settings_insert on public.commission_settings for insert to authenticated
+  with check (public.current_role() = 'owner' or (public.can_manage_payroll() and business_id = any(public.current_business_ids())));
+drop policy if exists commission_settings_update on public.commission_settings;
+create policy commission_settings_update on public.commission_settings for update to authenticated
+  using (public.current_role() = 'owner' or (public.can_manage_payroll() and business_id = any(public.current_business_ids())))
+  with check (public.current_role() = 'owner' or (public.can_manage_payroll() and business_id = any(public.current_business_ids())));

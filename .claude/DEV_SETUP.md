@@ -26,9 +26,10 @@ npm run build    # ยืนยันแล้วว่า build ผ่าน �
 ```
 มี `.env.local` + `.env.example` แล้ว, เพิ่ม `.gitignore` แล้ว (repo เดิมไม่มี)
 
-## Database schema (public, 25 tables, เปิด RLS ทุกตาราง)
+## Database schema (public, 26 tables, เปิด RLS ทุกตาราง)
 - **Core:** businesses, zones, positions, employees, user_profiles
 - **Payroll:** payrolls, payroll_items, salary_changes, commission_pools, room_rent_pools, advance_pools, recurring_task_pools, recurring_task_pay, public_holidays
+- **Commission settings:** commission_settings (ต่อธุรกิจ: utility = รายการสาธารณูปโภครายจ่าย/รายรับ/วิธีหัก — ดู lib/utility.js)
 - **Data forms:** data_forms, data_form_submissions (แบบฟอร์มข้อมูลประจำเดือนที่ผู้จัดการกรอก → ประกอบคิดคอม)
 - **Order:** display_order (ลำดับพนักงาน/โซน/แผนก)
 - **Ops:** contractors, contractor_visits, expense_requests, app_settings
