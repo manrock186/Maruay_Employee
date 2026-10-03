@@ -112,7 +112,8 @@ function computeCommission({ poolValue = 0, rows = [], days = COMM_DAYS }) {
   Object.keys(depts).forEach((k) => {
     const d = depts[k];
     if (d.forfeited <= 0) return;
-    const recipients = out.filter((r) => (r.dept || '—') === k && r.excessDays === 0 && r.total > 0);
+    // noShare = คนที่ลาออกแล้วแต่ยังมีคอมก้อนที่ 2 เดือนสุดท้าย → ไม่รับส่วนแบ่งของคนหยุด
+    const recipients = out.filter((r) => (r.dept || '—') === k && r.excessDays === 0 && r.total > 0 && !r.noShare);
     d.recipients = recipients.length;
     if (!recipients.length) { d.unassigned = d.forfeited; return; }
     d.share = r2(d.forfeited / recipients.length);

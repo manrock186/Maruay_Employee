@@ -26,9 +26,10 @@ npm run build    # ยืนยันแล้วว่า build ผ่าน �
 ```
 มี `.env.local` + `.env.example` แล้ว, เพิ่ม `.gitignore` แล้ว (repo เดิมไม่มี)
 
-## Database schema (public, 26 tables, เปิด RLS ทุกตาราง)
+## Database schema (public, 28 tables, เปิด RLS ทุกตาราง)
 - **Core:** businesses, zones, positions, employees, user_profiles
 - **Payroll:** payrolls, payroll_items, salary_changes, commission_pools, room_rent_pools, advance_pools, recurring_task_pools, recurring_task_pay, public_holidays
+- **Commission pool 2:** commission_pool2_config (id=1: sections/rates + form_id ของฟอร์มผู้เช่า) · commission_pool2 (ต่องวด: inputs ยอดใส่เอง, bonuses, results snapshot `source: app|excel`) — ดู lib/pool2.js, pages/Pool2Page.jsx · หน้าคอมดึงยอดรายคนไปลงช่องคอม 2 ของธุรกิจหลัก
 - **Commission settings:** commission_settings (ต่อธุรกิจ: utility = รายการสาธารณูปโภครายจ่าย/รายรับ/วิธีหัก — ดู lib/utility.js)
 - **Data forms:** data_forms, data_form_submissions (แบบฟอร์มข้อมูลประจำเดือนที่ผู้จัดการกรอก → ประกอบคิดคอม)
 - **Order:** display_order (ลำดับพนักงาน/โซน/แผนก)

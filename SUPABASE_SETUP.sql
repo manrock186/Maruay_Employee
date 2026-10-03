@@ -476,3 +476,35 @@ drop policy if exists commission_settings_update on public.commission_settings;
 create policy commission_settings_update on public.commission_settings for update to authenticated
   using (public.current_role() = 'owner' or (public.can_manage_payroll() and business_id = any(public.current_business_ids())))
   with check (public.current_role() = 'owner' or (public.can_manage_payroll() and business_id = any(public.current_business_ids())));
+
+-- ============================================================
+-- คอมก้อนที่ 2 (ค่าเช่า/ร้านค้า ข้ามธุรกิจ) — migration commission_pool2 · ดู src/lib/pool2.js
+-- config: sections = [{ key, name, kind: 'threshold'|'percent'|'fixed', threshold, revenuePct, basePct, partB, active, rates: [{ empId, a, b, from?, until? }] }]
+-- pool2 ต่องวด: inputs = { [fixedSectionKey]: number } · bonuses = [{ empId, amount, note }] · results = { source: 'app'|'excel', persons: { empId: {a,b,bonus,total} }, sections, totals }
+-- ============================================================
+create table if not exists public.commission_pool2_config (
+  id         int primary key default 1 check (id = 1),
+  sections   jsonb not null default '[]'::jsonb,
+  form_id    uuid references public.data_forms(id) on delete set null,
+  updated_at timestamptz not null default now()
+);
+create table if not exists public.commission_pool2 (
+  period_year  int not null,
+  period_month int not null check (period_month between 1 and 12),
+  inputs       jsonb not null default '{}'::jsonb,
+  bonuses      jsonb not null default '[]'::jsonb,
+  results      jsonb,
+  note         text,
+  updated_at   timestamptz not null default now(),
+  primary key (period_year, period_month)
+);
+alter table public.commission_pool2_config enable row level security;
+alter table public.commission_pool2 enable row level security;
+drop policy if exists commission_pool2_config_read on public.commission_pool2_config;
+create policy commission_pool2_config_read on public.commission_pool2_config for select to authenticated using (public.current_role() = 'owner' or public.can_manage_payroll());
+drop policy if exists commission_pool2_config_write on public.commission_pool2_config;
+create policy commission_pool2_config_write on public.commission_pool2_config for all to authenticated using (public.current_role() = 'owner') with check (public.current_role() = 'owner');
+drop policy if exists commission_pool2_read on public.commission_pool2;
+create policy commission_pool2_read on public.commission_pool2 for select to authenticated using (public.current_role() = 'owner' or public.can_manage_payroll());
+drop policy if exists commission_pool2_write on public.commission_pool2;
+create policy commission_pool2_write on public.commission_pool2 for all to authenticated using (public.current_role() = 'owner' or public.can_manage_payroll()) with check (public.current_role() = 'owner' or public.can_manage_payroll());

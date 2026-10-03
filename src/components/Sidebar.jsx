@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Users, Building2, Settings, LogOut, X, Home, Shield, Eye, Network, User, KeyRound, Crown, Award, Clock, Wallet, Banknote, Percent, Sparkles, ClipboardList, FileText, ChevronDown, Calculator } from 'lucide-react';
+import { Users, Building2, Settings, LogOut, X, Home, Shield, Eye, Network, User, KeyRound, Crown, Award, Clock, Wallet, Banknote, Percent, Sparkles, ClipboardList, FileText, ChevronDown, Calculator, Layers } from 'lucide-react';
 import { supabase } from '../supabase.js';
 import { ThemePicker } from './ThemePicker.jsx';
 import { PushToggle } from './PushToggle.jsx';
@@ -24,6 +24,7 @@ function Sidebar({ view, setView, profile, businesses, zones, activeBusinessId, 
   const PAY_ITEMS = [
     { id: 'payroll', label: 'ทำเงินเดือน', icon: Calculator, show: profile.canManagePayroll && navAllowed('payroll') },
     { id: 'commission', label: 'คอมมิชชั่น', icon: Percent, show: profile.canManagePayroll && navAllowed('commission') },
+    { id: 'pool2', label: 'คอมก้อนที่ 2 (ค่าเช่า)', icon: Layers, show: profile.canManagePayroll && navAllowed('commission') },
     { id: 'advances', label: 'เบิกเงิน', icon: Banknote, show: profile.canManagePayroll && (isOwner || (isBM && navAllowed('advances'))) },
     // "ไม่เห็นเงินเดือน" = ซ่อน เงินเดือน/คอมมิชชั่น/เบิกเงิน · ค่าห้องพนักงาน + งานเสริมประจำ (ไม่โชว์ยอดเงิน) ยังเห็น
     { id: 'roomrent', label: 'ค่าห้องพนักงาน', icon: KeyRound, show: (isOwner || (isBM && navAllowed('roomrent'))) },

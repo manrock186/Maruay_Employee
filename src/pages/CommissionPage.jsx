@@ -8,13 +8,16 @@ import { normalizeFields, numericSummary, latestNumericSummary, isLedgerTable, i
 import { AnswersView, groupTone } from '../components/DataFormFields.jsx';
 import { UtilityPanel } from '../components/UtilityPanel.jsx';
 import { computeUtility, utilityFormIds } from '../lib/utility.js';
+import { computePool2, pool2Changed, rateActive } from '../lib/pool2.js';
 import { FormField, EmptyState, PageHeader } from '../ui/index.jsx';
 
 // ============ COMMISSION PAGE (คอมมิชชั่น) ============
 // ก้อนที่ 1 (POS): กองกลาง = กำไร Loyverse − รายการหัก → × % ต่อคน → หักวันหยุดเกินสิทธิ (÷30) → ส่วนที่หายแบ่งในแผนก
-// ก้อนที่ 2 (ร้านค้า): ใส่ยอดมือไปก่อน (จะทำรายละเอียดทีหลัง)
+// ก้อนที่ 2 (ค่าเช่า/ร้านค้า): คิดที่หน้า "คอมก้อนที่ 2" (ข้ามธุรกิจ) → ยอดรายคนที่บันทึกไว้มาลงช่อง คอม 2 ของคนที่ธุรกิจหลักคือธุรกิจนี้ (กันนับซ้ำคนที่อยู่หลายธุรกิจ)
+//   งวดที่ยังไม่ได้บันทึกก้อนที่ 2 → ช่องคอม 2 กรอกเองได้เหมือนเดิม
 // ข้อมูลจากผู้จัดการ (แบบฟอร์มข้อมูลประจำเดือน) โชว์ในก้อนที่ 1 — กดใส่ตัวเลขเป็นรายการหักได้เลย ไม่ต้องพิมพ์ซ้ำ
-function CommissionPage({ businesses, employees, positions, activeBusinessId, dataForms = [], profiles = [], ops }) {
+function CommissionPage({ businesses, employees, positions, activeBusinessId, dataForms = [], profiles = [], onOpenPool2, ops }) {
+  const [saved2, setSaved2] = useState({}); // empId -> คอม 2 ที่บันทึกไว้ในพูลคอมงวดนี้ (เทียบว่าก้อนที่ 2 เปลี่ยนหลังบันทึกคอมไหม)
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth() + 1);
@@ -24,7 +27,6 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, da
   const [showItems, setShowItems] = useState(false);
   const [pasteOpen, setPasteOpen] = useState(false);
   const [pasteText, setPasteText] = useState('');
-  const [pool2Total, setPool2Total] = useState('');
   const [deductions, setDeductions] = useState([]);
   const [entries, setEntries] = useState({});
   const [payrollExcess, setPayrollExcess] = useState(null); // empId -> หยุดเกินจากหน้าเงินเดือน (null = ยังไม่โหลด)
@@ -39,10 +41,13 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, da
   const [utilCfg, setUtilCfg] = useState(null);
   const [fixedDeds, setFixedDeds] = useState([]);       // รายการหักประจำทุกเดือน (commission_settings.fixed_deductions) เช่น ค่าช้อนส้อม        // ตั้งค่าสาธารณูปโภคของธุรกิจนี้ (commission_settings.utility) — ใช้ทุกเดือน // `${srcKey}@${srcPeriod}` -> [{businessId, year, month}] งวดคอมอื่นที่เคยใช้ตัวเลขนี้แล้ว
   const [openForm, setOpenForm] = useState(null);     // formId ที่กางดูรายละเอียด
+  const [pool2Row, setPool2Row] = useState(null);     // commission_pool2 ของงวด (ยอดก้อนที่ 2 ที่บันทึกไว้)
+  const [pool2Cfg, setPool2Cfg] = useState(null);
   const fileRef = useRef(null);
 
   const business = businesses.find((b) => b.id === activeBusinessId);
-  const bizEmployees = useMemo(() => employees.filter((e) => isActive(e) && (e.businessId === activeBusinessId || (e.additionalBusinessIds || []).includes(activeBusinessId))), [employees, activeBusinessId]);
+  // + คนที่ลาออกแล้วแต่ยังมีคอมก้อนที่ 2 งวดนี้ (เดือนสุดท้าย) ที่ธุรกิจหลักนี้ — ไม่งั้นยอดเดือนสุดท้ายหาย
+  const bizEmployees = useMemo(() => employees.filter((e) => (isActive(e) || (e.businessId === activeBusinessId && Number(pool2Row?.results?.persons?.[e.id]?.total))) && (e.businessId === activeBusinessId || (e.additionalBusinessIds || []).includes(activeBusinessId))), [employees, activeBusinessId, pool2Row]);
 
   // หยุดเกินสิทธิของงวดนี้จากแถวเงินเดือน (ถ้าทำเงินเดือนแล้ว) — ไม่ต้องกรอกซ้ำ
   const loadPayrollExcess = async () => {
@@ -89,8 +94,9 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, da
     (async () => {
       const settings = await ops.commission.getSettings(activeBusinessId);
       const cfg = settings?.utility && Object.keys(settings.utility).length ? settings.utility : null;
-      const [pool, pe, subs] = await Promise.all([ops.commission.getByPeriod(activeBusinessId, year, month), loadPayrollExcess(), loadSubmissions(cfg)]);
+      const [pool, pe, subs, p2row, p2cfg] = await Promise.all([ops.commission.getByPeriod(activeBusinessId, year, month), loadPayrollExcess(), loadSubmissions(cfg), ops.pool2.get(year, month), ops.pool2.getConfig()]);
       if (cancelled) return;
+      setPool2Row(p2row); setPool2Cfg(p2cfg);
       setUtilCfg(cfg);
       const fixed = Array.isArray(settings?.fixedDeductions) ? settings.fixedDeductions : [];
       setFixedDeds(fixed);
@@ -110,10 +116,10 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, da
         setPosProfit(pool.posProfit ?? '');
         setPosItems(Array.isArray(pool.posItems) ? pool.posItems : []);
         setPosImport(pool.posImport || null);
-        setPool2Total(pool.pool2Total ?? '');
         setDeductions(manualOnly(pool.deductions).map((d) => ({ ...d, fixed: isFixed(d.label) })));
         setNote(pool.note || '');
         const em = {};
+        const s2 = {}; (pool.entries || []).forEach((e) => { s2[e.employeeId] = Number(e.amount2) || 0; }); setSaved2(s2);
         (pool.entries || []).forEach((e) => { em[e.employeeId] = { pct: e.pct ?? '', amount: e.amount ?? '', pct2: e.pct2 ?? '', amount2: e.amount2 ?? '', excessDays: e.excessDays ?? '' }; });
         // เติม pct ตั้งต้นให้คนที่ยังไม่มี entry
         bizEmployees.forEach((e) => { if (!em[e.id] && e.commissionPct != null) em[e.id] = { pct: e.commissionPct, amount: '', pct2: '', amount2: '', excessDays: '' }; });
@@ -121,7 +127,7 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, da
         setSavedAt(pool.updatedAt || pool.createdAt || null);
       } else {
         setPosProfit(pool?.posProfit ? pool.posProfit : ''); setPosItems(Array.isArray(pool?.posItems) ? pool.posItems : []); setPosImport(pool?.posImport || null);
-        setPool2Total(pool?.pool2Total ? pool.pool2Total : ''); setNote(pool?.note || ''); setSavedAt(null);
+        setNote(pool?.note || ''); setSavedAt(null); setSaved2({});
         // เดือนใหม่ที่ยังไม่เคยบันทึก → ดึง "รายการหัก" จากเดือนก่อนหน้ามาตั้งต้น (รายการเหมือนเดิม เปลี่ยนแค่ตัวเลข)
         const prev = month === 1 ? { y: year - 1, m: 12 } : { y: year, m: month - 1 };
         const prevPool = await ops.commission.getByPeriod(activeBusinessId, prev.y, prev.m);
@@ -198,16 +204,26 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, da
     if (ok) setDeductions(nextDeds);
   };
   const poolValue = (Number(posProfit) || 0) - [...autoDeds, ...deductions].reduce((s, d) => s + (Number(d.amount) || 0), 0);
-  const pool2Value = Number(pool2Total) || 0;
+  // ---- ก้อนที่ 2 จากหน้า "คอมก้อนที่ 2" ----
+  // งวดที่นำเข้าจาก Excel และบันทึกคอมไว้แล้ว → ใช้ยอดคอม 2 ที่บันทึกไว้เดิม (ไม่ทับยอดที่จ่ายไปแล้ว)
+  const p2Saved = pool2Row?.results?.persons && !(pool2Row.results.source === 'excel' && savedAt) ? pool2Row.results.persons : null;
+  const p2Ids = useMemo(() => new Set([...(pool2Cfg?.sections || []).flatMap((s) => (s.rates || []).filter((r) => r.empId && rateActive(r, { year, month })).map((r) => r.empId)), ...Object.keys(p2Saved || {})]), [pool2Cfg, p2Saved, year, month]);
+  const p2Live = useMemo(() => (pool2Cfg ? computePool2({ sections: pool2Cfg.sections || [], answers: submissions[pool2Cfg.formId]?.answers || {}, inputs: pool2Row?.inputs || {}, bonuses: pool2Row?.bonuses || [], period: { year, month } }) : null), [pool2Cfg, pool2Row, submissions, year, month]);
+  const p2Stale = useMemo(() => (p2Saved && p2Live && pool2Row?.results?.source !== 'excel' ? pool2Changed(p2Saved, p2Live.persons) : []), [p2Saved, p2Live, pool2Row]);
+  // null = ไม่มียอดก้อนที่ 2 ที่บันทึกไว้ → กรอกเอง · { here: true, amount } = ลงที่ธุรกิจนี้ · { here: false } = ไปลงหน้าคอมของธุรกิจหลัก
+  const pool2Of = (e) => {
+    if (!p2Saved || !p2Ids.has(e.id)) return null;
+    if (e.businessId !== activeBusinessId) return { here: false, biz: businesses.find((b) => b.id === e.businessId)?.name || 'ธุรกิจหลัก' };
+    return { here: true, amount: Number(p2Saved[e.id]?.total) || 0 };
+  };
+  const amount2Of = (e) => { const p = pool2Of(e); return p ? (p.here ? p.amount : 0) : entries[e.id]?.amount2; };
   const setEntry = (empId, patch) => setEntries((prev) => ({ ...prev, [empId]: { ...prev[empId], ...patch } }));
   const computedFor = (empId) => Math.round(poolValue * (Number(entries[empId]?.pct) || 0) / 100 * 100) / 100;
-  const computedFor2 = (empId) => Math.round(pool2Value * (Number(entries[empId]?.pct2) || 0) / 100 * 100) / 100;
   const fillFromPct = () => setEntries((prev) => {
     const next = { ...prev };
     bizEmployees.forEach((e) => {
       const pct = Number(next[e.id]?.pct) || 0;
-      const pct2 = Number(next[e.id]?.pct2) || 0;
-      next[e.id] = { ...next[e.id], amount: pct ? Math.round(poolValue * pct / 100 * 100) / 100 : (next[e.id]?.amount ?? ''), amount2: pct2 ? Math.round(pool2Value * pct2 / 100 * 100) / 100 : (next[e.id]?.amount2 ?? '') };
+      next[e.id] = { ...next[e.id], amount: pct ? Math.round(poolValue * pct / 100 * 100) / 100 : (next[e.id]?.amount ?? '') };
     });
     return next;
   });
@@ -220,8 +236,11 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, da
   const deptOf = (e) => employeeDepartment(e, positions, activeBusinessId);
   const calc = useMemo(() => computeCommission({
     poolValue,
-    rows: bizEmployees.map((e) => ({ id: e.id, dept: deptOf(e), pct: entries[e.id]?.pct, amount: entries[e.id]?.amount, amount2: entries[e.id]?.amount2, excessDays: excessFor(e.id) })),
-  }), [bizEmployees, entries, poolValue, payrollExcess, positions, activeBusinessId]);
+    // คนที่ลาออกแล้ว (อยู่ในรายชื่อเพราะมีคอมก้อนที่ 2 เดือนสุดท้าย) → ได้แค่คอม 2 ไม่ได้ก้อนที่ 1 และไม่รับส่วนแบ่ง
+    rows: bizEmployees.map((e) => (isActive(e)
+      ? { id: e.id, dept: deptOf(e), pct: entries[e.id]?.pct, amount: entries[e.id]?.amount, amount2: amount2Of(e), excessDays: excessFor(e.id) }
+      : { id: e.id, dept: deptOf(e), pct: 0, amount: null, amount2: amount2Of(e), excessDays: excessFor(e.id), noShare: true })),
+  }), [bizEmployees, entries, poolValue, payrollExcess, positions, activeBusinessId, p2Saved, p2Ids]);
   const calcById = useMemo(() => { const m = {}; calc.rows.forEach((r) => { m[r.id] = r; }); return m; }, [calc]);
 
   // จัดกลุ่มตามแผนก (ลำดับตาม employees ที่เรียงมาแล้ว)
@@ -279,7 +298,7 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, da
           return {
             employeeId: e.id,
             // amount = ยอดที่ "กำหนดเอง" เท่านั้น (null = คิดจาก % × กองกลาง ทุกครั้งที่เปิด) · base1 = ยอดที่ใช้จริงตอนบันทึก
-            pct: Number(entries[e.id]?.pct) || 0, amount: override ? r.base1 : null, base1: r.base1 || 0,
+            pct: isActive(e) ? (Number(entries[e.id]?.pct) || 0) : 0, amount: override && isActive(e) ? r.base1 : null, base1: r.base1 || 0,
             pct2: Number(entries[e.id]?.pct2) || 0, amount2: r.base2 || 0,
             excessDays: r.excessDays || 0, forfeited: r.forfeited || 0, share: r.share || 0, final: r.final || 0,
           };
@@ -290,13 +309,14 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, da
         posProfit: Number(posProfit) || 0,
         posItems: posItems || [],
         posImport: posImport || null,
-        pool2Total: Number(pool2Total) || 0,
+        pool2Total: calc.totals.base2,
         // srcKey = ฟอร์ม.ช่อง ที่ตัวเลขมาจาก (ถ้ากดจากข้อมูลผู้จัดการ) — เดือนถัดไปจะได้จับคู่ถูกแม้เปลี่ยนชื่อช่อง
         deductions: [...autoDeds.map((d) => ({ label: d.label, amount: d.amount, auto: d.auto, sources: d.sources })), ...deductions.map((d) => ({ label: d.label || '', amount: Number(d.amount) || 0, ...(d.srcKey ? { srcKey: d.srcKey } : {}), ...(d.srcKey && d.srcPeriod ? { srcPeriod: d.srcPeriod } : {}) }))],
         entries: entryList, note: note.trim() || null,
       });
       if (!ok) return;
       setSavedAt(new Date().toISOString()); setDedCarried(false);
+      const s2 = {}; entryList.forEach((x) => { s2[x.employeeId] = x.amount2; }); setSaved2(s2);
       // ยอดของรายการที่ปักหมุดเปลี่ยน (เช่น ช้อนส้อมเดือนนี้ 6,000) → เดือนถัดไปเติมยอดใหม่นี้ให้
       const pinnedNow = deductions.filter((d) => d.fixed && String(d.label || '').trim()).map((d) => ({ label: String(d.label).trim(), amount: Number(d.amount) || 0 }));
       if (JSON.stringify(pinnedNow) !== JSON.stringify(fixedDeds.map((f) => ({ label: String(f.label).trim(), amount: Number(f.amount) || 0 })))) await saveFixed(pinnedNow);
@@ -534,15 +554,29 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, da
           </div>
         </div>
 
-        {/* ก้อนที่ 2 */}
-        <div className="bg-white border border-stone-200 rounded-xl p-4 space-y-3">
-          <div className="flex items-center gap-2"><Banknote className="w-4 h-4 text-sky-700" /><h3 className="text-sm font-medium text-stone-800">ก้อนที่ 2 — คอมจากรายได้ร้านค้า</h3>
-            <span className="text-xs text-stone-400">(ใส่ยอดรวมเอง — รายละเอียดที่มาค่อยทำทีหลัง)</span></div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <FormField label="ยอดรวมรายได้ร้านค้า (บาท)">
-              <input type="number" step="0.01" value={pool2Total} onChange={(e) => setPool2Total(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-sky-500/40" placeholder="0" />
-            </FormField>
+        {/* ก้อนที่ 2 — มาจากหน้า "คอมก้อนที่ 2" */}
+        <div className="bg-white border border-stone-200 rounded-xl p-4 space-y-2">
+          <div className="flex items-center gap-2 flex-wrap"><Banknote className="w-4 h-4 text-sky-700" /><h3 className="text-sm font-medium text-stone-800">ก้อนที่ 2 — คอมจากค่าเช่า / ร้านค้า</h3>
+            {onOpenPool2 && <button onClick={() => onOpenPool2(year, month)} className="ml-auto text-xs px-2.5 py-1.5 bg-sky-50 hover:bg-sky-100 border border-sky-200 rounded-md text-sky-800 flex items-center gap-1">เปิดหน้าคอมก้อนที่ 2<ArrowRight className="w-3 h-3" /></button>}
           </div>
+          {p2Saved ? (() => {
+            const here = bizEmployees.map((e) => ({ e, p: pool2Of(e) })).filter((x) => x.p);
+            const mine = here.filter((x) => x.p.here);
+            const elsewhere = here.filter((x) => !x.p.here);
+            return (
+              <>
+                <p className="text-xs text-stone-600">
+                  {pool2Row?.results?.source === 'excel' ? 'ยอดจาก Excel (นำเข้า)' : <>บันทึกที่หน้าคอมก้อนที่ 2 เมื่อ {fmt(pool2Row?.updatedAt)}</>} — ลงช่อง <b className="text-sky-800">คอม 2</b> ให้อัตโนมัติ
+                  {mine.length > 0 ? <> {mine.length} คน รวม <b className="text-sky-800">{fmtMoney(mine.reduce((t, x) => t + x.p.amount, 0))} ฿</b></> : ' (ไม่มีคนที่ธุรกิจหลักคือธุรกิจนี้)'}
+                </p>
+                {elsewhere.length > 0 && <p className="text-[11px] text-stone-500">{elsewhere.map((x) => `${dispName(x.e)} → หน้า ${x.p.biz}`).join(' · ')} (คอมก้อนที่ 2 ไปขึ้นที่ธุรกิจหลัก ไม่นับซ้ำที่นี่)</p>}
+                {savedAt && mine.some((x) => Math.abs((saved2[x.e.id] || 0) - x.p.amount) >= 0.005) && <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 flex items-center gap-1.5"><AlertTriangle className="w-3.5 h-3.5 shrink-0" />ยอดก้อนที่ 2 เปลี่ยนหลังบันทึกคอมงวดนี้ — กด "บันทึกคอม" อีกครั้ง ยอดในเงินเดือนจะได้ตรง</p>}
+                {p2Stale.length > 0 && <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 flex items-center gap-1.5"><AlertTriangle className="w-3.5 h-3.5 shrink-0" />ข้อมูลก้อนที่ 2 เปลี่ยนหลังบันทึก — เปิดหน้าคอมก้อนที่ 2 แล้วกดบันทึกใหม่ก่อน ยอดที่นี่จะได้ตรง</p>}
+              </>
+            );
+          })() : (
+            <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">ยังไม่ได้บันทึกคอมก้อนที่ 2 ของงวดนี้ — ไปคิดและกดบันทึกที่หน้า "คอมก้อนที่ 2" แล้วยอดรายคนจะมาลงช่อง คอม 2 ให้เอง (ระหว่างนี้กรอกเองในตารางได้)</p>
+          )}
         </div>
 
         {/* แบ่งให้พนักงาน */}
@@ -564,7 +598,7 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, da
                 <tr className="text-xs text-stone-500 border-b border-stone-200">
                   <th className="text-left py-2 px-2" rowSpan={2}>พนักงาน</th>
                   <th className="text-center py-1 px-2 bg-emerald-50/50" colSpan={2}>ก้อนที่ 1 (POS)</th>
-                  <th className="text-center py-1 px-2 bg-sky-50/50" colSpan={2}>ก้อนที่ 2 (ร้านค้า)</th>
+                  <th className="text-center py-1 px-2 bg-sky-50/50">ก้อนที่ 2</th>
                   <th className="text-right py-2 px-2" rowSpan={2}>รวม</th>
                   <th className="text-center py-1 px-2 bg-amber-50/60" colSpan={3}>วันหยุดเกินสิทธิ</th>
                   <th className="text-right py-2 px-2 w-28" rowSpan={2}>สุทธิ</th>
@@ -572,7 +606,6 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, da
                 <tr className="text-xs text-stone-500 border-b border-stone-200">
                   <th className="text-right py-1 px-2 w-20 bg-emerald-50/50">%</th>
                   <th className="text-right py-1 px-2 w-28 bg-emerald-50/50">คอม 1</th>
-                  <th className="text-right py-1 px-2 w-20 bg-sky-50/50">%</th>
                   <th className="text-right py-1 px-2 w-28 bg-sky-50/50">คอม 2</th>
                   <th className="text-right py-1 px-2 w-16 bg-amber-50/60">วัน</th>
                   <th className="text-right py-1 px-2 w-24 bg-amber-50/60">หลังหัก</th>
@@ -580,13 +613,13 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, da
                 </tr>
               </thead>
               <tbody>
-                {bizEmployees.length === 0 && <tr><td colSpan={10} className="text-center text-stone-400 py-6">ไม่มีพนักงานในธุรกิจนี้</td></tr>}
+                {bizEmployees.length === 0 && <tr><td colSpan={9} className="text-center text-stone-400 py-6">ไม่มีพนักงานในธุรกิจนี้</td></tr>}
                 {groups.map((g) => {
                   const dc = calc.depts[g.id] || { forfeited: 0, recipients: 0, share: 0, unassigned: 0 };
                   return (
                     <React.Fragment key={g.id}>
                       <tr className="bg-stone-100/70">
-                        <td colSpan={10} className="px-2 py-1.5">
+                        <td colSpan={9} className="px-2 py-1.5">
                           <div className="flex items-center gap-2 flex-wrap">
                             <Layers className="w-3.5 h-3.5 text-stone-400" />
                             <span className="text-xs font-semibold text-stone-600">{g.id}</span>
@@ -603,6 +636,7 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, da
                         const r = calcById[e.id] || {};
                         const pe = payrollExcess?.[e.id];
                         const amountSet = entries[e.id]?.amount != null && entries[e.id]?.amount !== '';
+                        const p2 = pool2Of(e);
                         return (
                           <tr key={e.id} className="border-b border-stone-50">
                             <td className="py-1.5 px-2 whitespace-nowrap"><span className="font-mono text-xs text-stone-400 mr-1">#{e.employeeNumber}</span>{dispName(e)}</td>
@@ -610,8 +644,13 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, da
                             <td className="py-1.5 px-2 bg-emerald-50/30">
                               <input type="number" step="0.01" value={entries[e.id]?.amount ?? ''} onChange={(ev) => setEntry(e.id, { amount: ev.target.value })} className={`${numCell} ${amountSet ? 'text-emerald-800' : 'text-stone-500'}`} placeholder={fmtMoney(computedFor(e.id))} title={amountSet ? 'ยอดที่กำหนดเอง (ลบออกเพื่อกลับไปใช้ % × กองกลาง)' : `คิดจาก % อัตโนมัติ = ${fmtMoney(computedFor(e.id))}`} />
                             </td>
-                            <td className="py-1.5 px-2 bg-sky-50/30"><input type="number" step="0.001" value={entries[e.id]?.pct2 ?? ''} onChange={(ev) => setEntry(e.id, { pct2: ev.target.value })} className={numCell} placeholder="0" title={`คิดจาก % = ${fmtMoney(computedFor2(e.id))}`} /></td>
-                            <td className="py-1.5 px-2 bg-sky-50/30"><input type="number" step="0.01" value={entries[e.id]?.amount2 ?? ''} onChange={(ev) => setEntry(e.id, { amount2: ev.target.value })} className={`${numCell} text-sky-800`} placeholder="0" /></td>
+                            <td className="py-1.5 px-2 bg-sky-50/30">
+                              {p2
+                                ? (p2.here
+                                  ? <div className={`text-right px-2 py-1.5 rounded bg-sky-100/70 tabular-nums ${p2.amount < 0 ? 'text-red-600' : 'text-sky-900'}`} title="จากหน้าคอมก้อนที่ 2 (แก้ที่นั่น)">{fmtMoney(p2.amount)}</div>
+                                  : <div className="text-right px-2 py-1.5 text-[11px] text-stone-400" title={`คอมก้อนที่ 2 ของคนนี้ไปขึ้นหน้าคอมของ ${p2.biz}`}>อยู่หน้า {p2.biz}</div>)
+                                : <input type="number" step="0.01" value={entries[e.id]?.amount2 ?? ''} onChange={(ev) => setEntry(e.id, { amount2: ev.target.value })} className={`${numCell} text-sky-800`} placeholder="0" />}
+                            </td>
                             <td className="py-1.5 px-2 text-right text-stone-700">{r.total ? fmtMoney(r.total) : <span className="text-stone-300">—</span>}</td>
                             <td className="py-1.5 px-2 bg-amber-50/30">
                               {pe
@@ -637,7 +676,6 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, da
                 <td className="py-2 px-2">รวม</td>
                 <td className="py-2 px-2 text-right text-stone-500 text-xs">{distributedPct ? `${Math.round(distributedPct * 1000) / 1000}%` : ''}</td>
                 <td className="py-2 px-2 text-right text-emerald-800">{fmtMoney(calc.totals.base1)}</td>
-                <td className="py-2 px-2"></td>
                 <td className="py-2 px-2 text-right text-sky-800">{fmtMoney(calc.totals.base2)}</td>
                 <td className="py-2 px-2 text-right">{fmtMoney(calc.totals.total)}</td>
                 <td className="py-2 px-2"></td>

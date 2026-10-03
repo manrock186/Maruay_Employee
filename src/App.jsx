@@ -25,6 +25,7 @@ const RoomRentPage = lazy(() => import('./pages/RoomRentPage.jsx').then((m) => (
 const RecurringTaskPage = lazy(() => import('./pages/RecurringTaskPage.jsx').then((m) => ({ default: m.RecurringTaskPage })));
 const AdvancePage = lazy(() => import('./pages/AdvancePage.jsx').then((m) => ({ default: m.AdvancePage })));
 const CommissionPage = lazy(() => import('./pages/CommissionPage.jsx').then((m) => ({ default: m.CommissionPage })));
+const Pool2Page = lazy(() => import('./pages/Pool2Page.jsx').then((m) => ({ default: m.Pool2Page })));
 const PayrollPage = lazy(() => import('./pages/PayrollPage.jsx').then((m) => ({ default: m.PayrollPage })));
 const UsersPage = lazy(() => import('./pages/UsersPage.jsx').then((m) => ({ default: m.UsersPage })));
 const SettingsPage = lazy(() => import('./pages/SettingsPage.jsx').then((m) => ({ default: m.SettingsPage })));
@@ -40,6 +41,7 @@ export default function App() {
   const [dataLoading, setDataLoading] = useState(false);
 
   const [view, setView] = useState('dashboard');
+  const [pool2Period, setPool2Period] = useState(null); // งวดที่ส่งจากหน้าคอม → เปิดหน้าคอมก้อนที่ 2 ที่งวดเดียวกัน
   const [businesses, setBusinesses] = useState([]);
   const [zonesRaw, setZones] = useState([]);
   const [positions, setPositions] = useState([]);
@@ -126,6 +128,7 @@ export default function App() {
     const allowed = new Set([...profile.allowedViews, 'dashboard']);
     const gated = ['businesses', 'positions', 'employees', 'orgchart', 'payroll', 'commission', 'roomrent', 'recurringtasks', 'advances'];
     if (gated.includes(view) && !allowed.has(view)) setView('dashboard');
+    if (view === 'pool2' && !allowed.has('commission')) setView('dashboard'); // คอมก้อนที่ 2 ใช้สิทธิ์เดียวกับเมนูคอมมิชชั่น
   }, [view, profile]);
 
   // สิทธิ์ดูเงินเดือนอาจเปลี่ยนระหว่างใช้งาน (owner กดให้/ยึดคืน) โดย role ไม่เปลี่ยน
@@ -801,6 +804,38 @@ export default function App() {
         return { updated, failed };
       },
     },
+    // คอมก้อนที่ 2 (รายได้ค่าเช่า/ร้านค้า) — ข้ามธุรกิจ คีย์ด้วยงวด · config แถวเดียว (id=1)
+    // RLS: อ่าน = เจ้าของ/คนมีสิทธิ์เงินเดือน · แก้ตั้งค่า = เจ้าของ · บันทึกงวด = เจ้าของ/คนมีสิทธิ์เงินเดือน
+    pool2: {
+      getConfig: async () => {
+        const { data, error } = await supabase.from('commission_pool2_config').select('*').eq('id', 1).maybeSingle();
+        if (error) { console.error(error); return null; }
+        return data ? fromDB(data) : null;
+      },
+      saveConfig: async (sections) => {
+        const { data, error } = await supabase.from('commission_pool2_config')
+          .update({ sections, updated_at: new Date().toISOString() }).eq('id', 1).select().single();
+        if (error) { alert('บันทึกการตั้งค่าไม่สำเร็จ: ' + error.message); return null; }
+        return fromDB(data);
+      },
+      get: async (year, month) => {
+        const { data, error } = await supabase.from('commission_pool2').select('*').eq('period_year', year).eq('period_month', month).maybeSingle();
+        if (error) { console.error(error); return null; }
+        return data ? fromDB(data) : null;
+      },
+      list: async () => {
+        const { data, error } = await supabase.from('commission_pool2').select('period_year, period_month, inputs, results, note, updated_at')
+          .order('period_year', { ascending: false }).order('period_month', { ascending: false }).limit(60);
+        if (error) { console.error(error); return []; }
+        return fromDB(data || []);
+      },
+      upsert: async (d) => {
+        const { data, error } = await supabase.from('commission_pool2')
+          .upsert({ ...toDB(d), updated_at: new Date().toISOString() }, { onConflict: 'period_year,period_month' }).select().single();
+        if (error) { alert('บันทึกคอมก้อนที่ 2 ไม่สำเร็จ: ' + error.message); return null; }
+        return fromDB(data);
+      },
+    },
     roomRent: {
       // ค่าห้องเป็นส่วนกลางของทุกธุรกิจ → คีย์ด้วยงวด (ปี/เดือน) เท่านั้น (business_id = null)
       getByPeriod: async (year, month) => {
@@ -1045,6 +1080,19 @@ export default function App() {
             activeBusinessId={activeBusinessId}
             dataForms={dataForms}
             profiles={profiles}
+            onOpenPool2={(y, m) => { setPool2Period(y && m ? { year: y, month: m } : null); setView('pool2'); }}
+            ops={ops}
+          />
+        )}
+        {view === 'pool2' && profile.canManagePayroll && (
+          <Pool2Page
+            businesses={businesses}
+            employees={employees}
+            dataForms={dataForms}
+            profiles={profiles}
+            profile={profile}
+            initialPeriod={pool2Period}
+            onOpenForms={profile.isOwner || myForms.length > 0 ? () => setView('myforms') : null}
             ops={ops}
           />
         )}
