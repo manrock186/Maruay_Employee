@@ -484,7 +484,14 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, da
                         </div>
                       );
                     })()}
-                    {inUtility && <p className="text-[11px] text-stone-500 mt-1">ใช้คำนวณในกล่อง "สาธารณูปโภค" ด้านบนอัตโนมัติ (เปลี่ยนรายการได้ที่ปุ่ม "เลือกรายการ / วิธีหัก")</p>}
+                    {inUtility && (() => {
+                      // บอกให้ชัดว่าส่วนไหนของฟอร์มใช้คิดสาธารณูปโภค ส่วนไหนยังไม่ใช้ (เช่น "สรุปรายตึก" เก็บไว้คิดก้อนที่ 2)
+                      const usedKeys = new Set([...(utilCfg?.expense || []), ...(utilCfg?.income || [])].filter((x) => x.formId === f.id).map((x) => x.fieldKey));
+                      const numFields = fields.filter((x) => x.type === 'number' || x.type === 'table');
+                      const used = numFields.filter((x) => usedKeys.has(x.key)).map((x) => x.label);
+                      const unused = numFields.filter((x) => !usedKeys.has(x.key)).map((x) => x.label);
+                      return <p className="text-[11px] text-stone-500 mt-1">ส่วน <b>{used.join(', ')}</b> ใช้คำนวณในกล่อง "สาธารณูปโภค" ด้านบนอัตโนมัติ{unused.length > 0 && <> · ส่วน <b>{unused.join(', ')}</b> ยังไม่ได้ใช้คิดก้อนที่ 1</>}</p>;
+                    })()}
                     {s && !inUtility && !nums.length && <p className="text-xs text-stone-400 mt-1">ไม่มีตัวเลขในข้อมูลที่ส่งมา</p>}
                     {open && s && <div className="mt-2 pt-2 border-t border-stone-100"><AnswersView fields={fields} answers={s.answers} /></div>}
                   </div>
