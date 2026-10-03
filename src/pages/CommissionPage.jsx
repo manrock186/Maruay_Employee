@@ -9,7 +9,7 @@ import { AnswersView, groupTone } from '../components/DataFormFields.jsx';
 import { UtilityPanel } from '../components/UtilityPanel.jsx';
 import { computeUtility, utilityFormIds } from '../lib/utility.js';
 import { computePool2, pool2Changed, rateActive } from '../lib/pool2.js';
-import { FormField, EmptyState, PageHeader } from '../ui/index.jsx';
+import { FormField, EmptyState, PageHeader, PageToolbar } from '../ui/index.jsx';
 
 // ============ COMMISSION PAGE (คอมมิชชั่น) ============
 // ก้อนที่ 1 (POS): กองกลาง = กำไร Loyverse − รายการหัก → × % ต่อคน → หักวันหยุดเกินสิทธิ (÷30) → ส่วนที่หายแบ่งในแผนก
@@ -358,21 +358,21 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, da
 
   return (
     <div className="h-full overflow-auto">
-      <PageHeader title="คอมมิชชั่น" subtitle={`${business?.name || ''} — งวด ${MONTH_NAMES[month - 1]} ${year + 543} (จ่าย ${payMonthLabel(year, month)})`}>
+      <PageHeader title="คอมมิชชั่น" subtitle={`${business?.name || ''} · จ่ายกับเงินเดือน ${payMonthLabel(year, month)}`} />
+      <PageToolbar actions={
         <button onClick={save} disabled={saving || loading} className="flex items-center gap-2 px-4 py-2 bg-emerald-900 hover:bg-emerald-800 disabled:opacity-50 text-white rounded-lg text-sm font-medium"><Check className="w-4 h-4" />{saving ? 'กำลังบันทึก...' : 'บันทึกคอม'}</button>
-      </PageHeader>
+      }>
+        <select value={month} disabled={saving} onChange={(e) => setMonth(Number(e.target.value))} className="px-3 py-2 border border-stone-300 rounded-lg bg-white text-sm disabled:bg-stone-100">
+          {MONTH_NAMES.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
+        </select>
+        <select value={year} disabled={saving} onChange={(e) => setYear(Number(e.target.value))} className="px-3 py-2 border border-stone-300 rounded-lg bg-white text-sm disabled:bg-stone-100">
+          {yearOptions.map((y) => <option key={y} value={y}>{y + 543}</option>)}
+        </select>
+        {loading ? <span className="text-xs text-stone-400">กำลังโหลด...</span>
+          : savedAt ? <span className="text-xs px-2 py-0.5 rounded bg-emerald-50 text-emerald-800">บันทึกแล้ว {fmt(savedAt)}</span>
+          : <span className="text-xs px-2 py-0.5 rounded bg-amber-100 text-amber-800">ยังไม่ได้บันทึกงวดนี้</span>}
+      </PageToolbar>
       <div className="p-4 md:p-8 space-y-5 max-w-6xl">
-        <div className="flex flex-wrap items-center gap-3">
-          <select value={month} disabled={saving} onChange={(e) => setMonth(Number(e.target.value))} className="px-3 py-2 border border-stone-300 rounded-lg bg-white disabled:bg-stone-100">
-            {MONTH_NAMES.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
-          </select>
-          <select value={year} disabled={saving} onChange={(e) => setYear(Number(e.target.value))} className="px-3 py-2 border border-stone-300 rounded-lg bg-white disabled:bg-stone-100">
-            {yearOptions.map((y) => <option key={y} value={y}>{y + 543}</option>)}
-          </select>
-          {savedAt && <span className="text-xs text-stone-400">บันทึกล่าสุด {fmt(savedAt)}</span>}
-          {loading && <span className="text-xs text-stone-400">กำลังโหลด...</span>}
-        </div>
-
         {/* ก้อนที่ 1 — กำไร POS */}
         <div className="bg-white border border-stone-200 rounded-xl p-4 space-y-3">
           <div className="flex items-center gap-2 flex-wrap"><Banknote className="w-4 h-4 text-emerald-700" /><h3 className="text-sm font-medium text-stone-800">ก้อนที่ 1 — กำไรจากยอดขาย POS (Loyverse)</h3></div>

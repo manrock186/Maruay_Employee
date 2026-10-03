@@ -23,6 +23,19 @@ function PageHeader({ title, subtitle, children }) {
   );
 }
 
+// ============ PAGE TOOLBAR ============
+// แถบเลือกงวด + ปุ่มหลัก (บันทึก/ตั้งค่า) ใต้หัวหน้า — ติดด้านบนตอนเลื่อน และกว้างเท่าเนื้อหา (ปุ่มไม่ไปลอยไกลสุดจอกว้าง)
+function PageToolbar({ children, actions, max = 'max-w-6xl' }) {
+  return (
+    <div className="sticky top-0 z-20 bg-white/95 backdrop-blur border-b border-stone-200">
+      <div className={`${max} px-4 md:px-8 py-2.5 flex flex-wrap items-center gap-2`}>
+        {children}
+        {actions && <div className="ml-auto flex items-center gap-2">{actions}</div>}
+      </div>
+    </div>
+  );
+}
+
 // ============ AVATAR ============
 function Avatar({ photo, name, size = 40 }) {
   const initials = (name || '?').split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase();
@@ -122,6 +135,7 @@ export {
   FormActions,
   EmptyState,
   PageHeader,
+  PageToolbar,
   LoadingScreen,
   PageLoading,
   Avatar,

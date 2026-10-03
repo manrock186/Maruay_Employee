@@ -5,7 +5,7 @@ import { MONTH_NAMES, fmtMoney, fmt } from '../lib/payroll.js';
 import { isSubmitted, editedAfterSubmit, periodLabel } from '../lib/dataForms.js';
 import { POOL2_KINDS, computePool2, snapshotOf, personOrder, pool2Changed, rateActive, sortSteps } from '../lib/pool2.js';
 import { MoneyInput } from '../components/DataFormFields.jsx';
-import { EmptyState, PageHeader, Modal } from '../ui/index.jsx';
+import { EmptyState, PageHeader, PageToolbar, Modal } from '../ui/index.jsx';
 
 // ============ คอมก้อนที่ 2 — รายได้ค่าเช่า/ร้านค้า (ข้ามธุรกิจ) ============
 // ข้อมูลรายเดือน: ฟอร์ม "ผู้เช่าเข้า-ออก…" ที่ผู้จัดการกรอก (รายได้แต่ละส่วน + ห้องเข้า/ออก) + ยอดที่เจ้าของใส่เอง (% ผลกำไรฟอเรส+มอลล์) + คอมพิเศษรายคน
@@ -77,6 +77,10 @@ function Pool2Page({ businesses, employees, dataForms = [], profiles = [], profi
     return [...active, ...[...ids].filter((id) => !active.includes(id))];
   }, [sections, res, isExcel, saved, period]);
 
+  // มีการแก้ (ยอดใส่เอง / คอมพิเศษ / หมายเหตุ) ที่ยังไม่บันทึก
+  const cleanIn = (o) => JSON.stringify(Object.entries(o || {}).filter(([, v]) => v !== '' && v != null).map(([k, v]) => [k, Number(v) || 0]).sort());
+  const cleanBn = (l) => JSON.stringify((l || []).filter((b) => b.empId && Number(b.amount)).map((b) => [b.empId, Number(b.amount), String(b.note || '').trim()]));
+  const dirty = !loading && (cleanIn(inputs) !== cleanIn(row?.inputs) || cleanBn(bonuses) !== cleanBn(row?.bonuses) || (note.trim() || '') !== (row?.note || ''));
   const setBonus = (i, patch) => setBonuses((b) => b.map((x, idx) => (idx === i ? { ...x, ...patch } : x)));
 
   const save = async () => {
@@ -112,23 +116,26 @@ function Pool2Page({ businesses, employees, dataForms = [], profiles = [], profi
 
   return (
     <div className="h-full overflow-auto">
-      <PageHeader title="คอมก้อนที่ 2 — ค่าเช่า / ร้านค้า" subtitle={`งวด ${MONTH_NAMES[month - 1]} ${year + 543} · ทุกธุรกิจรวมกัน`}>
-        {profile.isOwner && <button onClick={() => setEditingCfg(true)} className="flex items-center gap-1.5 px-3 py-2 bg-white hover:bg-stone-50 border border-stone-300 text-stone-700 rounded-lg text-sm"><Settings2 className="w-4 h-4" /><span className="hidden sm:inline">ตั้งค่าเรท</span></button>}
-        <button onClick={save} disabled={saving || loading || !config} className="flex items-center gap-2 px-4 py-2 bg-emerald-900 hover:bg-emerald-800 disabled:opacity-50 text-white rounded-lg text-sm font-medium"><Check className="w-4 h-4" />{saving ? 'กำลังบันทึก...' : 'บันทึก'}</button>
-      </PageHeader>
+      <PageHeader title="คอมก้อนที่ 2 — ค่าเช่า / ร้านค้า" subtitle="ทุกธุรกิจรวมกัน · ยอดรายคนไปขึ้นช่อง คอม 2 ในหน้าคอมมิชชั่น" />
+      <PageToolbar actions={<>
+        {profile.isOwner && <button onClick={() => setEditingCfg(true)} className="flex items-center gap-1.5 px-3 py-2 bg-white hover:bg-stone-50 border border-stone-300 text-stone-700 rounded-lg text-sm"><Settings2 className="w-4 h-4" /><span className="hidden sm:inline">ตั้งค่าเรท / เกณฑ์</span></button>}
+        <button onClick={save} disabled={saving || loading || !config} className="relative flex items-center gap-2 px-4 py-2 bg-emerald-900 hover:bg-emerald-800 disabled:opacity-50 text-white rounded-lg text-sm font-medium">
+          <Check className="w-4 h-4" />{saving ? 'กำลังบันทึก...' : 'บันทึก'}
+          {dirty && !saving && <span className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-amber-400 ring-2 ring-white" title="มีการแก้ไขที่ยังไม่บันทึก" />}
+        </button>
+      </>}>
+        <select value={month} disabled={saving} onChange={(e) => setMonth(Number(e.target.value))} className="px-3 py-2 border border-stone-300 rounded-lg bg-white text-sm">
+          {MONTH_NAMES.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
+        </select>
+        <select value={year} disabled={saving} onChange={(e) => setYear(Number(e.target.value))} className="px-3 py-2 border border-stone-300 rounded-lg bg-white text-sm">
+          {yearOptions.map((y) => <option key={y} value={y}>{y + 543}</option>)}
+        </select>
+        {loading ? <span className="text-xs text-stone-400">กำลังโหลด...</span>
+          : dirty ? <span className="text-xs px-2 py-0.5 rounded bg-amber-100 text-amber-800">แก้ไขแล้ว ยังไม่บันทึก</span>
+          : row ? <span className={`text-xs px-2 py-0.5 rounded ${isExcel ? 'bg-violet-100 text-violet-800' : 'bg-emerald-50 text-emerald-800'}`}>{isExcel ? 'นำเข้าจาก Excel' : `บันทึกแล้ว ${fmt(row.updatedAt)}`}</span>
+          : <span className="text-xs px-2 py-0.5 rounded bg-amber-100 text-amber-800">ยังไม่ได้บันทึกงวดนี้</span>}
+      </PageToolbar>
       <div className="p-4 md:p-8 space-y-5 max-w-6xl">
-        <div className="flex flex-wrap items-center gap-3">
-          <select value={month} disabled={saving} onChange={(e) => setMonth(Number(e.target.value))} className="px-3 py-2 border border-stone-300 rounded-lg bg-white">
-            {MONTH_NAMES.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
-          </select>
-          <select value={year} disabled={saving} onChange={(e) => setYear(Number(e.target.value))} className="px-3 py-2 border border-stone-300 rounded-lg bg-white">
-            {yearOptions.map((y) => <option key={y} value={y}>{y + 543}</option>)}
-          </select>
-          {row && <span className="text-xs text-stone-400">{isExcel ? 'นำเข้าจาก Excel' : `บันทึกล่าสุด ${fmt(row.updatedAt)}`}</span>}
-          {!row && !loading && <span className="text-xs px-2 py-0.5 rounded bg-amber-100 text-amber-800">ยังไม่ได้บันทึกงวดนี้</span>}
-          {loading && <span className="text-xs text-stone-400">กำลังโหลด...</span>}
-        </div>
-
         {/* ที่มาข้อมูล */}
         <div className="rounded-xl border border-sky-200 bg-sky-50/50 p-3 flex items-center justify-between gap-2 flex-wrap">
           <div className="text-sm text-stone-800 flex items-center gap-1.5 flex-wrap">
