@@ -804,6 +804,18 @@ export default function App() {
         return { updated, failed };
       },
     },
+    // ดึงข้อมูลสรุปจาก maruay-property (ผ่าน edge function property-feed) — ใช้กรอกฟอร์มผู้เช่าอัตโนมัติ
+    // คืน { feed } หรือ { error } (ข้อความภาษาไทยจากฝั่ง function ถ้ามี)
+    propertyFeed: async (year, month) => {
+      const { data, error } = await supabase.functions.invoke('property-feed', { body: { year, month } });
+      if (error) {
+        let msg = error.message;
+        try { const j = await error.context?.json?.(); if (j?.error) msg = j.error; } catch { /* ใช้ข้อความเดิม */ }
+        return { error: msg };
+      }
+      if (!data?.ok) return { error: data?.error || 'ดึงข้อมูลไม่สำเร็จ' };
+      return { feed: data.feed };
+    },
     // คอมก้อนที่ 2 (รายได้ค่าเช่า/ร้านค้า) — ข้ามธุรกิจ คีย์ด้วยงวด · config แถวเดียว (id=1)
     // RLS: อ่าน = เจ้าของ/คนมีสิทธิ์เงินเดือน · แก้ตั้งค่า = เจ้าของ · บันทึกงวด = เจ้าของ/คนมีสิทธิ์เงินเดือน
     pool2: {

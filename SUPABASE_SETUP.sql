@@ -508,3 +508,16 @@ drop policy if exists commission_pool2_read on public.commission_pool2;
 create policy commission_pool2_read on public.commission_pool2 for select to authenticated using (public.current_role() = 'owner' or public.can_manage_payroll());
 drop policy if exists commission_pool2_write on public.commission_pool2;
 create policy commission_pool2_write on public.commission_pool2 for all to authenticated using (public.current_role() = 'owner' or public.can_manage_payroll()) with check (public.current_role() = 'owner' or public.can_manage_payroll());
+
+-- ============================================================
+-- ค่าลับเชื่อมระบบอื่น (migration integration_secrets) — ไม่มี policy: ผู้ใช้แอพอ่านไม่ได้ · edge function property-feed อ่านด้วย service role
+-- แถว 'property_feed' = { url, apiKey, token } สำหรับเรียก RPC employee_pool2_feed ฝั่ง maruay-property (ดู docs/property_feed.sql)
+-- ค่า token จริงใส่ผ่าน SQL editor เท่านั้น — ห้าม commit
+-- ============================================================
+create table if not exists public.integration_secrets (
+  name       text primary key,
+  value      jsonb not null,
+  updated_at timestamptz not null default now()
+);
+alter table public.integration_secrets enable row level security;
+revoke all on public.integration_secrets from anon, authenticated;

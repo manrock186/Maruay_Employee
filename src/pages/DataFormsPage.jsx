@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { ClipboardList, FileText, Plus, Trash2, Check, Send, ChevronLeft, ChevronRight, ArrowUp, ArrowDown, Pencil, UserCheck, AlertCircle, Table2, CalendarRange, List } from 'lucide-react';
-import { MONTH_NAMES, fmt } from '../lib/payroll.js';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { ClipboardList, FileText, Plus, Trash2, Check, Send, ChevronLeft, ChevronRight, ArrowUp, ArrowDown, Pencil, UserCheck, AlertCircle, Table2, CalendarRange, List, DownloadCloud, AlertTriangle } from 'lucide-react';
+import { MONTH_NAMES, fmt, fmtMoney } from '../lib/payroll.js';
 import { FIELD_TYPES, COLUMN_TYPES, SOURCES, newKey, normalizeFields, isLedgerTable, answerProgress, isSubmitted, editedAfterSubmit, prevPeriod, nextPeriod } from '../lib/dataForms.js';
 import { FieldInput } from '../components/DataFormFields.jsx';
+import { buildFromFeed, mergePatch, editedFromAuto, autoKeyLabel, ymLabel } from '../lib/propertyFeed.js';
 import { Modal, FormField, FormActions, EmptyState, PageHeader } from '../ui/index.jsx';
 
 // คนที่ไม่ใช่เจ้าของโหลด profiles มาแค่ของตัวเอง → ชื่อคนอื่นหาไม่เจอเป็นเรื่องปกติ
@@ -69,6 +70,9 @@ function MyFormsPage({ forms, profile, profiles, businesses, ops }) {
     return () => { cancelled = true; };
   }, [form?.id, year, month]);
 
+  // งวด/ฟอร์มที่เปิดอยู่ตอนนี้ — ผลดึงข้อมูลที่กลับมาช้าหลังเปลี่ยนเดือน/ฟอร์ม จะไม่ถูกใส่ผิดงวด
+  const currentKeyRef = useRef('');
+  currentKeyRef.current = form ? `${form.id}@${year}-${month}` : '';
   const setAnswer = (key, v) => { setAnswers((a) => ({ ...a, [key]: v })); setDirty(true); };
   const progress = useMemo(() => answerProgress(fields, answers), [fields, answers]);
   const submitted = isSubmitted(sub);
@@ -157,11 +161,16 @@ function MyFormsPage({ forms, profile, profiles, businesses, ops }) {
               <div>
                 <h3 className="font-medium text-stone-800">{form.name}</h3>
                 {form.description && <p className="text-sm text-stone-500 mt-0.5">{form.description}</p>}
-                <p className="text-xs text-stone-400 mt-1">{bizName(businesses, form.businessId)} · ผู้กรอก: {profileName(profiles, form.assigneeUserId)}{form.source === 'maruay-property' ? ' · (phase 2: ดึงจาก maruay-property)' : ''}</p>
+                <p className="text-xs text-stone-400 mt-1">{bizName(businesses, form.businessId)} · ผู้กรอก: {profileName(profiles, form.assigneeUserId)}</p>
               </div>
               <span className="text-xs text-stone-500">กรอกแล้ว {progress.filled}/{progress.total} ช่อง</span>
             </div>
             {!fields.length && <p className="text-sm text-stone-400">ฟอร์มนี้ยังไม่มีช่องให้กรอก — แจ้งเจ้าของระบบ</p>}
+            {form.source === 'maruay-property' && form.key === 'tenant_rent' && (
+              <PropertyFeedPanel year={year} month={month} answers={answers} disabled={saving || loading} ops={ops}
+                periodKey={`${form.id}@${year}-${month}`} currentKey={currentKeyRef}
+                onApply={(fn) => { setAnswers((cur) => fn(cur)); setDirty(true); }} />
+            )}
             {hasLedger && (
               <div className="flex items-center gap-1 text-xs">
                 <span className="text-stone-500 mr-1">มุมมองตาราง:</span>
@@ -181,6 +190,89 @@ function MyFormsPage({ forms, profile, profiles, businesses, ops }) {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// ---- ดึงข้อมูลจาก maruay-property มาใส่ฟอร์มผู้เช่า (เป็นร่าง — ผู้จัดการตรวจแล้วกดส่งเอง) ----
+function PropertyFeedPanel({ year, month, answers, disabled, ops, onApply, periodKey, currentKey }) {
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState(null); // { report, warnings } ของการดึงครั้งล่าสุดในหน้านี้
+  const [error, setError] = useState('');
+  useEffect(() => { setResult(null); setError(''); }, [year, month]);
+  const auto = answers?.p2_auto;
+  const edited = useMemo(() => editedFromAuto(answers), [answers]);
+  const billing = ymLabel(`${month === 12 ? year + 1 : year}-${String(month === 12 ? 1 : month + 1).padStart(2, '0')}`);
+
+  const run = async () => {
+    setBusy(true); setError('');
+    const startedFor = periodKey;
+    try {
+      const res = await ops.propertyFeed(year, month);
+      if (currentKey.current !== startedFor) return; // ผู้ใช้เปลี่ยนเดือน/ฟอร์มระหว่างรอ → ทิ้งผล
+      if (res.error) { setError(res.error); return; }
+      if (!res.feed) { setError('ไม่ได้รับข้อมูลจาก maruay-property'); return; }
+      const built = buildFromFeed(res.feed);
+      // ช่องที่มีค่าอยู่แล้วและจะถูกแทน → ถามก่อน
+      const filled = Object.keys(built.patch).filter((k) => {
+        const v = answers?.[k];
+        if (v == null || v === '') return false;
+        if (Array.isArray(v)) return v.some((r) => r && Object.values(r).some((x) => String(x ?? '').trim()));
+        if (typeof v === 'object') return Object.values(v).some((r) => r && typeof r === 'object' ? Object.values(r).some((x) => String(x ?? '').trim()) : String(r ?? '').trim());
+        return true;
+      });
+      if (filled.length && !window.confirm(`ฟอร์มนี้มีข้อมูลกรอกไว้แล้ว — แทนด้วยข้อมูลจาก maruay-property?\n(ช่องที่ระบบไม่ได้ดึง เช่น ละลายทรัพย์ / หมายเหตุ ยังอยู่เหมือนเดิม)`)) return;
+      if (currentKey.current !== startedFor) return;
+      const auto = { fetchedAt: res.feed.generatedAt || new Date().toISOString(), billingPeriod: res.feed.billingPeriod, values: built.snapshot };
+      // merge กับค่าล่าสุด (ไม่ทับสิ่งที่พิมพ์ระหว่างรอ ในช่องที่ระบบไม่ได้ดึง)
+      onApply((cur) => ({ ...mergePatch(cur, built.patch), p2_auto: auto }));
+      setResult(built);
+    } catch (e) {
+      setError('ดึงข้อมูลไม่สำเร็จ: ' + (e?.message || e));
+    } finally { setBusy(false); }
+  };
+
+  const money = (n) => (n == null ? '—' : fmtMoney(n));
+  return (
+    <div className="rounded-lg border border-sky-200 bg-sky-50/60 p-3 space-y-2">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div className="text-sm text-sky-900">
+          <b>ดึงข้อมูลจาก maruay-property</b>
+          <span className="text-xs text-stone-500"> · ค่าเช่า/ห้องเข้า-ออก/น้ำไฟ จากบิลรอบ {billing} · แบกะดินจากแผงรายวันเดือนนี้</span>
+        </div>
+        <button type="button" onClick={run} disabled={busy || disabled} className="flex items-center gap-1.5 px-3 py-1.5 bg-sky-700 hover:bg-sky-800 disabled:opacity-50 text-white rounded-lg text-sm font-medium"><DownloadCloud className="w-4 h-4" />{busy ? 'กำลังดึง...' : auto ? 'ดึงใหม่' : 'ดึงข้อมูลงวดนี้'}</button>
+      </div>
+      {auto && !result && <p className="text-xs text-stone-600">ดึงล่าสุด {fmt(auto.fetchedAt)} (บิลรอบ {ymLabel(auto.billingPeriod)})</p>}
+      {edited.length > 0 && (
+        <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1">แก้ต่างจากระบบ {edited.length} ส่วน: {edited.map(autoKeyLabel).join(', ')}</p>
+      )}
+      {error && <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1 flex items-center gap-1"><AlertCircle className="w-3.5 h-3.5" />{error}</p>}
+      {result && (
+        <div className="space-y-2">
+          <p className="text-xs text-emerald-800">ใส่ลงฟอร์มด้านล่างแล้ว (ยังไม่บันทึก) — ตรวจ แก้ถ้าจำเป็น แล้วกด "ส่งข้อมูล"</p>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs bg-white rounded border border-sky-100">
+              <thead className="text-stone-500"><tr><th className="text-left px-2 py-1">ส่วน</th><th className="text-right px-2 py-1">ค่าเช่า</th><th className="text-left px-2 py-1">ห้องเข้า</th><th className="text-left px-2 py-1">ห้องออก</th><th className="text-left px-2 py-1">ไม่นับ (ต่อสัญญา)</th></tr></thead>
+              <tbody className="divide-y divide-stone-100">
+                {result.report.sections.map((sec) => (
+                  <tr key={sec.key} className={sec.blocked ? 'bg-amber-50' : ''}>
+                    <td className="px-2 py-1 whitespace-nowrap">{sec.label}</td>
+                    <td className="px-2 py-1 text-right tabular-nums">{sec.blocked ? (sec.key === 'bkd' ? 'รอสิ้นเดือน' : 'รอออกบิล') : money(sec.revenue)}</td>
+                    <td className="px-2 py-1">{sec.ins.map((m) => `${m.unit} (${fmtMoney(m.rent)})`).join(', ') || <span className="text-stone-300">—</span>}</td>
+                    <td className="px-2 py-1">{sec.outs.map((m) => `${m.unit} (${fmtMoney(m.rent)})`).join(', ') || <span className="text-stone-300">—</span>}</td>
+                    <td className="px-2 py-1 text-stone-400">{[...new Set(sec.renewals.map((m) => m.unit))].join(', ') || ''}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {result.warnings.length > 0 && (
+            <ul className="text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded px-2 py-1.5 space-y-0.5">
+              {result.warnings.map((w, i) => <li key={i} className="flex gap-1"><AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-px" />{w}</li>)}
+            </ul>
+          )}
+        </div>
+      )}
     </div>
   );
 }

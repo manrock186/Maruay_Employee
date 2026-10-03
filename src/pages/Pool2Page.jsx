@@ -5,6 +5,7 @@ import { MONTH_NAMES, fmtMoney, fmt } from '../lib/payroll.js';
 import { isSubmitted, editedAfterSubmit, periodLabel } from '../lib/dataForms.js';
 import { POOL2_KINDS, computePool2, snapshotOf, personOrder, pool2Changed, rateActive, sortSteps } from '../lib/pool2.js';
 import { MoneyInput } from '../components/DataFormFields.jsx';
+import { editedFromAuto, autoKeyLabel } from '../lib/propertyFeed.js';
 import { EmptyState, PageHeader, PageToolbar, Modal } from '../ui/index.jsx';
 
 // ============ คอมก้อนที่ 2 — รายได้ค่าเช่า/ร้านค้า (ข้ามธุรกิจ) ============
@@ -67,6 +68,9 @@ function Pool2Page({ businesses, employees, dataForms = [], profiles = [], profi
   const isExcel = row?.results?.source === 'excel';
   const saved = row?.results?.persons || null;
   const changed = useMemo(() => (saved && !isExcel ? pool2Changed(saved, res.persons) : []), [saved, isExcel, res]);
+  // ข้อมูลที่ดึงจาก maruay-property แล้วถูกแก้มือ (ผู้จัดการแก้ต่างจากระบบ) → บอกเจ้าของ
+  const autoInfo = sub?.answers?.p2_auto || null;
+  const editedAuto = useMemo(() => editedFromAuto(sub?.answers), [sub]);
   const fixedSections = sections.filter((s) => s.active !== false && s.kind === 'fixed');
 
   // คนที่โชว์ในสรุป: ตามลำดับเรท (เฉพาะที่มีเรทงวดนี้ หรือมียอด) + คนที่ได้คอมพิเศษ + คนในยอด Excel
@@ -145,9 +149,16 @@ function Pool2Page({ businesses, employees, dataForms = [], profiles = [], profi
               : isSubmitted(sub) ? <span className="text-xs px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800">ส่งแล้ว {fmt(sub.submittedAt)}{editedAfterSubmit(sub) ? ' · แก้หลังส่ง' : ''}</span>
               : <span className="text-xs px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">ร่าง (ยังไม่กดส่ง)</span>}
           </div>
+          {autoInfo && <span className="text-xs px-1.5 py-0.5 rounded bg-sky-100 text-sky-800">ดึงจาก maruay-property {fmt(autoInfo.fetchedAt)}</span>}
           {onOpenForms && <button onClick={onOpenForms} className="text-xs px-2.5 py-1.5 bg-white hover:bg-stone-50 border border-stone-200 rounded-md text-sky-800">ดู/กรอกข้อมูลที่หน้า "ส่งข้อมูล" →</button>}
         </div>
 
+        {editedAuto.length > 0 && (
+          <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 flex items-start gap-1.5">
+            <AlertTriangle className="w-4 h-4 shrink-0" />
+            <span>ผู้จัดการแก้ตัวเลขต่างจากที่ดึงจาก maruay-property {editedAuto.length} ส่วน: <b>{editedAuto.map(autoKeyLabel).join(', ')}</b> — ตรวจก่อนบันทึก</span>
+          </div>
+        )}
         {isExcel && (
           <div className="rounded-xl border border-violet-200 bg-violet-50/60 p-3 text-xs text-violet-900">
             งวดนี้ <b>นำเข้าจาก Excel</b> — คอลัมน์ "Excel" คือยอดที่จ่ายจริง (ใช้ในหน้าคอม) · คอลัมน์อื่นคือการคำนวณใหม่ด้วยเรท/เกณฑ์ปัจจุบันไว้เทียบ (เดือนเก่าเกณฑ์ยังไม่ ×1.1 จึงอาจไม่ตรง)
@@ -250,6 +261,7 @@ function Pool2Page({ businesses, employees, dataForms = [], profiles = [], profi
                 <button onClick={() => setOpenSec(open ? null : s.key)} className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-stone-50 rounded-lg flex-wrap">
                   {open ? <ChevronUp className="w-4 h-4 text-stone-400" /> : <ChevronDown className="w-4 h-4 text-stone-400" />}
                   <b className="text-sm text-stone-800">{s.name}</b>
+                  {(editedAuto.includes(`p2_revenue.${s.key}`) || editedAuto.includes(`p2_moves_${s.key}`)) && <span className="text-[10px] px-1 rounded bg-amber-100 text-amber-800">แก้ต่างจากระบบ</span>}
                   <span className="text-xs text-stone-500">{s.kind === 'fixed' ? 'ยอดใส่เอง' : 'รายได้'} {s.hasRevenue ? fmtMoney(s.revenue) : <span className="text-amber-700">ยังไม่มี</span>} · {kindLabel(s)}</span>
                   <span className="ml-auto text-xs text-stone-600">A {money(s.baseA)}{s.partB && <> · B {money(s.baseB)}</>} → แจก {money(s.totalA + s.totalB, 'font-semibold text-stone-800')}</span>
                 </button>
