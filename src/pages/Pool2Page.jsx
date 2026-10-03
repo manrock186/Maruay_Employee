@@ -3,7 +3,7 @@ import { Check, Layers, Settings2, Plus, Trash2, ChevronDown, ChevronUp, Clipboa
 import { dispName } from '../lib/format.js';
 import { MONTH_NAMES, fmtMoney, fmt } from '../lib/payroll.js';
 import { isSubmitted, editedAfterSubmit, periodLabel } from '../lib/dataForms.js';
-import { POOL2_KINDS, computePool2, snapshotOf, personOrder, pool2Changed, rateActive } from '../lib/pool2.js';
+import { POOL2_KINDS, computePool2, snapshotOf, personOrder, pool2Changed, rateActive, sortSteps } from '../lib/pool2.js';
 import { MoneyInput } from '../components/DataFormFields.jsx';
 import { EmptyState, PageHeader, Modal } from '../ui/index.jsx';
 
@@ -249,7 +249,7 @@ function Pool2Page({ businesses, employees, dataForms = [], profiles = [], profi
                 {open && (
                   <div className="px-3 pb-3 space-y-3 text-xs">
                     <div className="text-stone-600">
-                      {s.kind === 'threshold' && <>Part A: รายได้ {fmtMoney(s.revenue)} − เกณฑ์ {fmtMoney(s.threshold)} = <b>{fmtMoney(s.baseA)}</b>{s.revenue < s.threshold && ' (ต่ำกว่าเกณฑ์ คิดเป็น 0)'}</>}
+                      {s.kind === 'threshold' && <>Part A: รายได้ {fmtMoney(s.revenue)} − เกณฑ์ {fmtMoney(s.threshold)}{s.thresholdFrom ? ` (ใช้ตั้งแต่ ${periodLabel({ year: Number(s.thresholdFrom.slice(0, 4)), month: Number(s.thresholdFrom.slice(5, 7)) })})` : ''} = <b>{fmtMoney(s.baseA)}</b>{s.revenue < s.threshold && ' (ต่ำกว่าเกณฑ์ คิดเป็น 0)'}</>}
                       {s.kind === 'percent' && <>Part A: รายได้ {fmtMoney(s.revenue)} × {s.revenuePct}% = <b>{fmtMoney(s.baseA)}</b></>}
                       {s.kind === 'fixed' && <>ยอด {fmtMoney(s.baseA)} แบ่งตามสัดส่วน a ÷ {s.basePct}</>}
                       {s.partB && <> · Part B: ห้องเข้า {fmtMoney(s.sumIn)} − ห้องออก {fmtMoney(s.sumOut)} = <b className={s.baseB < 0 ? 'text-red-600' : ''}>{fmtMoney(s.baseB)}</b></>}
@@ -313,7 +313,18 @@ function Pool2Page({ businesses, employees, dataForms = [], profiles = [], profi
 // ---- ตั้งค่าเรทรายส่วน (เจ้าของ) — เพิ่ม/ลด/เปลี่ยน % รายคน, เกณฑ์, ช่วงเวลาที่เรทมีผล (คนลาออก/คนใหม่) ----
 // เพิ่ม "ส่วน" ใหม่ต้องเพิ่มช่องในฟอร์มผู้เช่าด้วย จึงยังไม่เปิดให้เพิ่มจากที่นี่
 function Pool2SettingsModal({ sections, employees, nameOf, onClose, onSave }) {
-  const [list, setList] = useState(() => JSON.parse(JSON.stringify(sections || [])));
+  // เกณฑ์แบบเดิม (ตัวเลขเดียว) → แปลงเป็นขั้นแรก "ตั้งแต่แรก" ให้แก้/เพิ่มขั้นได้
+  const [list, setList] = useState(() => JSON.parse(JSON.stringify(sections || [])).map((s) => (s.kind === 'threshold' && !(s.thresholds || []).length ? { ...s, thresholds: [{ from: '', value: s.threshold ?? 0 }] } : s)));
+  const thisMonth = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; })();
+  const setStep = (i, j, patch) => setList((l) => l.map((s, idx) => (idx === i ? { ...s, thresholds: s.thresholds.map((t, k) => (k === j ? { ...t, ...patch } : t)) } : s)));
+  const rmStep = (i, j) => setList((l) => l.map((s, idx) => (idx === i ? { ...s, thresholds: s.thresholds.filter((_, k) => k !== j) } : s)));
+  // ปรับเกณฑ์ใหม่: ตั้งต้น = เกณฑ์ล่าสุด × 1.1 ตั้งแต่เดือนนี้ (แก้ได้)
+  const addStep = (i) => setList((l) => l.map((s, idx) => {
+    if (idx !== i) return s;
+    const last = sortSteps(s.thresholds).pop();
+    const base = Number(last?.value) || 0;
+    return { ...s, thresholds: [...(s.thresholds || []), { from: thisMonth, value: Math.round(base * 1.1 * 100) / 100 }] };
+  }));
   const [saving, setSaving] = useState(false);
   const setSec = (i, patch) => setList((l) => l.map((s, idx) => (idx === i ? { ...s, ...patch } : s)));
   const setRate = (i, j, patch) => setList((l) => l.map((s, idx) => (idx === i ? { ...s, rates: s.rates.map((r, k) => (k === j ? { ...r, ...patch } : r)) } : s)));
@@ -322,9 +333,15 @@ function Pool2SettingsModal({ sections, employees, nameOf, onClose, onSave }) {
   const activeEmps = employees.filter((e) => (e.status || 'active') === 'active');
   const numIn = 'w-full px-2 py-1 border border-stone-300 rounded text-right text-sm';
   const submit = async () => {
-    const clean = list.map((s) => ({
+    for (const s of list) {
+      const froms = (s.thresholds || []).map((t) => t.from || '');
+      if (new Set(froms).size !== froms.length) { alert(`"${s.name}" มีเกณฑ์ที่เริ่มเดือนเดียวกันซ้ำ — แก้ให้ไม่ซ้ำก่อน`); return; }
+    }
+    const clean = list.map((s) => {
+      const steps = sortSteps(s.thresholds).map((t) => ({ from: t.from || '', value: Number(t.value) || 0 }));
+      return {
       ...s,
-      threshold: Number(s.threshold) || 0,
+      ...(steps.length ? { thresholds: steps, threshold: steps[steps.length - 1].value } : { threshold: Number(s.threshold) || 0 }),
       ...(s.revenuePct != null ? { revenuePct: Number(s.revenuePct) || 0 } : {}),
       ...(s.basePct != null ? { basePct: Number(s.basePct) || 0 } : {}),
       rates: (s.rates || []).filter((r) => r.empId).map((r) => {
@@ -332,7 +349,8 @@ function Pool2SettingsModal({ sections, employees, nameOf, onClose, onSave }) {
         if (r.from) o.from = r.from; if (r.until) o.until = r.until;
         return o;
       }),
-    }));
+      };
+    });
     setSaving(true);
     try { await onSave(clean); } finally { setSaving(false); }
   };
@@ -350,11 +368,30 @@ function Pool2SettingsModal({ sections, employees, nameOf, onClose, onSave }) {
               <label className="text-xs flex items-center gap-1"><input type="checkbox" checked={s.active !== false} onChange={(e) => setSec(i, { active: e.target.checked })} />ใช้งาน</label>
             </div>
             <div className="flex flex-wrap items-center gap-3 text-xs">
-              {s.kind === 'threshold' && <label className="flex items-center gap-1">เกณฑ์รายได้ <input type="number" value={s.threshold ?? 0} onChange={(e) => setSec(i, { threshold: e.target.value })} className="w-32 px-2 py-1 border border-stone-300 rounded text-right" /> บาท</label>}
               {s.kind === 'percent' && <label className="flex items-center gap-1">% ของรายได้ <input type="number" value={s.revenuePct ?? 0} onChange={(e) => setSec(i, { revenuePct: e.target.value })} className="w-20 px-2 py-1 border border-stone-300 rounded text-right" /></label>}
               {s.kind === 'fixed' && <label className="flex items-center gap-1">สัดส่วนเต็ม <input type="number" value={s.basePct ?? 0} onChange={(e) => setSec(i, { basePct: e.target.value })} className="w-20 px-2 py-1 border border-stone-300 rounded text-right" /> %</label>}
               {s.kind !== 'fixed' && <label className="flex items-center gap-1"><input type="checkbox" checked={!!s.partB} onChange={(e) => setSec(i, { partB: e.target.checked })} />คิด Part B (ห้องเข้า − ออก)</label>}
             </div>
+            {s.kind === 'threshold' && (
+              <div className="rounded-md bg-stone-50 border border-stone-200 p-2 text-xs space-y-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-medium text-stone-700">เกณฑ์รายได้ (ปรับขึ้นได้เรื่อยๆ — งวดก่อนหน้ายังใช้เกณฑ์เดิม)</span>
+                  <button onClick={() => addStep(i)} className="text-emerald-700 hover:underline flex items-center gap-1 shrink-0"><Plus className="w-3 h-3" />ปรับเกณฑ์ใหม่</button>
+                </div>
+                {(s.thresholds || []).map((t, j) => (
+                  <div key={j} className="flex flex-wrap items-center gap-2">
+                    <span className="text-stone-500">ตั้งแต่</span>
+                    {t.from || j > 0
+                      ? <input type="month" value={t.from || ''} onChange={(e) => setStep(i, j, { from: e.target.value })} className="px-1 py-1 border border-stone-300 rounded bg-white" />
+                      : <span className="px-2 py-1 rounded bg-white border border-stone-200 text-stone-600">แรกเริ่ม</span>}
+                    <span className="text-stone-500">เกณฑ์</span>
+                    <input type="number" value={t.value ?? 0} onChange={(e) => setStep(i, j, { value: e.target.value })} className="w-32 px-2 py-1 border border-stone-300 rounded text-right bg-white" />
+                    <span className="text-stone-500">บาท</span>
+                    {(s.thresholds || []).length > 1 && <button onClick={() => rmStep(i, j)} className="p-1 hover:bg-red-50 rounded text-red-500"><Trash2 className="w-3.5 h-3.5" /></button>}
+                  </div>
+                ))}
+              </div>
+            )}
             <div className="overflow-x-auto">
               <table className="w-full text-xs min-w-[520px]">
                 <thead><tr className="text-stone-500"><th className="text-left py-1">คน</th><th className="text-right py-1 w-16">% A</th>{s.partB && <th className="text-right py-1 w-16">% B</th>}<th className="py-1 w-32">ตั้งแต่</th><th className="py-1 w-32">ถึง</th><th className="w-7" /></tr></thead>

@@ -20,6 +20,16 @@ const KINDS = [
 ];
 const periodStr = (p) => `${p.year}-${String(p.month).padStart(2, '0')}`;
 const rateActive = (r, p) => { const k = periodStr(p); return (!r.from || r.from <= k) && (!r.until || r.until >= k); };
+// เกณฑ์มีขั้นตามเวลา: thresholds = [{ from: 'YYYY-MM' | '' (ตั้งแต่แรก), value }] → ใช้ขั้นล่าสุดที่ from ≤ งวด
+//   (ปรับเกณฑ์ขึ้นเรื่อยๆ ได้ โดยงวดเก่ายังคิดด้วยเกณฑ์เดิม) · ไม่มี thresholds → ใช้ threshold ตัวเดียวแบบเดิม
+const sortSteps = (list) => [...(list || [])].filter((t) => t && t.value !== '' && t.value != null).sort((a, b) => String(a.from || '').localeCompare(String(b.from || '')));
+function thresholdFor(section, period) {
+  const steps = sortSteps(section?.thresholds);
+  if (!steps.length) return { value: num(section?.threshold), from: '' };
+  const k = periodStr(period);
+  const hit = steps.filter((t) => !t.from || t.from <= k).pop() || steps[0];
+  return { value: num(hit.value), from: hit.from || '' };
+}
 const activeRates = (section, period) => (section.rates || []).filter((r) => r.empId && rateActive(r, period));
 const movesOf = (answers, key) => (Array.isArray(answers?.[`p2_moves_${key}`]) ? answers[`p2_moves_${key}`] : []);
 const revenueOf = (answers, key) => answers?.p2_revenue?.[key]?.revenue;
@@ -33,8 +43,9 @@ function computePool2({ sections = [], answers = {}, inputs = {}, bonuses = [], 
     const rawRev = kind === 'fixed' ? inputs?.[s.key] : revenueOf(answers, s.key);
     const revenue = num(rawRev);
     const hasRevenue = rawRev != null && String(rawRev).trim() !== '';
+    const th = thresholdFor(s, period);
     let baseA = 0;
-    if (kind === 'threshold') baseA = Math.max(0, revenue - num(s.threshold));
+    if (kind === 'threshold') baseA = Math.max(0, revenue - th.value);
     else if (kind === 'percent') baseA = revenue * num(s.revenuePct) / 100;
     else baseA = revenue;
     baseA = r2(baseA);
@@ -55,7 +66,7 @@ function computePool2({ sections = [], answers = {}, inputs = {}, bonuses = [], 
       return { empId: r.empId, rateA: num(r.a), rateB: num(r.b), a, b };
     });
     return {
-      key: s.key, name: s.name || s.key, kind, revenue, hasRevenue, threshold: num(s.threshold), revenuePct: num(s.revenuePct), basePct,
+      key: s.key, name: s.name || s.key, kind, revenue, hasRevenue, threshold: th.value, thresholdFrom: th.from, revenuePct: num(s.revenuePct), basePct,
       baseA, partB, sumIn, sumOut, baseB, moves, people,
       totalA: r2(people.reduce((t, x) => t + x.a, 0)), totalB: r2(people.reduce((t, x) => t + x.b, 0)),
     };
@@ -88,4 +99,4 @@ function pool2Changed(savedPersons, livePersons) {
   return [...ids].filter((id) => Math.abs((Number(savedPersons?.[id]?.total) || 0) - (Number(livePersons?.[id]?.total) || 0)) >= 0.005);
 }
 
-export { KINDS as POOL2_KINDS, computePool2, snapshotOf, periodStr, rateActive, activeRates, personOrder, pool2Changed };
+export { KINDS as POOL2_KINDS, computePool2, snapshotOf, periodStr, rateActive, activeRates, personOrder, pool2Changed, thresholdFor, sortSteps };
