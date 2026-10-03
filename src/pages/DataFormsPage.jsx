@@ -213,6 +213,7 @@ function PropertyFeedPanel({ year, month, answers, disabled, ops, onApply, perio
       if (res.error) { setError(res.error); return; }
       if (!res.feed) { setError('ไม่ได้รับข้อมูลจาก maruay-property'); return; }
       const built = buildFromFeed(res.feed);
+      if (!Object.keys(built.snapshot).length) { setResult(built); return; } // ยังไม่มีอะไรดึงได้ (รอออกบิล/รอสิ้นเดือน) → ไม่แตะฟอร์ม
       // ช่องที่มีค่าอยู่แล้วและจะถูกแทน → ถามก่อน
       const filled = Object.keys(built.patch).filter((k) => {
         const v = answers?.[k];
@@ -249,7 +250,9 @@ function PropertyFeedPanel({ year, month, answers, disabled, ops, onApply, perio
       {error && <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1 flex items-center gap-1"><AlertCircle className="w-3.5 h-3.5" />{error}</p>}
       {result && (
         <div className="space-y-2">
-          <p className="text-xs text-emerald-800">ใส่ลงฟอร์มด้านล่างแล้ว (ยังไม่บันทึก) — ตรวจ แก้ถ้าจำเป็น แล้วกด "ส่งข้อมูล"</p>
+          {Object.keys(result.snapshot).length
+            ? <p className="text-xs text-emerald-800">ใส่ลงฟอร์มด้านล่างแล้ว (ยังไม่บันทึก) — ตรวจ แก้ถ้าจำเป็น แล้วกด "ส่งข้อมูล"</p>
+            : <p className="text-xs text-amber-800">ยังไม่มีข้อมูลที่ดึงได้สำหรับงวดนี้ — ฟอร์มไม่ถูกแก้</p>}
           <div className="overflow-x-auto">
             <table className="w-full text-xs bg-white rounded border border-sky-100">
               <thead className="text-stone-500"><tr><th className="text-left px-2 py-1">ส่วน</th><th className="text-right px-2 py-1">ค่าเช่า</th><th className="text-left px-2 py-1">ห้องเข้า</th><th className="text-left px-2 py-1">ห้องออก</th><th className="text-left px-2 py-1">ไม่นับ (ต่อสัญญา)</th></tr></thead>
