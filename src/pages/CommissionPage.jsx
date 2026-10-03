@@ -103,7 +103,9 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, da
       applySubmissions(subs);
       setOpenForm(null);
       const emFromProfile = () => { const em = {}; bizEmployees.forEach((e) => { if (e.commissionPct != null) em[e.id] = { pct: e.commissionPct, amount: '', pct2: '', amount2: '', excessDays: '' }; }); return em; };
-      if (pool) {
+      // พูลที่มีแค่ข้อมูล POS (บันทึกอัตโนมัติตอนนำเข้าไฟล์) ยังไม่นับว่า "บันทึกคอมแล้ว" → รายการหัก/คนยังตั้งต้นแบบเดือนใหม่
+      const posOnly = pool && !(pool.entries || []).length && !(pool.deductions || []).length;
+      if (pool && !posOnly) {
         setDedCarried(false);
         setPosProfit(pool.posProfit ?? '');
         setPosItems(Array.isArray(pool.posItems) ? pool.posItems : []);
@@ -118,7 +120,8 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, da
         setEntries(em);
         setSavedAt(pool.updatedAt || pool.createdAt || null);
       } else {
-        setPosProfit(''); setPosItems([]); setPosImport(null); setPool2Total(''); setNote(''); setSavedAt(null);
+        setPosProfit(pool?.posProfit ? pool.posProfit : ''); setPosItems(Array.isArray(pool?.posItems) ? pool.posItems : []); setPosImport(pool?.posImport || null);
+        setPool2Total(pool?.pool2Total ? pool.pool2Total : ''); setNote(pool?.note || ''); setSavedAt(null);
         // เดือนใหม่ที่ยังไม่เคยบันทึก → ดึง "รายการหัก" จากเดือนก่อนหน้ามาตั้งต้น (รายการเหมือนเดิม เปลี่ยนแค่ตัวเลข)
         const prev = month === 1 ? { y: year - 1, m: 12 } : { y: year, m: month - 1 };
         const prevPool = await ops.commission.getByPeriod(activeBusinessId, prev.y, prev.m);
@@ -137,6 +140,13 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, da
     return () => { cancelled = true; };
   }, [activeBusinessId, year, month]);
 
+  // ---- กำไร POS บันทึกทันที (ไม่ต้องรอกด "บันทึกคอม") — เปลี่ยนหน้า/รีเฟรชแล้วไฟล์ที่นำเข้าและยอดไม่หาย ----
+  // upsert เฉพาะคอลัมน์ POS → ถ้ามีพูลของงวดนี้อยู่แล้ว ส่วนอื่น (รายการหัก/คน) ไม่ถูกแตะ
+  const [posSavedAt, setPosSavedAt] = useState(null);
+  const savePos = async (patch) => {
+    const res = await ops.commission.upsert({ businessId: activeBusinessId, periodYear: year, periodMonth: month, ...patch });
+    if (res) setPosSavedAt(new Date().toISOString());
+  };
   // ---- นำเข้าไฟล์ Loyverse ----
   const applyImport = (text, fileName) => {
     const r = parseLoyverseText(text);
@@ -146,13 +156,19 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, da
       excluded: (r.excluded || []).map((it) => ({ name: it.name, profit: it.profit })), excludedProfit: r.excludedTotals?.profit || 0 });
     setPosProfit(r.totals.profit);
     setShowItems(false); setPasteOpen(false); setPasteText('');
+    savePos({ posProfit: r.totals.profit, posItems: r.items, posImport: { fileName: fileName || 'วางจาก Excel', importedAt: new Date().toISOString(), rows: r.items.length, qty: r.totals.qty, net: r.totals.net, cost: r.totals.cost, profit: r.totals.profit,
+      excluded: (r.excluded || []).map((it) => ({ name: it.name, profit: it.profit })), excludedProfit: r.excludedTotals?.profit || 0 } });
     return true;
   };
   const onFile = async (e) => {
     const f = e.target.files?.[0]; if (!f) return;
     try { applyImport(await f.text(), f.name); } finally { e.target.value = ''; }
   };
-  const clearImport = () => { setPosItems([]); setPosImport(null); };
+  const clearImport = () => {
+    if (!window.confirm('ล้างข้อมูลไฟล์ Loyverse ที่นำเข้าของงวดนี้?')) return;
+    setPosItems([]); setPosImport(null); setPosProfit('');
+    savePos({ posItems: [], posImport: null, posProfit: 0 });
+  };
 
   // ---- คำนวณ ----
   // สาธารณูปโภค: รายจ่าย (บิลที่เลือก) vs รายรับจากผู้เช่า → รายการหักอัตโนมัติ
@@ -388,8 +404,8 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, da
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <FormField label="กำไรรวมจาก POS (บาท)">
-              <input type="number" step="0.01" value={posProfit} onChange={(e) => setPosProfit(e.target.value)} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40" placeholder="เช่น 335574.69" />
-              <p className="text-xs text-stone-400 mt-1">{posImport ? 'เติมจากไฟล์ที่นำเข้า — แก้ทับได้' : 'นำเข้าไฟล์ด้านบน หรือกรอกเอง'}</p>
+              <input type="number" step="0.01" value={posProfit} onChange={(e) => setPosProfit(e.target.value)} onBlur={() => savePos({ posProfit: Number(posProfit) || 0 })} className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/40" placeholder="เช่น 335574.69" />
+              <p className="text-xs text-stone-400 mt-1">{posImport ? 'เติมจากไฟล์ที่นำเข้า — แก้ทับได้' : 'นำเข้าไฟล์ด้านบน หรือกรอกเอง'} · <span className="text-emerald-700">บันทึกอัตโนมัติ{posSavedAt ? ` ${fmt(posSavedAt)}` : ''}</span> (เปลี่ยนหน้า/รีเฟรชไม่หาย)</p>
             </FormField>
           </div>
           <UtilityPanel config={utilCfg} result={util} forms={periodForms} usedSources={usedSources} period={{ year, month }} onSaveConfig={saveUtilCfg} disabled={saving || loading} />
