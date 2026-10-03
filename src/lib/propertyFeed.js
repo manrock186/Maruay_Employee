@@ -4,7 +4,8 @@
 //   งวด M ใช้ "บิลรอบ M+1" (วางบิลแล้ว ไม่รวมบิลยกเลิก) · แบกะดิน = แผงรายวันของเดือน M
 //   รายได้ = ค่าเช่าอย่างเดียว (ไม่รวมส่วนกลาง/น้ำ/ไฟ) · ONE MALL ก็ค่าเช่าอย่างเดียว
 //   "โซนอื่นๆ/สัมปทาน" ไม่นับรายได้/ห้องเข้าออก (แต่ค่าไฟของโซนนี้ = "ไฟป้าย" ในรายรับน้ำไฟ)
-//   ราคาห้องเข้า/ออก = ค่าเช่าตามสัญญา (ไม่รวมส่วนกลาง) · ต่อสัญญาคนเดิม ไม่นับเป็นเข้า/ออก
+//   ห้องเข้า/ออก = เหตุการณ์ในเดือน M ตามวันที่ในสัญญา (เข้า = วันเริ่มสัญญา · ออก = วันนัดย้ายออก/ปิดสัญญา แม้ยังไม่เคลียร์)
+//   ราคาห้อง = ค่าเช่าตามสัญญา ณ เดือนนั้น (คิดขั้นค่าเช่า) ไม่รวมส่วนกลาง · ต่อสัญญาคนเดิม ไม่นับเป็นเข้า/ออก
 // ทุกอย่างลงฟอร์มเป็น "ร่าง" ให้ผู้จัดการตรวจแล้วกดส่งเอง — ไม่บันทึกเอง
 
 const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
@@ -56,7 +57,7 @@ function buildFromFeed(feed, source = DEFAULT_SOURCE, now = new Date()) {
   const blockedBiz = new Set();
   [...new Set(Object.values(source.sections).map((s) => s.business))].forEach((b) => {
     const c = counts[b] || { cur: 0, next: 0 };
-    if (!c.next) { blockedBiz.add(b); warnings.push(`ยังไม่มีบิลรอบ ${billLabel} ของ "${(feed.zones || []).find((z) => z.businessId === b)?.businessName || b}" — ยังดึงค่าเช่า/ห้องเข้าออกส่วนนี้ไม่ได้ (รอออกบิลก่อน)`); }
+    if (!c.next) { blockedBiz.add(b); warnings.push(`ยังไม่มีบิลรอบ ${billLabel} ของ "${(feed.zones || []).find((z) => z.businessId === b)?.businessName || b}" — ยังดึงค่าเช่าส่วนนี้ไม่ได้ (รอออกบิลก่อน) · ห้องเข้า-ออกดึงได้ตามปกติ`); }
     else if (c.cur && c.next < c.cur * 0.8) warnings.push(`บิลรอบ ${billLabel} ของ "${(feed.zones || []).find((z) => z.businessId === b)?.businessName || b}" มี ${c.next} ใบ น้อยกว่ารอบก่อน (${c.cur}) มาก — อาจออกบิลยังไม่ครบ`);
   });
 
@@ -66,6 +67,9 @@ function buildFromFeed(feed, source = DEFAULT_SOURCE, now = new Date()) {
   const bizInUse = new Set(Object.values(source.sections).map((s) => s.business));
   (feed.zones || []).filter((z) => bizInUse.has(z.businessId) && !covered.has(z.zoneId)).forEach((z) => warnings.push(`โซน "${z.zoneName}" (${z.businessName}) ยังไม่ได้ผูกกับส่วนไหน — ไม่ถูกนับ แจ้งผู้ดูแลระบบถ้าต้องนับ`));
 
+  const [py, pm] = String(feed.period || '').split('-').map(Number);
+  const monthOver = py && pm ? now >= new Date(pm === 12 ? py + 1 : py, pm === 12 ? 0 : pm, 1) : true;
+  if (!monthOver) warnings.push(`เดือน ${ymLabel(feed.period)} ยังไม่จบ — ห้องเข้า-ออกอาจเพิ่มอีก ดึงใหม่อีกครั้งหลังสิ้นเดือน`);
   const revenue = {};
   Object.entries(source.sections).forEach(([key, scope]) => {
     const z = resolveZones(feed, scope);
@@ -74,43 +78,40 @@ function buildFromFeed(feed, source = DEFAULT_SOURCE, now = new Date()) {
     const zc = (feed.zoneCounts || []).filter((c) => z.ids.has(c.zoneId)).reduce((t, c) => ({ cur: t.cur + (Number(c.cur) || 0), next: t.next + (Number(c.next) || 0) }), { cur: 0, next: 0 });
     const label = SECTION_LABEL[key] || key;
     let blocked = blockedBiz.has(scope.business);
-    if (!blocked && feed.zoneCounts && zc.cur > 0 && zc.next === 0) { blocked = true; warnings.push(`${label}: ยังไม่มีบิลรอบ ${billLabel} — ยังดึงส่วนนี้ไม่ได้ (รอออกบิลก่อน)`); }
+    if (!blocked && feed.zoneCounts && zc.cur > 0 && zc.next === 0) { blocked = true; warnings.push(`${label}: ยังไม่มีบิลรอบ ${billLabel} — ยังดึงค่าเช่าส่วนนี้ไม่ได้ (รอออกบิลก่อน)`); }
     else if (!blocked && zc.cur > 0 && zc.next < zc.cur * 0.8) warnings.push(`${label}: บิลรอบ ${billLabel} มี ${zc.next} ใบ น้อยกว่ารอบก่อน (${zc.cur}) — อาจออกบิลยังไม่ครบ ยอดอาจต่ำไป`);
-    // ไม่มีบิลรอบนี้ให้เทียบ (เช่น งวดก่อนเริ่มใช้ระบบออกบิล) → ทุกสัญญาจะดูเหมือน "ห้องเข้า" → ไม่ดึงห้องเข้า-ออก
-    const movesBlocked = feed.zoneCounts ? zc.cur === 0 : !(counts[scope.business]?.cur);
-    const sec = { key, label, zones: z.names, blocked, movesBlocked, revenue: null, ins: [], outs: [], renewals: [], skipped: [] };
+    const sec = { key, label, zones: z.names, blocked, revenue: null, ins: [], outs: [], renewals: [] };
     if (!sec.blocked) {
       sec.revenue = sumItems(feed, z.ids, 'rent');
       revenue[key] = { revenue: str(sec.revenue) };
       snapshot[`p2_revenue.${key}`] = sec.revenue;
-      (feed.rentOver || []).filter((o) => z.ids.has(o.zoneId)).forEach((o) => warnings.push(`${label}: ห้อง ${o.unit} บิลรอบ ${billLabel} ค่าเช่า ${Number(o.billed).toLocaleString('th-TH')} เกินค่าเช่าสัญญา ${Number(o.contractRent).toLocaleString('th-TH')} (เก็บล่วงหน้า/ย้อนหลัง?) — นับตามบิลแล้ว ตรวจว่าควรนับเท่าไร`));
+      (feed.rentOver || []).filter((o) => z.ids.has(o.zoneId)).forEach((o) => warnings.push(`${label}: ห้อง ${o.unit} บิลรอบ ${billLabel} ค่าเช่า ${Number(o.billed).toLocaleString('th-TH')} เกินค่าเช่าตามสัญญา ${Number(o.contractRent).toLocaleString('th-TH')} — นับตามบิลแล้ว ตรวจว่าถูกไหม`));
     }
-    if (!sec.blocked && sec.movesBlocked) warnings.push(`${label}: ไม่มีบิลรอบ ${ymLabel(feed.period)} ให้เทียบ — ไม่ดึงห้องเข้า-ออก (กรอกเอง)`);
-    if (!sec.blocked && !sec.movesBlocked) {
-      (feed.moves || []).filter((m) => z.ids.has(m.zoneId)).forEach((m) => {
-        if (m.renewal) { sec.renewals.push(m); return; }
-        // ไม่มีบิลรอบถัดไป แต่สัญญายัง active และไม่ได้นัดย้ายออก → น่าจะลืมออกบิล ไม่ใช่ย้ายออก
-        if (m.type === 'out' && m.status === 'active' && !m.moveOutScheduled) { sec.skipped.push(m); return; }
-        (m.type === 'in' ? sec.ins : sec.outs).push(m);
-      });
-      sec.skipped.forEach((m) => warnings.push(`${sec.label}: ห้อง ${m.unit} สัญญายังเปิดอยู่แต่ไม่มีบิลรอบ ${billLabel} — ไม่นับเป็นห้องออก (ตรวจที่ maruay-property)`));
-      const n = Math.max(sec.ins.length, sec.outs.length);
-      const rows = [];
-      for (let i = 0; i < n; i += 1) {
-        const a = sec.ins[i], b = sec.outs[i];
-        rows.push({ in_room: a?.unit || '', in_price: a ? str(a.rent) : '', out_room: b?.unit || '', out_price: b ? str(b.rent) : '' });
-      }
-      patch[`p2_moves_${key}`] = rows;
-      snapshot[`p2_moves_${key}`] = rows.map((r) => `${r.in_room}:${r.in_price}/${r.out_room}:${r.out_price}`).join('|');
+    // ห้องเข้า-ออก = เหตุการณ์ในเดือนนี้ตามวันที่ในสัญญา (ไม่ขึ้นกับการออกบิล) — นัดย้ายออกแล้วแต่ยังไม่เคลียร์ก็นับ
+    (feed.moves || []).filter((m) => z.ids.has(m.zoneId)).forEach((m) => {
+      if (m.renewal) { sec.renewals.push(m); return; }
+      (m.type === 'in' ? sec.ins : sec.outs).push(m);
+    });
+    // ปิดสัญญา/เริ่มสัญญาหลายห้องวันเดียวกัน = มักเป็นการลงข้อมูลย้อนหลังทีเดียว ไม่ใช่วันจริง → เตือนให้ตรวจ
+    [['in', sec.ins, 'เริ่มสัญญา'], ['out', sec.outs, 'ออก']].forEach(([, list, word]) => {
+      const byDate = {};
+      list.forEach((m) => { (byDate[m.date] ||= []).push(m.unit); });
+      Object.entries(byDate).filter(([, u]) => u.length >= 3).forEach(([d, u]) => warnings.push(`${label}: ${u.length} ห้อง${word}วันเดียวกัน (${d}) — ${u.join(', ')} · ตรวจว่าเป็นวันจริง ไม่ใช่วันที่ลงข้อมูลย้อนหลัง`));
+    });
+    const n = Math.max(sec.ins.length, sec.outs.length);
+    const rows = [];
+    for (let i = 0; i < n; i += 1) {
+      const a = sec.ins[i], b = sec.outs[i];
+      rows.push({ in_room: a?.unit || '', in_price: a ? str(a.rent) : '', out_room: b?.unit || '', out_price: b ? str(b.rent) : '' });
     }
+    patch[`p2_moves_${key}`] = rows;
+    snapshot[`p2_moves_${key}`] = rows.map((r) => `${r.in_room}:${r.in_price}/${r.out_room}:${r.out_price}`).join('|');
     report.sections.push(sec);
   });
 
   // แบกะดิน = แผงรายวันเดือนนี้ (รวมทุกแผง)
   const stallTotal = r2((feed.stalls || []).reduce((t, s) => t + (Number(s.total) || 0), 0));
   const stallPaid = r2((feed.stalls || []).reduce((t, s) => t + (Number(s.paid) || 0), 0));
-  const [py, pm] = String(feed.period || '').split('-').map(Number);
-  const monthOver = py && pm ? now >= new Date(pm === 12 ? py + 1 : py, pm === 12 ? 0 : pm, 1) : true;
   if (monthOver) { revenue.bkd = { revenue: str(stallTotal) }; snapshot['p2_revenue.bkd'] = stallTotal; }
   else warnings.push(`แบกะดิน: เดือน ${ymLabel(feed.period)} ยังไม่จบ (ตอนนี้ ${stallTotal.toLocaleString('th-TH')} บาท) — ยังไม่ใส่ให้ ดึงใหม่หลังสิ้นเดือน`);
   report.sections.push({ key: 'bkd', label: SECTION_LABEL.bkd, zones: ['แผงรายวัน'], blocked: !monthOver, revenue: monthOver ? stallTotal : null, ins: [], outs: [], renewals: [], skipped: [], note: stallPaid < stallTotal ? `จ่ายแล้ว ${stallPaid.toLocaleString('th-TH')} จากที่จอง ${stallTotal.toLocaleString('th-TH')}` : '' });

@@ -239,7 +239,7 @@ function PropertyFeedPanel({ year, month, answers, disabled, ops, onApply, perio
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div className="text-sm text-sky-900">
           <b>ดึงข้อมูลจาก maruay-property</b>
-          <span className="text-xs text-stone-500"> · ค่าเช่า/ห้องเข้า-ออก/น้ำไฟ จากบิลรอบ {billing} · แบกะดินจากแผงรายวันเดือนนี้</span>
+          <span className="text-xs text-stone-500"> · ค่าเช่า/น้ำไฟ จากบิลรอบ {billing} · ห้องเข้า-ออกและแบกะดิน จากที่เกิดในเดือนนี้</span>
         </div>
         <button type="button" onClick={run} disabled={busy || disabled} className="flex items-center gap-1.5 px-3 py-1.5 bg-sky-700 hover:bg-sky-800 disabled:opacity-50 text-white rounded-lg text-sm font-medium"><DownloadCloud className="w-4 h-4" />{busy ? 'กำลังดึง...' : auto ? 'ดึงใหม่' : 'ดึงข้อมูลงวดนี้'}</button>
       </div>
@@ -262,7 +262,7 @@ function PropertyFeedPanel({ year, month, answers, disabled, ops, onApply, perio
                     <td className="px-2 py-1 whitespace-nowrap">{sec.label}</td>
                     <td className="px-2 py-1 text-right tabular-nums">{sec.blocked ? (sec.key === 'bkd' ? 'รอสิ้นเดือน' : 'รอออกบิล') : money(sec.revenue)}</td>
                     <td className="px-2 py-1">{sec.ins.map((m) => `${m.unit} (${fmtMoney(m.rent)})`).join(', ') || <span className="text-stone-300">—</span>}</td>
-                    <td className="px-2 py-1">{sec.outs.map((m) => `${m.unit} (${fmtMoney(m.rent)})`).join(', ') || <span className="text-stone-300">—</span>}</td>
+                    <td className="px-2 py-1">{sec.outs.map((m) => `${m.unit} (${fmtMoney(m.rent)})${m.status === 'active' ? ` นัดออก ${String(m.date || '').slice(8, 10)}/${String(m.date || '').slice(5, 7)}` : ''}`).join(', ') || <span className="text-stone-300">—</span>}</td>
                     <td className="px-2 py-1 text-stone-400">{[...new Set(sec.renewals.map((m) => m.unit))].join(', ') || ''}</td>
                   </tr>
                 ))}

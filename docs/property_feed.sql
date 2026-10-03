@@ -5,7 +5,8 @@
 -- เรียกได้เฉพาะผู้ถือ token (hash อยู่ใน integration_tokens ที่ไม่มี policy) — token จริงเก็บฝั่งระบบพนักงานใน integration_secrets
 -- กติกา (ตาม Excel คอมก้อน 2 ที่ user ยืนยัน 2026-10-04):
 --   งวดคอม M ใช้ "บิลรอบ M+1" (วางบิลแล้ว ไม่รวมบิลยกเลิก ทั้งจ่ายแล้ว/ยังไม่จ่าย) · แผงรายวัน (แบกะดิน) ใช้เดือน M
---   ห้องเข้า = สัญญาที่บิลแรกคือรอบ M+1 · ห้องออก = สัญญาที่มีบิลรอบ M แต่ไม่มีบิลรอบ M+1
+--   ห้องเข้า/ออก = เหตุการณ์ที่เกิดในเดือน M (user ยืนยัน 2026-10-04): เข้า = วันเริ่มสัญญาในเดือน M · ออก = วันนัดย้ายออก/วันปิดสัญญา (อันที่เร็วกว่า) ในเดือน M แม้ยังเคลียร์ไม่เสร็จ
+--   ค่าเช่าใช้ค่าเช่าตามขั้น (contract_rent_steps) ของเดือนนั้น ถ้าไม่มีขั้นใช้ contracts.rent
 --   renewal = ต่อสัญญาคนเดิม (status renewed / ผู้เช่าชื่อเดิมห้องเดิมต่อกันภายใน 60 วัน) → ฝั่งแอพไม่นับเป็นเข้า/ออก
 -- ============================================================
 create table if not exists public.integration_tokens (
@@ -66,19 +67,24 @@ begin
         group by u.zone_id
       ) x
     ), '[]'::jsonb),
-    -- บิลรอบถัดไปที่ค่าเช่าเกินค่าเช่าสัญญา (เช่น เก็บล่วงหน้า 2 เดือน) → ฝั่งแอพตัดส่วนเกินออก + เตือน
+    -- บิลรอบถัดไปที่ค่าเช่าเกินค่าเช่าตามสัญญา (คิดขั้นค่าเช่าแล้ว) → ฝั่งแอพเตือน
     'rentOver', coalesce((
-      select jsonb_agg(jsonb_build_object('zoneId', q.zone_id, 'unit', q.unit_number, 'billed', q.billed, 'contractRent', q.rent))
+      select jsonb_agg(jsonb_build_object('zoneId', q.zone_id, 'unit', q.unit_number, 'billed', q.billed, 'contractRent', q.eff))
       from (
-        select u.zone_id, u.unit_number, c.rent, sum(ii.amount) billed
+        select u.zone_id, u.unit_number, i.id,
+          coalesce((select st.rent from public.contract_rent_steps st
+                    where st.contract_id = c.id
+                      and st.start_month <= ((extract(year from v_next) - extract(year from c.start_date)) * 12 + extract(month from v_next) - extract(month from c.start_date) + 1)
+                    order by st.start_month desc limit 1), c.rent) eff,
+          sum(ii.amount) billed
         from public.invoices i
         join public.units u on u.id = i.unit_id
         join public.contracts c on c.id = i.contract_id
         join public.invoice_items ii on ii.invoice_id = i.id and ii.kind = 'rent'
         where i.status <> 'void' and i.period = v_next and c.rent is not null and c.rent > 0
-        group by u.zone_id, u.unit_number, c.rent, i.id
-        having sum(ii.amount) > c.rent
+        group by u.zone_id, u.unit_number, i.id, c.id, c.rent, c.start_date
       ) q
+      where q.billed > q.eff
     ), '[]'::jsonb),
     'items', coalesce((
       select jsonb_agg(jsonb_build_object('zoneId', q.zone_id, 'kind', q.kind, 'amount', q.amt, 'invoices', q.n))
@@ -100,37 +106,45 @@ begin
         group by st.zone
       ) s
     ), '[]'::jsonb),
+    -- ห้องเข้า/ออกที่เกิดในเดือน M (ตามวันที่ในสัญญา ไม่ขึ้นกับการออกบิล)
     'moves', coalesce((
       select jsonb_agg(jsonb_build_object(
           'type', m.type, 'businessId', m.business_id, 'zoneId', m.zone_id, 'unit', m.unit_number,
-          'rent', m.rent, 'status', m.status, 'startDate', m.start_date,
+          'rent', m.eff_rent, 'contractRent', m.rent, 'status', m.status, 'date', m.ev_date, 'startDate', m.start_date,
           'terminatedAt', m.terminated_at, 'moveOutScheduled', m.move_out_scheduled_date, 'endDate', m.end_date,
           'renewal', m.renewal)
         order by m.business_id, m.unit_number, m.type desc)
       from (
-        select case when ci.first_p = v_next then 'in' else 'out' end as type,
-          u.business_id, u.zone_id, u.unit_number, c.rent, c.status, c.start_date, c.terminated_at::date as terminated_at,
-          c.move_out_scheduled_date, c.end_date,
-          case when ci.first_p = v_next then exists (
+        select e.*, u.business_id, u.zone_id, u.unit_number,
+          coalesce((select st.rent from public.contract_rent_steps st
+                    where st.contract_id = e.id
+                      and st.start_month <= greatest(1, (extract(year from e.ev_date) - extract(year from e.start_date)) * 12 + extract(month from e.ev_date) - extract(month from e.start_date) + 1)
+                    order by st.start_month desc limit 1), e.rent) as eff_rent,
+          case when e.type = 'in' then exists (
                  select 1 from public.contracts p
-                 where p.unit_id = c.unit_id and p.id <> c.id
-                   and (p.status = 'renewed' or (coalesce(p.tenant_name, '') <> '' and p.tenant_name = c.tenant_name))
-                   and least(p.end_date, p.terminated_at::date) between c.start_date - 60 and c.start_date + 5)
-               else (c.status = 'renewed' or exists (
+                 where p.unit_id = e.unit_id and p.id <> e.id
+                   and (p.status = 'renewed' or (coalesce(p.tenant_name, '') <> '' and p.tenant_name = e.tenant_name))
+                   and least(p.end_date, p.terminated_at::date) between e.start_date - 60 and e.start_date + 5)
+               else (e.status = 'renewed' or exists (
                  select 1 from public.contracts n
-                 where n.unit_id = c.unit_id and n.id <> c.id
-                   and coalesce(n.tenant_name, '') <> '' and n.tenant_name = c.tenant_name
-                   and n.start_date between coalesce(least(c.end_date, c.terminated_at::date), v_next) - 5 and coalesce(least(c.end_date, c.terminated_at::date), v_next) + 60))
+                 where n.unit_id = e.unit_id and n.id <> e.id
+                   and coalesce(n.tenant_name, '') <> '' and n.tenant_name = e.tenant_name
+                   and n.start_date between e.ev_date - 5 and e.ev_date + 60))
           end as renewal
         from (
-          select i.contract_id, bool_or(i.period = v_cur) has_cur, bool_or(i.period = v_next) has_next, min(i.period) first_p
-          from public.invoices i
-          where i.status <> 'void' and i.contract_id is not null
-          group by i.contract_id
-        ) ci
-        join public.contracts c on c.id = ci.contract_id
-        join public.units u on u.id = c.unit_id
-        where ci.first_p = v_next or (ci.has_cur and not ci.has_next)
+          select 'in' as type, c.id, c.unit_id, c.tenant_name, c.rent, c.status, c.start_date, c.terminated_at::date as terminated_at,
+                 c.move_out_scheduled_date, c.end_date, c.start_date as ev_date
+          from public.contracts c
+          where c.start_date >= v_cur and c.start_date < v_next
+          union all
+          select 'out', c.id, c.unit_id, c.tenant_name, c.rent, c.status, c.start_date, c.terminated_at::date,
+                 c.move_out_scheduled_date, c.end_date, least(c.move_out_scheduled_date, c.terminated_at::date)
+          from public.contracts c
+          where c.status <> 'renewed'
+            and least(c.move_out_scheduled_date, c.terminated_at::date) >= v_cur
+            and least(c.move_out_scheduled_date, c.terminated_at::date) < v_next
+        ) e
+        join public.units u on u.id = e.unit_id
       ) m
     ), '[]'::jsonb)
   );
