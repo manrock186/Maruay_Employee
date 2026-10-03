@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Users, Plus, Trash2, Banknote, Check, Percent, Upload, ClipboardPaste, ChevronDown, ChevronUp, X, RefreshCw, Layers, AlertCircle, ClipboardList, ArrowRight, AlertTriangle } from 'lucide-react';
+import { Users, Plus, Trash2, Banknote, Check, Percent, Upload, ClipboardPaste, ChevronDown, ChevronUp, X, RefreshCw, Layers, AlertCircle, ClipboardList, ArrowRight, AlertTriangle, Pin } from 'lucide-react';
 import { dispName, isActive } from '../lib/format.js';
 import { NO_DEPT, employeeDepartment } from '../lib/order.js';
 import { MONTH_NAMES, payMonthLabel, fmtMoney, fmt, holidayBalance } from '../lib/payroll.js';
@@ -36,7 +36,8 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, da
   const [submissions, setSubmissions] = useState({}); // formId -> ข้อมูลที่ผู้จัดการส่งมาของงวดนี้
   const [formHistory, setFormHistory] = useState({}); // formId -> [{year, month, answers, status}] ทุกเดือนที่โหลด (ฟอร์มตารางแบบ Excel: ใช้ "ยอดล่าสุดที่มี")
   const [usedSources, setUsedSources] = useState({});
-  const [utilCfg, setUtilCfg] = useState(null);        // ตั้งค่าสาธารณูปโภคของธุรกิจนี้ (commission_settings.utility) — ใช้ทุกเดือน // `${srcKey}@${srcPeriod}` -> [{businessId, year, month}] งวดคอมอื่นที่เคยใช้ตัวเลขนี้แล้ว
+  const [utilCfg, setUtilCfg] = useState(null);
+  const [fixedDeds, setFixedDeds] = useState([]);       // รายการหักประจำทุกเดือน (commission_settings.fixed_deductions) เช่น ค่าช้อนส้อม        // ตั้งค่าสาธารณูปโภคของธุรกิจนี้ (commission_settings.utility) — ใช้ทุกเดือน // `${srcKey}@${srcPeriod}` -> [{businessId, year, month}] งวดคอมอื่นที่เคยใช้ตัวเลขนี้แล้ว
   const [openForm, setOpenForm] = useState(null);     // formId ที่กางดูรายละเอียด
   const fileRef = useRef(null);
 
@@ -91,6 +92,9 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, da
       const [pool, pe, subs] = await Promise.all([ops.commission.getByPeriod(activeBusinessId, year, month), loadPayrollExcess(), loadSubmissions(cfg)]);
       if (cancelled) return;
       setUtilCfg(cfg);
+      const fixed = Array.isArray(settings?.fixedDeductions) ? settings.fixedDeductions : [];
+      setFixedDeds(fixed);
+      const isFixed = (label) => fixed.some((f) => String(f.label || '').trim() === String(label || '').trim());
       // รายการหักอัตโนมัติ (สาธารณูปโภค) คำนวณสดทุกครั้ง ไม่เอาของที่บันทึกไว้มาเป็นแถวแก้มือ
       // + ถ้าเปิดสาธารณูปโภคแล้ว ตัดแถวมือที่มาจากฟอร์มที่ใช้คิดอยู่ (กันหักซ้ำ) และแถวชื่อ "น้ำไฟ…" แบบเก่าจาก Excel
       const utilIds = utilityFormIds(cfg);
@@ -105,7 +109,7 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, da
         setPosItems(Array.isArray(pool.posItems) ? pool.posItems : []);
         setPosImport(pool.posImport || null);
         setPool2Total(pool.pool2Total ?? '');
-        setDeductions(manualOnly(pool.deductions));
+        setDeductions(manualOnly(pool.deductions).map((d) => ({ ...d, fixed: isFixed(d.label) })));
         setNote(pool.note || '');
         const em = {};
         (pool.entries || []).forEach((e) => { em[e.employeeId] = { pct: e.pct ?? '', amount: e.amount ?? '', pct2: e.pct2 ?? '', amount2: e.amount2 ?? '', excessDays: e.excessDays ?? '' }; });
@@ -119,13 +123,13 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, da
         const prev = month === 1 ? { y: year - 1, m: 12 } : { y: year, m: month - 1 };
         const prevPool = await ops.commission.getByPeriod(activeBusinessId, prev.y, prev.m);
         if (cancelled) return;
-        const carry = manualOnly(prevPool?.deductions);
-        if (carry.length) {
-          setDeductions(carry.map((d) => ({ label: d.label || '', amount: '', ...(d.srcKey ? { srcKey: d.srcKey } : {}) })));
-          setDedCarried(true);
-        } else {
-          setDeductions([]); setDedCarried(false);
-        }
+        // รายการหักประจำ (ช้อนส้อม ฯลฯ) เติมยอดให้เลย กันลืม · รายการอื่นจากเดือนก่อนดึงแค่ชื่อ (ยอดเว้นว่าง)
+        const carry = manualOnly(prevPool?.deductions).filter((d) => !isFixed(d.label));
+        const next = [
+          ...fixed.map((f) => ({ label: f.label || '', amount: f.amount ?? '', fixed: true })),
+          ...carry.map((d) => ({ label: d.label || '', amount: '', ...(d.srcKey ? { srcKey: d.srcKey } : {}) })),
+        ];
+        setDeductions(next); setDedCarried(carry.length > 0 || fixed.length > 0);
         setEntries(emFromProfile());
       }
       setLoading(false);
@@ -161,6 +165,21 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, da
     setUtilCfg(cfg);
     applySubmissions(await loadSubmissions(cfg));
     return true;
+  };
+  // ปักหมุด/เลิกปักหมุด "หักทุกเดือน" — บันทึกค่าตั้งต้นทันที (ไม่ต้องรอกดบันทึกคอม)
+  const saveFixed = async (list) => {
+    const clean = list.filter((d) => String(d.label || '').trim()).map((d) => ({ label: String(d.label).trim(), amount: Number(d.amount) || 0 }));
+    const res = await ops.commission.saveSettings(activeBusinessId, { fixedDeductions: clean });
+    if (res) setFixedDeds(clean);
+    return !!res;
+  };
+  const togglePin = async (i) => {
+    const d = deductions[i];
+    if (!String(d.label || '').trim()) { alert('ใส่ชื่อรายการก่อน แล้วค่อยปักหมุด'); return; }
+    const pinned = !d.fixed;
+    const nextDeds = deductions.map((x, idx) => (idx === i ? { ...x, fixed: pinned } : x));
+    const ok = await saveFixed(nextDeds.filter((x) => x.fixed));
+    if (ok) setDeductions(nextDeds);
   };
   const poolValue = (Number(posProfit) || 0) - [...autoDeds, ...deductions].reduce((s, d) => s + (Number(d.amount) || 0), 0);
   const pool2Value = Number(pool2Total) || 0;
@@ -262,6 +281,9 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, da
       });
       if (!ok) return;
       setSavedAt(new Date().toISOString()); setDedCarried(false);
+      // ยอดของรายการที่ปักหมุดเปลี่ยน (เช่น ช้อนส้อมเดือนนี้ 6,000) → เดือนถัดไปเติมยอดใหม่นี้ให้
+      const pinnedNow = deductions.filter((d) => d.fixed && String(d.label || '').trim()).map((d) => ({ label: String(d.label).trim(), amount: Number(d.amount) || 0 }));
+      if (JSON.stringify(pinnedNow) !== JSON.stringify(fixedDeds.map((f) => ({ label: String(f.label).trim(), amount: Number(f.amount) || 0 })))) await saveFixed(pinnedNow);
       // แถวเงินเดือนของงวดนี้ที่มีอยู่แล้ว → อัปเดตช่องคอมให้ตรง (เฉพาะงวดที่ยังไม่ปิด)
       // ไม่งั้นคอมจะเข้าเงินเดือนเฉพาะคนที่ "ยังไม่ได้ทำเงินเดือน" เท่านั้น (บทเรียนเดียวกับงานเสริมประจำ)
       const pe = payrollExcess || {};
@@ -458,6 +480,7 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, da
           <div>
             <div className="flex items-center justify-between mb-1">
               <span className="text-xs font-medium text-stone-600">รายการหัก (ช้อนส้อม ฯลฯ){autoDeds.length > 0 && ' — แถวสาธารณูปโภคคำนวณให้อัตโนมัติ'}</span>
+              <span className="text-[11px] text-stone-400 mr-auto ml-2 hidden sm:inline">📌 = หักทุกเดือน (เติมยอดให้เองเดือนใหม่ แก้/ลบได้)</span>
               <button onClick={addDeduction} className="text-xs text-emerald-700 hover:underline flex items-center gap-1"><Plus className="w-3 h-3" />เพิ่มรายการหัก</button>
             </div>
             <div className="space-y-2">
@@ -466,7 +489,7 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, da
               )}
               {autoDeds.map((d) => (
                 <div key={d.auto} className="flex items-center gap-2" title="คำนวณจากกล่องสาธารณูปโภค — แก้ที่ปุ่ม เลือกรายการ / วิธีหัก">
-                  <div className="flex-1 px-3 py-1.5 border border-yellow-200 bg-yellow-50 rounded-lg text-sm text-stone-700 flex items-center gap-1.5"><span className="text-[10px] px-1 rounded bg-yellow-200 text-yellow-900">อัตโนมัติ</span>{d.label}</div>
+                  <span className="w-[26px] shrink-0" /><div className="flex-1 px-3 py-1.5 border border-yellow-200 bg-yellow-50 rounded-lg text-sm text-stone-700 flex items-center gap-1.5"><span className="text-[10px] px-1 rounded bg-yellow-200 text-yellow-900">อัตโนมัติ</span>{d.label}</div>
                   <div className={`w-32 px-3 py-1.5 border border-yellow-200 bg-yellow-50 rounded-lg text-sm text-right tabular-nums ${d.amount < 0 ? 'text-emerald-700' : 'text-stone-800'}`}>{fmtMoney(d.amount)}</div>
                   <span className="w-7" />
                 </div>
@@ -474,6 +497,7 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, da
               {deductions.length === 0 && !autoDeds.length && <p className="text-xs text-stone-400">ยังไม่มีรายการหัก</p>}
               {deductions.map((d, i) => (
                 <div key={i} className="flex items-center gap-2">
+                  <button type="button" onClick={() => togglePin(i)} title={d.fixed ? 'หักทุกเดือน (เดือนใหม่เติมให้อัตโนมัติ) — กดเพื่อเลิก' : 'ปักหมุด = หักทุกเดือน เดือนใหม่เติมยอดให้อัตโนมัติ'} className={`p-1.5 rounded ${d.fixed ? 'text-amber-600 bg-amber-50 hover:bg-amber-100' : 'text-stone-300 hover:text-stone-500 hover:bg-stone-100'}`}><Pin className={`w-3.5 h-3.5 ${d.fixed ? 'fill-current' : ''}`} /></button>
                   <input value={d.label} onChange={(e) => setDed(i, { label: e.target.value })} className="flex-1 px-3 py-1.5 border border-stone-300 rounded-lg text-sm" placeholder="เช่น น้ำไฟรวม" />
                   <input type="number" step="0.01" value={d.amount} onChange={(e) => setDed(i, { amount: e.target.value })} className="w-32 px-3 py-1.5 border border-stone-300 rounded-lg text-sm text-right" placeholder="0" />
                   <button onClick={() => rmDed(i)} className="p-1.5 hover:bg-red-50 rounded text-red-500"><Trash2 className="w-3.5 h-3.5" /></button>
