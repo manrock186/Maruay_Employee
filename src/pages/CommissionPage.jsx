@@ -454,6 +454,7 @@ function CommissionPage({ businesses, employees, positions, activeBusinessId, da
                         {!s ? <span className="text-xs px-1.5 py-0.5 rounded bg-stone-100 text-stone-500">ยังไม่ส่ง</span>
                           : isSubmitted(s) ? <span className="text-xs px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800">ส่งแล้ว {fmt(s.submittedAt)}{editedAfterSubmit(s) ? <b className="text-amber-700"> · แก้ไขหลังส่ง {fmt(s.updatedAt)}</b> : ''}</span>
                           : <span className="text-xs px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">ร่าง (ยังไม่กดส่ง) {fmt(s.updatedAt)}</span>}
+                        {s && Array.isArray(s.missing) && s.missing.length > 0 && <span className="ml-1 text-xs px-1.5 py-0.5 rounded bg-rose-100 text-rose-800" title={s.missing.join(', ')}>ขาด {s.missing.length} ช่อง</span>}
                       </div>
                       {s && <button onClick={() => setOpenForm(open ? null : f.id)} className="text-xs text-sky-700 hover:underline flex items-center gap-1">{open ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}{open ? 'ซ่อนรายละเอียด' : 'ดูรายละเอียด'}</button>}
                     </div>

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { ClipboardList, FileText, Plus, Trash2, Check, Send, ChevronLeft, ChevronRight, ArrowUp, ArrowDown, Pencil, UserCheck, AlertCircle, Table2, CalendarRange, List, DownloadCloud, AlertTriangle } from 'lucide-react';
 import { MONTH_NAMES, fmt, fmtMoney } from '../lib/payroll.js';
-import { FIELD_TYPES, COLUMN_TYPES, SOURCES, newKey, normalizeFields, isLedgerTable, answerProgress, isSubmitted, editedAfterSubmit, prevPeriod, nextPeriod } from '../lib/dataForms.js';
+import { FIELD_TYPES, COLUMN_TYPES, SOURCES, newKey, normalizeFields, isLedgerTable, answerProgress, isSubmitted, editedAfterSubmit, prevPeriod, nextPeriod, missingItems, periodLabel } from '../lib/dataForms.js';
 import { FieldInput } from '../components/DataFormFields.jsx';
 import { buildFromFeed, mergePatch, editedFromAuto, autoKeyLabel, ymLabel } from '../lib/propertyFeed.js';
 import { Modal, FormField, FormActions, EmptyState, PageHeader } from '../ui/index.jsx';
@@ -15,8 +15,10 @@ function MyFormsPage({ forms, profile, profiles, businesses, ops }) {
   const now = new Date();
   const myForms = useMemo(() => (forms || []).filter((f) => f.active !== false && (profile.isOwner || f.assigneeUserId === profile.id)).sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0)), [forms, profile]);
   const [formId, setFormId] = useState(null);
-  const [year, setYear] = useState(now.getFullYear());
-  const [month, setMonth] = useState(now.getMonth() + 1);
+  // เปิดมาที่ "งวดที่ต้องส่ง" = เดือนก่อน (ข้อมูลเดือน ก.ย. ส่งต้น ต.ค.)
+  const duePeriod = prevPeriod(now.getFullYear(), now.getMonth() + 1);
+  const [year, setYear] = useState(duePeriod.year);
+  const [month, setMonth] = useState(duePeriod.month);
   const [sub, setSub] = useState(null);       // แถว submission ของงวดนี้ (null = ยังไม่มี)
   const [prevSub, setPrevSub] = useState(null);
   const [answers, setAnswers] = useState({});
@@ -47,6 +49,33 @@ function MyFormsPage({ forms, profile, profiles, businesses, ops }) {
     })();
     return () => { cancelled = true; };
   }, [form?.id, year, hasLedger, sub?.updatedAt, yearReload]);
+  // ประวัติ 2 ปี (ปีก่อน-ปีนี้) ใช้ดูว่าช่องไหน "เคยกรอก" → เดือนนี้ว่าง = ขาด
+  // ผูกกับฟอร์ม/ปีที่โหลด → ยังโหลดไม่เสร็จ/เป็นของฟอร์มอื่น = ยังไม่พร้อม (ไม่คิด "ขาด" และยังไม่ให้กดส่ง)
+  const [hist, setHist] = useState({ key: '', map: {} });
+  const histKey = form ? `${form.id}@${year}` : '';
+  const histReady = hist.key === histKey;
+  const histMap = histReady ? hist.map : {};
+  useEffect(() => {
+    if (!form) return;
+    let cancelled = false;
+    (async () => {
+      const rows = await ops.dataSubmission.listByFormYears(form.id, [year - 1, year]);
+      if (cancelled) return;
+      const m = {}; rows.forEach((r) => { m[`${r.periodYear}-${r.periodMonth}`] = r.answers; });
+      setHist({ key: `${form.id}@${year}`, map: m });
+    })();
+    return () => { cancelled = true; };
+  }, [form?.id, year, sub?.updatedAt, yearReload]);
+  // 3 งวดก่อนหน้า — ใช้ค่าที่กำลังแก้อยู่ก่อน (เดือนที่เลือก = answers, เดือนอื่นในปี = yearEdits) แล้วค่อยที่บันทึกไว้
+  const historyFor = (y, m) => {
+    const out = []; let p = { year: y, month: m };
+    for (let i = 0; i < 3; i += 1) {
+      p = prevPeriod(p.year, p.month);
+      const a = (p.year === year && p.month === month && answers) || (p.year === year && yearEdits[p.month]) || histMap[`${p.year}-${p.month}`];
+      if (a) out.push(a);
+    }
+    return out;
+  };
   // ค่าของเดือนอื่นที่โชว์ในตารางทั้งปี = ที่บันทึกไว้ ทับด้วยที่กำลังแก้
   const yearAnswersFor = (key) => { const o = {}; Object.entries(yearSubs).forEach(([m, s]) => { o[Number(m)] = s?.answers?.[key]; }); Object.entries(yearEdits).forEach(([m, a]) => { o[Number(m)] = a?.[key]; }); return o; };
   const setMonthAnswer = (m, key, v) => setYearEdits((prev) => ({ ...prev, [m]: { ...(prev[m] || yearSubs[m]?.answers || {}), [key]: v } }));
@@ -75,16 +104,23 @@ function MyFormsPage({ forms, profile, profiles, businesses, ops }) {
   currentKeyRef.current = form ? `${form.id}@${year}-${month}` : '';
   const setAnswer = (key, v) => { setAnswers((a) => ({ ...a, [key]: v })); setDirty(true); };
   const progress = useMemo(() => answerProgress(fields, answers), [fields, answers]);
+  const missing = useMemo(() => (form && histReady ? missingItems(fields, answers, historyFor(year, month)) : []), [fields, answers, histMap, histReady, yearEdits, year, month, form]);
+  const [showMissing, setShowMissing] = useState(false);
+  // กำหนดส่ง: วันที่ due_day ของเดือนถัดจากงวด
+  const dueDate = useMemo(() => { const n = nextPeriod(year, month); return new Date(n.year, n.month - 1, Math.min(Math.max(Number(form?.dueDay) || 5, 1), 28)); }, [year, month, form?.dueDay]);
+  const lateDays = Math.floor((new Date(now.getFullYear(), now.getMonth(), now.getDate()) - dueDate) / 86400000);
   const submitted = isSubmitted(sub);
   const edited = editedAfterSubmit(sub);
 
   const persist = async (status) => {
     if (!form) return;
+    if (!histReady) { alert('กำลังโหลดข้อมูลเดือนก่อน ๆ เพื่อตรวจความครบ — รอสักครู่แล้วกดใหม่'); return; }
     if (status === 'submitted' && progress.missingRequired.length) { alert(`กรุณากรอกช่องที่จำเป็นก่อนส่ง: ${progress.missingRequired.join(', ')}`); return; }
+    if (status === 'submitted' && missing.length && !window.confirm(`ข้อมูลยังไม่ครบ ${missing.length} ช่อง:\n${missing.slice(0, 12).map((x) => `• ${x}`).join('\n')}${missing.length > 12 ? '\n…' : ''}\n\nส่งไปก่อนไหม? (ระบบจะเตือนให้กรอกเพิ่ม และแจ้งเจ้าของว่ายังขาด)`)) return;
     setSaving(true);
     const nowISO = new Date().toISOString();
     const payload = {
-      formId: form.id, periodYear: year, periodMonth: month, answers, note: note.trim() || null,
+      formId: form.id, periodYear: year, periodMonth: month, answers, note: note.trim() || null, missing,
       status: status === 'submitted' ? 'submitted' : (submitted ? 'submitted' : 'draft'),
       updatedAt: nowISO,
     };
@@ -95,7 +131,7 @@ function MyFormsPage({ forms, profile, profiles, businesses, ops }) {
     for (const m of editedMonths) {
       if (m === month) continue; // เดือนที่เลือกบันทึกไปแล้วด้านบน
       const existing = yearSubs[m];
-      const p2 = { formId: form.id, periodYear: year, periodMonth: m, answers: yearEdits[m], status: status === 'submitted' || existing?.status === 'submitted' ? 'submitted' : 'draft', updatedAt: nowISO };
+      const p2 = { formId: form.id, periodYear: year, periodMonth: m, answers: yearEdits[m], missing: missingItems(fields, yearEdits[m], historyFor(year, m)), status: status === 'submitted' || existing?.status === 'submitted' ? 'submitted' : 'draft', updatedAt: nowISO };
       if (status === 'submitted') { p2.submittedBy = profile.id; p2.submittedAt = nowISO; }
       const ok = await ops.dataSubmission.upsert(p2);
       if (!ok) failedMonths.push(m);
@@ -152,6 +188,7 @@ function MyFormsPage({ forms, profile, profiles, businesses, ops }) {
               {submitted ? `ส่งแล้ว ${fmt(sub.submittedAt)}${sub.submittedBy && sub.submittedBy !== profile.id ? ` โดย ${profileName(profiles, sub.submittedBy)}` : ''}${edited ? ' · แก้ไขหลังส่ง' : ''}` : sub ? `ร่าง (บันทึก ${fmt(sub.updatedAt)})` : 'ยังไม่ได้กรอก'}
             </span>
           )}
+          {!loading && !submitted && form?.remind !== false && lateDays < 45 && <span className={`text-xs px-2 py-1 rounded-full ${lateDays > 0 ? 'bg-rose-100 text-rose-800' : lateDays >= -1 ? 'bg-amber-100 text-amber-800' : 'bg-stone-100 text-stone-600'}`}>กำหนดส่ง {dueDate.getDate()} {MONTH_NAMES[dueDate.getMonth()]}{lateDays > 0 ? ` · เลยมา ${lateDays} วัน` : lateDays === 0 ? ' · วันนี้' : ''}</span>}
           {anyDirty && <span className="text-xs text-amber-700">ยังไม่ได้บันทึก{editedMonths.length ? ` (แก้เดือนอื่นด้วย: ${editedMonths.sort((a, b) => a - b).map((m) => MONTH_NAMES[m - 1]).join(', ')})` : ''}</span>}
         </div>
 
@@ -166,6 +203,14 @@ function MyFormsPage({ forms, profile, profiles, businesses, ops }) {
               <span className="text-xs text-stone-500">กรอกแล้ว {progress.filled}/{progress.total} ช่อง</span>
             </div>
             {!fields.length && <p className="text-sm text-stone-400">ฟอร์มนี้ยังไม่มีช่องให้กรอก — แจ้งเจ้าของระบบ</p>}
+            {fields.length > 0 && !loading && histReady && (missing.length > 0 ? (
+              <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                <button type="button" onClick={() => setShowMissing((v) => !v)} className="flex items-center gap-1.5 font-medium text-left"><AlertTriangle className="w-4 h-4 shrink-0" />ยังขาดข้อมูล {missing.length} ช่อง (ช่องที่เดือนก่อน ๆ เคยกรอก) — {showMissing ? 'ซ่อน' : 'ดูว่าขาดอะไร'}</button>
+                {showMissing && <ul className="mt-1.5 ml-6 list-disc text-xs space-y-0.5 max-h-48 overflow-auto">{missing.map((x, i) => <li key={i}>{x}</li>)}</ul>}
+              </div>
+            ) : (
+              <p className="text-xs text-emerald-700 flex items-center gap-1"><Check className="w-3.5 h-3.5" />ข้อมูลครบทุกช่องที่ต้องกรอก</p>
+            ))}
             {form.source === 'maruay-property' && form.key === 'tenant_rent' && (
               <PropertyFeedPanel year={year} month={month} answers={answers} disabled={saving || loading} ops={ops}
                 periodKey={`${form.id}@${year}-${month}`} currentKey={currentKeyRef}
@@ -286,12 +331,30 @@ function DataFormsAdminPage({ forms, profiles, businesses, ops }) {
   const sorted = useMemo(() => [...(forms || [])].sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0) || String(a.createdAt || '').localeCompare(String(b.createdAt || ''))), [forms]);
   const assignable = useMemo(() => (profiles || []).filter((p) => p.role && p.role !== 'pending'), [profiles]);
 
-  const blank = () => ({ id: null, key: newKey('form'), name: '', description: '', businessId: '', assigneeUserId: '', source: 'manual', active: true, sortOrder: (sorted.length + 1), fields: [] });
+  const blank = () => ({ id: null, key: newKey('form'), name: '', description: '', businessId: '', assigneeUserId: '', source: 'manual', active: true, sortOrder: (sorted.length + 1), dueDay: 5, remind: true, fields: [] });
   const remove = async (f) => {
     if (!window.confirm(`ลบแบบฟอร์ม "${f.name}"? ข้อมูลที่เคยส่งมาทุกเดือนของฟอร์มนี้จะถูกลบไปด้วย`)) return;
     await ops.dataForm.delete(f.id);
   };
   const toggleActive = (f) => ops.dataForm.update(f.id, { active: !(f.active !== false) });
+  // สถานะงวดที่ต้องส่ง (เดือนก่อน) ของทุกฟอร์ม — เจ้าของเห็นในหน้าเดียวว่าใครยังไม่ส่ง/ขาดอะไร
+  const now = new Date();
+  const due = prevPeriod(now.getFullYear(), now.getMonth() + 1);
+  const [dueSubs, setDueSubs] = useState({});
+  useEffect(() => {
+    let cancelled = false;
+    (async () => { const rows = await ops.dataSubmission.listByPeriod(due.year, due.month); if (!cancelled) { const m = {}; rows.forEach((r) => { m[r.formId] = r; }); setDueSubs(m); } })();
+    return () => { cancelled = true; };
+  }, [forms]);
+  const statusOf = (f) => {
+    const sub = dueSubs[f.id];
+    const dd = Math.min(Math.max(Number(f.dueDay) || 5, 1), 28);
+    const late = now.getDate() - dd;
+    const miss = Array.isArray(sub?.missing) ? sub.missing.length : 0;
+    if (isSubmitted(sub)) return miss ? { cls: 'bg-amber-100 text-amber-800', text: `ส่งแล้ว แต่ขาด ${miss} ช่อง`, title: sub.missing.join(', ') } : { cls: 'bg-emerald-100 text-emerald-800', text: 'ส่งครบแล้ว ✓' };
+    const lateTxt = late > 0 ? ` · เลยกำหนด ${late} วัน` : late === 0 ? ' · ครบกำหนดวันนี้' : ` · กำหนดวันที่ ${dd}`;
+    return { cls: late >= 0 ? 'bg-rose-100 text-rose-800' : 'bg-stone-100 text-stone-600', text: `${sub ? 'ร่าง ยังไม่กดส่ง' : 'ยังไม่ส่ง'}${lateTxt}` };
+  };
 
   return (
     <div className="h-full overflow-auto">
@@ -311,9 +374,10 @@ function DataFormsAdminPage({ forms, profiles, businesses, ops }) {
                     <h3 className="font-medium text-stone-800">{f.name}</h3>
                     {f.active === false && <span className="text-[10px] px-1.5 py-0.5 rounded bg-stone-100 text-stone-500">ปิดใช้</span>}
                     {f.source === 'maruay-property' && <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-100 text-sky-700">maruay-property</span>}
+                    {f.active !== false && f.assigneeUserId && (() => { const st = statusOf(f); return <span className={`text-[11px] px-1.5 py-0.5 rounded ${st.cls}`} title={st.title || ''}>งวด {periodLabel(due)}: {st.text}</span>; })()}
                   </div>
                   {f.description && <p className="text-sm text-stone-500 mt-0.5">{f.description}</p>}
-                  <p className="text-xs text-stone-500 mt-1.5 flex items-center gap-1 flex-wrap"><UserCheck className="w-3.5 h-3.5 text-emerald-700" />ผู้กรอก: <b className={f.assigneeUserId ? 'text-stone-700' : 'text-amber-700'}>{profileName(profiles, f.assigneeUserId)}</b> · {bizName(businesses, f.businessId)} · {fs.length} ช่อง{fs.some((x) => x.type === 'table') ? ` (ตาราง ${fs.filter((x) => x.type === 'table').length})` : ''}</p>
+                  <p className="text-xs text-stone-500 mt-1.5 flex items-center gap-1 flex-wrap"><UserCheck className="w-3.5 h-3.5 text-emerald-700" />ผู้กรอก: <b className={f.assigneeUserId ? 'text-stone-700' : 'text-amber-700'}>{profileName(profiles, f.assigneeUserId)}</b> · {bizName(businesses, f.businessId)} · {f.remind === false ? 'ปิดการเตือน' : `ส่งภายในวันที่ ${f.dueDay || 5} ของเดือนถัดไป`} · {fs.length} ช่อง{fs.some((x) => x.type === 'table') ? ` (ตาราง ${fs.filter((x) => x.type === 'table').length})` : ''}</p>
                 </div>
                 <div className="flex items-center gap-1">
                   <button onClick={() => setEditing({ ...f, businessId: f.businessId || '', assigneeUserId: f.assigneeUserId || '', description: f.description || '', fields: fs })} className="flex items-center gap-1 px-2.5 py-1.5 text-sm text-stone-700 hover:bg-stone-100 rounded-lg"><Pencil className="w-3.5 h-3.5" />แก้ไข</button>
@@ -356,6 +420,7 @@ function FormEditorModal({ form, profiles, businesses, ops, onClose }) {
       key: f.key, name, description: (f.description || '').trim() || null,
       businessId: f.businessId || null, assigneeUserId: f.assigneeUserId || null,
       source: f.source || 'manual', active: f.active !== false, sortOrder: Number(f.sortOrder) || 0, fields,
+      dueDay: Math.min(Math.max(Number(f.dueDay) || 5, 1), 28), remind: f.remind !== false,
       updatedAt: new Date().toISOString(),
     };
     const ok = f.id ? await ops.dataForm.update(f.id, payload) : await ops.dataForm.add(payload);
@@ -392,6 +457,15 @@ function FormEditorModal({ form, profiles, businesses, ops, onClose }) {
         <div className="flex items-center gap-4 text-sm">
           <label className="flex items-center gap-2"><input type="checkbox" checked={f.active !== false} onChange={(e) => set({ active: e.target.checked })} className="w-4 h-4 accent-emerald-700" />เปิดใช้งาน</label>
           <label className="flex items-center gap-2">ลำดับ <input type="number" value={f.sortOrder ?? 0} onChange={(e) => set({ sortOrder: e.target.value })} className={`${smallCls} w-16 text-right`} /></label>
+        </div>
+        <div className="rounded-lg bg-stone-50 border border-stone-200 p-3 text-sm space-y-1.5">
+          <div className="flex items-center gap-2 flex-wrap">
+            <label className="flex items-center gap-2"><input type="checkbox" checked={f.remind !== false} onChange={(e) => set({ remind: e.target.checked })} className="w-4 h-4 accent-emerald-700" />เตือนผู้กรอกให้ส่งข้อมูล</label>
+            <span className="text-stone-500">· ต้องส่งข้อมูลของเดือนที่แล้ว ภายในวันที่</span>
+            <input type="number" min="1" max="28" value={f.dueDay ?? 5} onChange={(e) => set({ dueDay: e.target.value })} disabled={f.remind === false} className={`${smallCls} w-16 text-right disabled:bg-stone-100`} />
+            <span className="text-stone-500">ของเดือนถัดไป</span>
+          </div>
+          <p className="text-xs text-stone-500">เตือนผู้กรอก (แจ้งเตือนในแอพ + มือถือ ถ้าเปิดไว้) วันที่ 1 · วันก่อนครบกำหนด · และทุก 2 วันหลังเลยกำหนด จนกว่าจะส่ง · เลยกำหนดแล้วแจ้งเจ้าของด้วย · ส่งแล้วแต่ข้อมูลขาด เตือนทุก 3 วัน</p>
         </div>
 
         <div className="border-t border-stone-200 pt-3">

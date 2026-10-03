@@ -29,6 +29,7 @@ npm run build    # ยืนยันแล้วว่า build ผ่าน �
 ## Database schema (public, 29 tables, เปิด RLS ทุกตาราง)
 - **Core:** businesses, zones, positions, employees, user_profiles
 - **Payroll:** payrolls, payroll_items, salary_changes, commission_pools, room_rent_pools, advance_pools, recurring_task_pools, recurring_task_pay, public_holidays
+- **Form reminders:** data_forms.due_day/remind · data_form_submissions.missing · notifications.user_id/resolved_at · pg_cron `form-reminders-daily` → run_form_reminders() · trigger clear_form_reminders
 - **Integration:** integration_secrets (ไม่มี policy; edge function property-feed อ่าน) → RPC employee_pool2_feed ฝั่ง maruay-property (docs/property_feed.sql) · lib/propertyFeed.js map เข้าฟอร์ม tenant_rent
 - **Commission pool 2:** commission_pool2_config (id=1: sections/rates + form_id ของฟอร์มผู้เช่า) · commission_pool2 (ต่องวด: inputs ยอดใส่เอง, bonuses, results snapshot `source: app|excel`) — ดู lib/pool2.js, pages/Pool2Page.jsx · หน้าคอมดึงยอดรายคนไปลงช่องคอม 2 ของธุรกิจหลัก
 - **Commission settings:** commission_settings (ต่อธุรกิจ: utility = รายการสาธารณูปโภครายจ่าย/รายรับ/วิธีหัก — ดู lib/utility.js)

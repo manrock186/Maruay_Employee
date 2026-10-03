@@ -521,3 +521,26 @@ create table if not exists public.integration_secrets (
 );
 alter table public.integration_secrets enable row level security;
 revoke all on public.integration_secrets from anon, authenticated;
+
+-- ============================================================
+-- เตือนส่งข้อมูลประจำเดือน (migrations form_reminders_schema / notifications_resolved_at / form_reminders_fn / form_reminders_v2 / form_reminders_trigger_cron)
+-- ฟังก์ชันเต็มดูใน DB: select pg_get_functiondef('public.run_form_reminders(date)'::regprocedure);
+--   run_form_reminders(p_today) — งวด = เดือนก่อน · ยังไม่ส่ง: เตือนผู้กรอกวันที่ 1 / วันก่อนครบกำหนด / ทุก 2 วันหลังครบกำหนด + สรุปให้เจ้าของ
+--                                  ส่งแล้วแต่ missing ไม่ว่าง: ทุก 3 วัน (ผู้กรอก + เจ้าของ) · เก็บไว้อันล่าสุดอันเดียวต่อชนิด/ฟอร์ม/งวด (อันเก่า resolved_at)
+--   clear_form_reminders() trigger — กดส่ง = จบเตือน "ยังไม่ส่ง" · missing ว่าง = จบเตือน "ขาดข้อมูล"
+-- หมายเหตุ: MCP ยกเลิก migration ที่มี DROP/DELETE หลายจุด → ใช้ resolved_at แทนการลบ · owner client ลบ form_* ที่ resolved/เก่า >40 วัน
+-- ============================================================
+alter table public.data_forms add column if not exists due_day int not null default 5;   -- ส่งข้อมูลเดือนที่แล้วภายในวันที่ X (1-28)
+alter table public.data_forms add column if not exists remind boolean not null default true;
+alter table public.data_form_submissions add column if not exists missing jsonb not null default '[]'::jsonb; -- ช่องที่ขาด (คำนวณฝั่งแอพ lib/dataForms.missingItems)
+alter table public.notifications add column if not exists user_id uuid references auth.users(id) on delete cascade; -- แจ้งเตือนถึงคนเดียว
+alter table public.notifications add column if not exists resolved_at timestamptz;  -- เรื่องจบแล้ว → ซ่อนจากกระดิ่ง
+alter policy noti_select on public.notifications using (
+  public.current_role() = 'owner'
+  or user_id = auth.uid()
+  or (public.current_role() = 'business_manager' and business_id is not null and business_id = any (public.current_business_ids()) and user_id is null)
+  or (public.current_role() = 'zone_manager' and zone_id is not null and zone_id = any (public.current_zone_ids()) and user_id is null)
+);
+create extension if not exists pg_cron;
+-- create or replace trigger trg_clear_form_reminders after insert or update of status, missing on public.data_form_submissions for each row execute function public.clear_form_reminders();
+-- select cron.schedule('form-reminders-daily', '0 2 * * *', 'select public.run_form_reminders()');  -- 09:00 เวลาไทย

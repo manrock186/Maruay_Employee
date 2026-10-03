@@ -338,9 +338,10 @@ export default function App() {
     if (!profile || !myForms.length) { setMyFormsPending(0); return; }
     let cancelled = false;
     (async () => {
-      const d = new Date(); const y = d.getFullYear(), m = d.getMonth() + 1;
+      // งวดที่ต้องส่ง = เดือนก่อน (ข้อมูลเดือน ก.ย. ส่งต้น ต.ค.) · ส่งแล้วแต่ยังขาดช่อง ก็นับว่ายังค้าง
+      const d = new Date(); const y = d.getMonth() === 0 ? d.getFullYear() - 1 : d.getFullYear(), m = d.getMonth() === 0 ? 12 : d.getMonth();
       const [{ data, error }, visible] = await Promise.all([
-        supabase.from('data_form_submissions').select('form_id,status').eq('period_year', y).eq('period_month', m).in('form_id', myForms.map((f) => f.id)),
+        supabase.from('data_form_submissions').select('form_id,status,missing').eq('period_year', y).eq('period_month', m).in('form_id', myForms.map((f) => f.id)),
         // ฟอร์มที่ถูกย้ายไปให้คนอื่นไม่ส่ง realtime มาหาเรา (มองไม่เห็นแล้ว) → เช็กว่าที่ถืออยู่ยังเห็นได้จริง ถ้าไม่ก็เอาออก
         supabase.from('data_forms').select('id'),
       ]);
@@ -351,7 +352,7 @@ export default function App() {
         setDataForms((prev) => (prev.some((f) => !ids.has(f.id)) ? prev.filter((f) => ids.has(f.id)) : prev));
       }
       if (error) { console.error(error); return; }
-      const done = new Set((data || []).filter((r) => r.status === 'submitted').map((r) => r.form_id));
+      const done = new Set((data || []).filter((r) => r.status === 'submitted' && !(Array.isArray(r.missing) && r.missing.length)).map((r) => r.form_id));
       setMyFormsPending(myForms.filter((f) => !done.has(f.id)).length);
     })();
     return () => { cancelled = true; };
@@ -503,6 +504,12 @@ export default function App() {
     const toInsert = desired.filter((d) => !existKeys.has(d.dedupeKey));
     if (toDelete.length > 0) await supabase.from('notifications').delete().in('id', toDelete.map((n) => n.id));
     if (toInsert.length > 0) await supabase.from('notifications').insert(toInsert.map((d) => toDB(d)));
+    // เตือนส่งข้อมูล (สร้างโดยงานรายวันในฐานข้อมูล) — เก็บกวาดที่จบแล้ว/เก่าเกิน 40 วัน
+    const FORM_TYPES = ['form_reminder', 'form_overdue', 'form_missing'];
+    const cutoff = Date.now() - 40 * 86400000;
+    const { data: formNoti } = await supabase.from('notifications').select('id,resolved_at,created_at').in('type', FORM_TYPES);
+    const stale = (formNoti || []).filter((n) => n.resolved_at || new Date(n.created_at).getTime() < cutoff).map((n) => n.id);
+    if (stale.length) await supabase.from('notifications').delete().in('id', stale);
     const { data: finalNoti } = await supabase.from('notifications').select('*').order('created_at', { ascending: false });
     return fromDB(finalNoti || []);
   };
@@ -1007,6 +1014,7 @@ export default function App() {
               else if (n.type === 'payroll_incomplete' || n.type === 'pending_raise') { if (n.businessId) changeBusiness(n.businessId); setView(n.type === 'payroll_incomplete' ? 'payroll' : 'employees'); }
               else if (n.type === 'permit_expiry' || n.type === 'passport_expiry' || n.type === 'idcard_expiry' || n.type === 'birthday' || n.type === 'vacancy') { if (n.businessId) changeBusiness(n.businessId); setView('employees'); }
               else if (n.type === 'recurring_task_short') { if (n.businessId) changeBusiness(n.businessId); setView('recurringtasks'); }
+              else if (n.type === 'form_reminder' || n.type === 'form_overdue' || n.type === 'form_missing') setView(n.userId ? 'myforms' : 'dataforms');
               else { if (n.businessId) changeBusiness(n.businessId); setView('positions'); }
             }}
           />

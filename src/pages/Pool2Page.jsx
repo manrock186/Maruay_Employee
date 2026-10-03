@@ -148,6 +148,7 @@ function Pool2Page({ businesses, employees, dataForms = [], profiles = [], profi
             {!sub ? <span className="text-xs px-1.5 py-0.5 rounded bg-stone-100 text-stone-500">ยังไม่ส่ง</span>
               : isSubmitted(sub) ? <span className="text-xs px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800">ส่งแล้ว {fmt(sub.submittedAt)}{editedAfterSubmit(sub) ? ' · แก้หลังส่ง' : ''}</span>
               : <span className="text-xs px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">ร่าง (ยังไม่กดส่ง)</span>}
+            {sub && Array.isArray(sub.missing) && sub.missing.length > 0 && <span className="text-xs px-1.5 py-0.5 rounded bg-rose-100 text-rose-800" title={sub.missing.join(', ')}>ขาด {sub.missing.length} ช่อง</span>}
           </div>
           {autoInfo && <span className="text-xs px-1.5 py-0.5 rounded bg-sky-100 text-sky-800">ดึงจาก maruay-property {fmt(autoInfo.fetchedAt)}</span>}
           {onOpenForms && <button onClick={onOpenForms} className="text-xs px-2.5 py-1.5 bg-white hover:bg-stone-50 border border-stone-200 rounded-md text-sky-800">ดู/กรอกข้อมูลที่หน้า "ส่งข้อมูล" →</button>}

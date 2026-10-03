@@ -180,6 +180,35 @@ function answerProgress(fields, answers) {
   return { filled, total, missingRequired };
 }
 
+// ช่องที่ "ควรมีค่า" แต่ยังว่าง → รายชื่อช่อง (ใช้เตือน "ข้อมูลยังไม่ครบ" + เก็บใน submission.missing ให้ระบบเตือนรายวัน)
+// ช่องที่ควรมีค่า = ช่องที่เคยกรอกใน 3 งวดก่อน (ช่องที่ว่างประจำ เช่น คอลัมน์ที่ใช้แค่บางแถว ไม่ถูกนับว่าขาด) + ช่องเดี่ยวที่ตั้งเป็น "บังคับ"
+//   ยังไม่มีประวัติ (ฟอร์มใหม่/ห่างหลายเดือน) → ไม่เดา นับเฉพาะช่องเดี่ยวบังคับ · ข้ามหมายเหตุ (textarea) และตารางที่เพิ่มแถวเอง (ห้องเข้า-ออก ว่างได้)
+//   ตารางบังคับ = ต้องมีอย่างน้อย 1 ช่อง (ตาม answerProgress) ไม่ใช่ทุกเซลล์
+function missingItems(fields, answers, history = []) {
+  const a = answers && typeof answers === 'object' ? answers : {};
+  const hist = (history || []).filter((h) => h && typeof h === 'object');
+  const out = [];
+  const nf = normalizeFields(fields);
+  const manyTables = nf.filter((f) => f.type === 'table' && !isDynamicTable(f)).length > 1; // หลายตาราง → ใส่ชื่อตารางนำหน้าให้รู้ว่าช่องไหน
+  nf.forEach((f) => {
+    if (f.type === 'textarea') return;
+    if (f.type === 'table') {
+      if (isDynamicTable(f)) return;
+      tableRows(f, a[f.key]).forEach((r) => (f.columns || []).forEach((c) => {
+        if (!isBlank(r.cells[c.key])) return;
+        const expected = hist.some((h) => !isBlank(h?.[f.key]?.[r.key]?.[c.key]));
+        if (!expected) return;
+        const rowName = [r.group, r.label, r.sub].filter(Boolean).join(' ');
+        out.push(`${manyTables ? `${f.label} › ` : ''}${rowName}${(f.columns || []).length > 1 ? ` · ${c.label}` : ''}`);
+      }));
+      return;
+    }
+    if (!isBlank(a[f.key])) return;
+    if (f.required || hist.some((h) => !isBlank(h?.[f.key]))) out.push(f.label || f.key);
+  });
+  return out;
+}
+
 const isSubmitted = (s) => s?.status === 'submitted';
 // แก้ไขหลังกดส่ง (เกิน 1 นาทีหลังส่ง) — คนคิดคอมที่ดึงตัวเลขไปแล้วต้องรู้
 const editedAfterSubmit = (s) => isSubmitted(s) && !!s.updatedAt && !!s.submittedAt && (new Date(s.updatedAt) - new Date(s.submittedAt) > 60000);
@@ -187,6 +216,7 @@ const prevPeriod = (year, month) => (month === 1 ? { year: year - 1, month: 12 }
 const nextPeriod = (year, month) => (month === 12 ? { year: year + 1, month: 1 } : { year, month: month + 1 });
 
 export {
+  missingItems,
   FIELD_TYPES,
   COLUMN_TYPES,
   SOURCES,

@@ -179,7 +179,7 @@ function Sidebar({ view, setView, profile, businesses, zones, activeBusinessId, 
           </div>
         </div>
         <ThemePicker current={profile.theme} onSelect={onThemeChange} />
-        {(isOwner || isBM) && <PushToggle userId={profile.id} />}
+        {(isOwner || isBM || myFormCount > 0) && <PushToggle userId={profile.id} />}
         <button onClick={() => supabase.auth.signOut()} className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-emerald-100/80 hover:bg-emerald-900 hover:text-white transition-colors">
           <LogOut className="w-4 h-4" />
           <span>ออกจากระบบ</span>

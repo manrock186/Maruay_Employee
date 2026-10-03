@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Users, X, UserCircle, Shield, Calendar, CheckCircle2, Award, CreditCard, BookOpen, Wallet, Receipt, TrendingUp, Bell, BellRing, CheckCheck, Sparkles } from 'lucide-react';
+import { Users, X, UserCircle, Shield, Calendar, CheckCircle2, Award, CreditCard, BookOpen, Wallet, Receipt, TrendingUp, Bell, BellRing, CheckCheck, Sparkles, ClipboardList, ClipboardX } from 'lucide-react';
 
 // ============ NOTIFICATION BELL ============
 const NOTI_META = {
@@ -17,6 +17,9 @@ const NOTI_META = {
   expense_pending:    { icon: Receipt, color: 'text-amber-600 bg-amber-100' },
   expense_approved:   { icon: CheckCircle2, color: 'text-emerald-600 bg-emerald-100' },
   expense_rejected:   { icon: X, color: 'text-rose-600 bg-rose-100' },
+  form_reminder:      { icon: ClipboardList, color: 'text-sky-700 bg-sky-100' },
+  form_overdue:       { icon: ClipboardX, color: 'text-rose-600 bg-rose-100' },
+  form_missing:       { icon: ClipboardList, color: 'text-amber-600 bg-amber-100' },
 };
 function timeAgo(ts) {
   const s = Math.floor((Date.now() - new Date(ts)) / 1000);
@@ -33,10 +36,12 @@ function NotificationBell({ notifications, notiReads, userId, canManagePayroll, 
   const PAYROLL_NOTI = ['payroll_incomplete', 'pending_raise'];
   const EXPENSE_NOTI = ['expense_pending', 'expense_approved', 'expense_rejected'];
   const visibleNoti = useMemo(() => notifications.filter((n) => {
+    if (n.resolvedAt) return false;                      // เรื่องจบแล้ว (เช่น ผู้จัดการส่งข้อมูลครบแล้ว)
+    if (n.userId && n.userId !== userId) return false;   // แจ้งเตือนถึงคนอื่น (เจ้าของเห็นได้ตาม RLS แต่ไม่ต้องโชว์ซ้ำ — มีสรุปของเจ้าของแยกแล้ว)
     if (!canManagePayroll && PAYROLL_NOTI.includes(n.type)) return false;
     if (EXPENSE_NOTI.includes(n.type)) return false;
     return true;
-  }), [notifications, canManagePayroll]);
+  }), [notifications, canManagePayroll, userId]);
   const sorted = useMemo(() => [...visibleNoti].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)), [visibleNoti]);
   const unread = sorted.filter((n) => !readSet.has(n.id));
   const unreadCount = unread.length;
