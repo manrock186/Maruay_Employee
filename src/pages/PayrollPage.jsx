@@ -725,6 +725,7 @@ function PayrollEditor({ employee, existing, existingItems, year, month, busines
           <div className="bg-emerald-900 text-white rounded-xl p-4">
             <div className="flex justify-between text-sm text-emerald-100"><span>รายรับรวม</span><span>{fmtMoney(calc.totalIncome)} ฿</span></div>
             <div className="flex justify-between text-sm text-emerald-100 mt-1"><span>หักรวม</span><span>−{fmtMoney(calc.totalDeduction)} ฿</span></div>
+            {calc.rounding !== 0 && <div className="flex justify-between text-xs text-emerald-200/80 mt-1"><span>ปัดเศษเป็นบาทเต็ม (ก่อนปัด {fmtMoney(calc.netExact)})</span><span>{calc.rounding > 0 ? '+' : '−'}{fmtMoney(Math.abs(calc.rounding))} ฿</span></div>}
             <div className="flex justify-between items-center mt-2 pt-2 border-t border-emerald-700">
               <span className="font-semibold">เงินเดือนสุทธิ</span>
               <span className="text-xl font-bold text-amber-300">{fmtMoney(calc.net)} ฿</span>

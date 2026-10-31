@@ -133,6 +133,7 @@ function payslipInner({ employee, payroll, items, business, position, year, mont
       </tr>
       </tbody>
     </table>
+    ${c.rounding ? `<div style="text-align:right;font-size:12px;color:#78716c;margin-top:8px;">ยอดก่อนปัดเศษ ${m(c.netExact)} · ปัดเศษ ${c.rounding > 0 ? '+' : '−'}${m(Math.abs(c.rounding))}</div>` : ''}
     <div style="margin-top:14px;display:flex;justify-content:space-between;align-items:center;background:#065f46;color:#fff;border-radius:10px;padding:12px 18px;">
       <div style="font-family:'Kanit';font-size:17px;font-weight:600;">เงินสุทธิที่ได้รับ</div>
       <div style="font-family:'Kanit';font-size:24px;font-weight:700;">${m(c.net)} บาท</div>

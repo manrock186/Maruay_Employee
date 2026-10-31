@@ -55,8 +55,12 @@ function computePayroll(p, items = []) {
   const otherDeductions = items.filter((i) => i.kind === 'other_deduction').reduce((s, i) => s + (Number(i.amount) || 0), 0);
   const totalDeduction = excessHolidayDeduction + (Number(p.lateDeduction) || 0) + (Number(p.socialSecurity) || 0)
     + (Number(p.roomFee) || 0) + (Number(p.paidViaCompany) || 0) + advances + otherDeductions;
-  const net = totalIncome - totalDeduction;
-  return { daily, holiday, holidayCredit, bonusTasks, totalIncome, excessDays, excessHolidayDeduction, advances, otherDeductions, totalDeduction, net };
+  // สุทธิปัดเป็นบาทเต็ม (ปัดครึ่งขึ้น: .50 ขึ้นไปปัดขึ้น) — user ขอ 2026-10-31
+  // ปัดสตางค์ก่อน กันเลขทศนิยมลอยตัว (เช่น 10480.4999999 ที่จริงคือ .50)
+  const netExact = Math.round((totalIncome - totalDeduction) * 100) / 100;
+  const net = Math.round(netExact);
+  const rounding = Math.round((net - netExact) * 100) / 100; // + = ปัดขึ้น / − = ปัดลง
+  return { daily, holiday, holidayCredit, bonusTasks, totalIncome, excessDays, excessHolidayDeduction, advances, otherDeductions, totalDeduction, netExact, rounding, net };
 }
 
 // สถิติวันหยุดจากแถว payroll ของพนักงานคนหนึ่ง (ไว้ดูประกอบการพิจารณาขึ้นเงินเดือน)
