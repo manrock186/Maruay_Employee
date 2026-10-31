@@ -105,8 +105,11 @@ function EmployeesPage({ businesses, zones, positions, employees, profile, activ
     let empId = editing?.id;
     if (empId) { if (!(await ops.employee.update(empId, payload))) return; }
     else { const row = await ops.employee.add(payload); if (!row) return; empId = row.id; }
-    if (profile.canManagePayroll && wantSso !== null && wantSso !== !!editing?.hasSocialSecurity && (payload.businessId || editing?.businessId)) {
-      await sso.setEnrollment(empId, payload.businessId || editing?.businessId, wantSso);
+    const ssoBiz = payload.businessId || editing?.businessId;
+    const bizMoved = !!(editing?.id && payload.businessId && editing.businessId && payload.businessId !== editing.businessId);
+    if (profile.canManagePayroll && wantSso !== null && ssoBiz && (wantSso !== !!editing?.hasSocialSecurity || (wantSso && bizMoved))) {
+      await sso.setEnrollment(empId, ssoBiz, wantSso);
+      if (wantSso && bizMoved) alert('ย้ายธุรกิจหลัก: สร้างทะเบียนประกันสังคม "รอขึ้นทะเบียน" ที่ธุรกิจใหม่แล้ว\nทะเบียนที่ธุรกิจเดิมยังเปิดอยู่ — ถ้าย้ายบัญชีนายจ้างจริง ให้ปิดที่กล่องประกันสังคมในรายละเอียดพนักงาน');
     }
     setShowModal(false); setEditing(null);
   };

@@ -6,7 +6,7 @@ import { monthlyHolidayQuota, holidayQuotaHint, isCalendarScheme } from '../lib/
 import { useIsMobile, useDragReorder, dragClass, rowDragClass, cellDropClass } from '../lib/hooks.js';
 import { NO_DEPT, employeeDepartment } from '../lib/order.js';
 import { MONTH_NAMES, payMonthLabel, fmtMoney, fmt, computePayroll, buildPayrollDraft } from '../lib/payroll.js';
-import { ssoForPayroll, ssoHint } from '../lib/socialSecurity.js';
+import { ssoForPayroll, ssoHint, ssoManaged } from '../lib/socialSecurity.js';
 import { useSso, sso } from '../lib/sso.js';
 import { roomRentMapFromPool, recurringTaskMapFromPool, missingRecurringTasks, advanceMapFromPool } from '../lib/pools.js';
 import { commissionEntryTotal } from '../lib/commission.js';
@@ -154,20 +154,24 @@ function PayrollPage({ businesses, positions, employees, activeBusinessId, canRe
     return out;
   }, [bizEmployees, positions, activeBusinessId, deptOrder]);
   // แถว draft ที่ยอดประกันสังคม/ส่วนบริษัท ไม่ตรงสูตร (เช่น สร้างก่อนแก้เรท หรือเพิ่มทะเบียนทีหลัง)
+  // ssoReady: โหลดทะเบียน/เรทสำเร็จ (ไม่สำเร็จ = ห้ามบันทึก กันยอดเป็น 0) · ssoLive: งวดนี้ระบบดูแลยอด (ต.ค. 2569 เป็นต้นไป)
+  const ssoReady = !ssoData.loading && ssoData.ok;
+  const ssoLive = ssoManaged(year, month);
   const ssoMismatches = useMemo(() => {
-    if (ssoData.loading || !ssoData.ok) return [];
+    if (!ssoReady || !ssoLive) return [];
     return payrolls.filter((p) => p.status === 'draft').map((p) => {
       const c = ssoCalc(p.employeeId, p) || { employee: 0, employer: 0, wageBase: null };
       const same = Number(p.socialSecurity || 0) === c.employee && Number(p.socialSecurityEmployer || 0) === c.employer;
       return same ? null : { p, c };
     }).filter(Boolean);
-  }, [payrolls, ssoCalc, ssoData.loading, ssoData.ok]);
+  }, [payrolls, ssoCalc, ssoReady, ssoLive]);
   const finalizedSsoMismatch = useMemo(() => {
-    if (ssoData.loading || !ssoData.ok) return 0;
+    if (!ssoReady || !ssoLive) return 0;
     return payrolls.filter((p) => p.status === 'finalized' && Number(p.socialSecurity || 0) !== (ssoCalc(p.employeeId, p)?.employee ?? 0)).length;
-  }, [payrolls, ssoCalc, ssoData.loading, ssoData.ok]);
+  }, [payrolls, ssoCalc, ssoReady, ssoLive]);
   const recalcSso = async () => {
-    if (!ssoMismatches.length) return;
+    if (!ssoMismatches.length || !ssoLive) return;
+    if (dirtyRef.current) { alert('มีตัวเลขที่กรอกค้างไว้ยังไม่ได้บันทึก — กด "บันทึกทั้งหมด" ก่อน แล้วค่อยคำนวณประกันสังคมใหม่'); return; }
     const lines = ssoMismatches.map(({ p, c }) => {
       const e = employees.find((x) => x.id === p.employeeId);
       return `• ${e ? dispName(e) : p.employeeId}: ${fmtMoney(p.socialSecurity || 0)} → ${fmtMoney(c.employee)}`;
@@ -321,13 +325,18 @@ function PayrollPage({ businesses, positions, employees, activeBusinessId, canRe
 
         {!ssoData.loading && !ssoData.ok && (
           <div className="mb-4 bg-red-50 border border-red-300 rounded-xl px-4 py-3 text-sm text-red-800">
-            โหลดข้อมูลประกันสังคมไม่สำเร็จ — ยอดประกันสังคมของคนที่ยังไม่ทำเงินเดือนจะเป็น 0 · รีเฟรชหน้าก่อนบันทึก
+            โหลดข้อมูลประกันสังคมไม่สำเร็จ — บันทึกเงินเดือนไม่ได้จนกว่าจะรีเฟรชหน้า
           </div>
         )}
         {ssoMismatches.length > 0 && (
           <div className="mb-4 flex items-center justify-between gap-3 flex-wrap bg-amber-50 border border-amber-300 rounded-xl px-4 py-3 text-sm text-amber-900">
             <span>ประกันสังคมของ {ssoMismatches.length} คนไม่ตรงสูตรปัจจุบัน (งวดที่ยังไม่ปิด) — เช่น สร้างก่อนปรับเพดาน 17,500 หรือเพิ่มทะเบียนทีหลัง</span>
             <button onClick={recalcSso} disabled={ssoBusy} className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-white rounded-lg text-xs font-medium">{ssoBusy ? 'กำลังคำนวณ...' : 'คำนวณประกันสังคมใหม่'}</button>
+          </div>
+        )}
+        {!ssoLive && (
+          <div className="mb-4 bg-stone-50 border border-stone-200 rounded-xl px-4 py-2.5 text-xs text-stone-600">
+            งวดก่อน ต.ค. 2569 — ระบบไม่แก้ยอดประกันสังคมย้อนหลัง (ส่วนที่หักขาด บริษัทรับเอง)
           </div>
         )}
         {finalizedSsoMismatch > 0 && (
@@ -343,7 +352,7 @@ function PayrollPage({ businesses, positions, employees, activeBusinessId, canRe
           <PayrollQuickEntry
             bizEmployees={bizEmployees} positions={positions} deptOrder={deptOrder} canReorder={canReorder}
             payrollByEmp={payrollByEmp} itemsByPayroll={itemsByPayroll} commissionMap={commissionMap} roomRentMap={roomRentMap} recurringTaskMap={recurringTaskMap} advanceMap={advanceMap}
-            year={year} month={month} businessId={activeBusinessId} publicHolidays={publicHolidays} ops={ops} ssoCalc={ssoCalc}
+            year={year} month={month} businessId={activeBusinessId} publicHolidays={publicHolidays} ops={ops} ssoCalc={ssoCalc} ssoReady={ssoReady} ssoLive={ssoLive}
             onDirtyChange={(d) => { dirtyRef.current = d; }}
             findConflicts={findConflicts}
             onSaved={() => { dirtyRef.current = false; setReload((r) => r + 1); }}
@@ -422,6 +431,8 @@ function PayrollPage({ businesses, positions, employees, activeBusinessId, canRe
           publicHolidays={publicHolidays}
           ops={ops}
           ssoCalc={ssoCalc}
+          ssoReady={ssoReady}
+          ssoLive={ssoLive}
           onClose={() => setEditingEmp(null)}
           findConflicts={findConflicts}
           onSaved={() => { setEditingEmp(null); setReload((r) => r + 1); }}
@@ -562,7 +573,7 @@ function EditorItemList({ title, list, setList, color, addLabel, disabled, price
 }
 
 // ============ PAYROLL EDITOR MODAL ============
-function PayrollEditor({ employee, existing, existingItems, year, month, businessId, businessName, commissionPrefill, roomFeePrefill, bonusPrefill, advancePrefill, publicHolidays = [], findConflicts, ops, ssoCalc, onClose, onSaved }) {
+function PayrollEditor({ employee, existing, existingItems, year, month, businessId, businessName, commissionPrefill, roomFeePrefill, bonusPrefill, advancePrefill, publicHolidays = [], findConflicts, ops, ssoCalc, ssoReady = true, ssoLive = true, onClose, onSaved }) {
   const isFinalized = existing?.status === 'finalized';
   const [unlocked, setUnlocked] = useState(false);
   const locked = isFinalized && !unlocked;
@@ -618,9 +629,10 @@ function PayrollEditor({ employee, existing, existingItems, year, month, busines
   const calc = computePayroll({ ...f, holidayDaysTaken: takenOrQuota(f.holidayDaysTaken, f.holidayQuota) }, allItems);
   // ประกันสังคมตามสูตร (จากเงินเดือน/คอมที่กรอกอยู่ตอนนี้) · null = ไม่มีทะเบียนที่ธุรกิจนี้
   const ssoNow = ssoCalc?.(employee.id, { baseSalary: Number(f.baseSalary) || 0, commission: Number(f.commission) || 0 }) || null;
-  const ssoOff = (Number(f.socialSecurity) || 0) !== (ssoNow?.employee ?? 0);
+  const ssoOff = ssoLive && (Number(f.socialSecurity) || 0) !== (ssoNow?.employee ?? 0);
 
   const save = async (finalize) => {
+    if (!ssoReady) { alert('โหลดข้อมูลประกันสังคมไม่สำเร็จ — รีเฟรชหน้าก่อนบันทึก (กันยอดประกันสังคมเป็น 0)'); return; }
     setSaving(true);
     try {
       const chk = findConflicts ? await findConflicts([employee.id]) : { ok: true, names: [] };
@@ -644,8 +656,10 @@ function PayrollEditor({ employee, existing, existingItems, year, month, busines
         lateDeduction: Number(f.lateDeduction) || 0,
         socialSecurity: Number(f.socialSecurity) || 0,
         // ส่วนบริษัท + ฐาน: ตามสูตรเสมอ (ไม่ตามยอดที่แก้มือ)
-        socialSecurityEmployer: ssoNow?.employer ?? 0,
-        socialSecurityWageBase: ssoNow?.wageBase ?? null,
+        // งวดก่อน ต.ค. 2569 ที่มีอยู่แล้ว → คงค่าเดิม (ไม่แก้ย้อน)
+        ...(!ssoLive && existing
+          ? { socialSecurityEmployer: existing.socialSecurityEmployer ?? 0, socialSecurityWageBase: existing.socialSecurityWageBase ?? null }
+          : { socialSecurityEmployer: ssoNow?.employer ?? 0, socialSecurityWageBase: ssoNow?.wageBase ?? null }),
         roomFee: Number(f.roomFee) || 0,
         paidViaCompany: Number(f.paidViaCompany) || 0,
         note: f.note || null,
@@ -806,7 +820,7 @@ function PayrollEditor({ employee, existing, existingItems, year, month, busines
 }
 
 // ============ PAYROLL QUICK ENTRY (Spreadsheet / Cards) ============
-function PayrollQuickEntry({ bizEmployees, positions, deptOrder, canReorder, onDirtyChange, findConflicts, payrollByEmp, itemsByPayroll, commissionMap, roomRentMap, recurringTaskMap, advanceMap, year, month, businessId, publicHolidays = [], ops, ssoCalc, onSaved, onOpenDetail }) {
+function PayrollQuickEntry({ bizEmployees, positions, deptOrder, canReorder, onDirtyChange, findConflicts, payrollByEmp, itemsByPayroll, commissionMap, roomRentMap, recurringTaskMap, advanceMap, year, month, businessId, publicHolidays = [], ops, ssoCalc, ssoReady = true, ssoLive = true, onSaved, onOpenDetail }) {
   const isMobile = useIsMobile();
   const [drafts, setDrafts] = useState({});
   const [touched, setTouched] = useState(() => new Set());
@@ -986,6 +1000,7 @@ function PayrollQuickEntry({ bizEmployees, positions, deptOrder, canReorder, onD
   );
 
   const saveAll = async () => {
+    if (!ssoReady) { alert('โหลดข้อมูลประกันสังคมไม่สำเร็จ — รีเฟรชหน้าก่อนบันทึก (กันยอดประกันสังคมเป็น 0)'); return; }
     setSaving(true);
     try {
       const chk = findConflicts ? await findConflicts([...touched]) : { ok: true, names: [] };
@@ -1013,8 +1028,9 @@ function PayrollQuickEntry({ bizEmployees, positions, deptOrder, canReorder, onD
           holidayNote: draft.holidayNote?.trim() || null,
           lateDeduction: Number(draft.lateDeduction) || 0,
           socialSecurity: Number(draft.socialSecurity) || 0,
-          socialSecurityEmployer: ssoC?.employer ?? 0,
-          socialSecurityWageBase: ssoC?.wageBase ?? null,
+          ...(!ssoLive && payrollByEmp[empId]
+            ? { socialSecurityEmployer: payrollByEmp[empId].socialSecurityEmployer ?? 0, socialSecurityWageBase: payrollByEmp[empId].socialSecurityWageBase ?? null }
+            : { socialSecurityEmployer: ssoC?.employer ?? 0, socialSecurityWageBase: ssoC?.wageBase ?? null }),
           roomFee: Number(draft.roomFee) || 0,
           paidViaCompany: Number(draft.paidViaCompany) || 0,
           note: draft.note || null,

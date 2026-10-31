@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  roundBaht, rateFor, calcSso, ssoWage, registrationFor, ssoForPayroll, ssoTodos, remitDeadline, toCsv, maskNationalId, isHospitalChangeSeason,
+  roundBaht, ssoManaged, rateFor, calcSso, ssoWage, registrationFor, ssoForPayroll, ssoTodos, remitDeadline, toCsv, maskNationalId, isHospitalChangeSeason,
 } from './socialSecurity.js';
 
 // เรทเดียวกับที่ seed ใน DB
@@ -102,6 +102,14 @@ describe('ssoTodos', () => {
   });
   it('มีเอกสาร สปส.6-09 แล้ว → ไม่เตือน', () => {
     expect(kinds([{ employeeSsoId: 'r4', kind: 'sso_6_09' }])).not.toContain('r4:resign_notice');
+  });
+});
+
+describe('ssoManaged — ไม่แก้ย้อนก่อนงวด ต.ค. 2569', () => {
+  it('ก.ย. 2569 → false · ต.ค. 2569 → true · ม.ค. 2570 → true', () => {
+    expect(ssoManaged(2026, 9)).toBe(false);
+    expect(ssoManaged(2026, 10)).toBe(true);
+    expect(ssoManaged(2027, 1)).toBe(true);
   });
 });
 

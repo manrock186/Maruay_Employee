@@ -67,7 +67,9 @@ function SsoPanel({ employee, businesses, isOwner }) {
 function RegCard({ reg, bizName, hospitals, docs, isOwner, onChanged, onDocsChanged }) {
   const st = STATUS[reg.status] || STATUS.pending;
   const [edit, setEdit] = useState(false);
-  const [f, setF] = useState({ status: reg.status, registeredDate: reg.registeredDate || '', endedDate: reg.endedDate || '', note: reg.note || '' });
+  const fromReg = () => ({ status: reg.status, registeredDate: reg.registeredDate || '', endedDate: reg.endedDate || '', note: reg.note || '' });
+  const [f, setF] = useState(fromReg);
+  const openEdit = () => { setF(fromReg()); setEdit(true); };
   const [busy, setBusy] = useState(false);
   const hospital = hospitals.find((h) => h.id === reg.hospitalId);
   const [showHosp, setShowHosp] = useState(false);
@@ -98,7 +100,7 @@ function RegCard({ reg, bizName, hospitals, docs, isOwner, onChanged, onDocsChan
         <span className="text-sm font-medium text-stone-800">{bizName}</span>
         <span className={`px-2 py-0.5 rounded text-[11px] font-medium ${st.cls}`}>{st.label}</span>
         <div className="flex-1" />
-        {!edit && <button onClick={() => setEdit(true)} className="text-xs text-emerald-700 hover:underline">แก้ไข</button>}
+        {!edit && <button onClick={openEdit} className="text-xs text-emerald-700 hover:underline">แก้ไข</button>}
       </div>
 
       {!edit ? (
@@ -127,7 +129,7 @@ function RegCard({ reg, bizName, hospitals, docs, isOwner, onChanged, onDocsChan
             <input value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} className="w-full mt-0.5 px-2 py-1.5 border border-stone-300 rounded-lg" />
           </label>
           <div className="sm:col-span-2 flex justify-end gap-2">
-            <button onClick={() => setEdit(false)} className="px-3 py-1.5 text-stone-600 hover:bg-stone-100 rounded-lg">ยกเลิก</button>
+            <button onClick={() => { setEdit(false); setF(fromReg()); }} className="px-3 py-1.5 text-stone-600 hover:bg-stone-100 rounded-lg">ยกเลิก</button>
             <button onClick={save} disabled={busy} className="px-3 py-1.5 bg-emerald-900 hover:bg-emerald-800 disabled:opacity-50 text-white rounded-lg">บันทึก</button>
           </div>
         </div>

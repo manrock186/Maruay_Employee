@@ -66,6 +66,10 @@ function ssoHint(c) {
   return `ฐาน ${f(c.wageBase)} × ${c.rateEmployee}% (เพดาน ${f(c.wageMax)}) · บริษัทสมทบ ${f(c.employer)}`;
 }
 
+// งวดแรกที่ระบบนี้ดูแลยอด (Golfz ตัดสิน 31 ต.ค. 2569: งวดก่อนหน้า บริษัทรับส่วนต่างเอง ห้ามแก้ย้อน แม้สถานะยังเป็น draft)
+const SSO_MANAGED_FROM = { year: 2026, month: 10 };
+const ssoManaged = (year, month) => Number(year) * 12 + Number(month) >= SSO_MANAGED_FROM.year * 12 + SSO_MANAGED_FROM.month;
+
 // ---------- รายการต้องทำ (กันลืม) ----------
 const daysBetween = (a, b) => Math.floor((new Date(b) - new Date(a)) / 86400000);
 
@@ -128,6 +132,8 @@ function maskNationalId(id) {
 }
 
 export {
+  SSO_MANAGED_FROM,
+  ssoManaged,
   roundBaht,
   rateFor,
   calcSso,

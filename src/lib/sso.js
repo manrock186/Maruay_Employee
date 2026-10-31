@@ -47,9 +47,23 @@ const sso = {
       return here;
     }
     for (const r of regs.filter((x) => x.status !== 'ended')) {
+      // ติ๊กผิด (ยังรอขึ้นทะเบียน ไม่มีวันขึ้นทะเบียน ไม่มีเอกสาร/รพ.) → ลบทิ้ง ไม่ให้หักเดือนนี้ + ไม่เตือน สปส.6-09
+      if (r.status === 'pending' && !r.registeredDate && !r.hospitalId && await sso.isEmpty(r.id)) {
+        const { error: delErr } = await supabase.from('employee_sso').delete().eq('id', r.id);
+        if (!delErr) continue;
+      }
       await sso.updateRegistration(r.id, { status: 'ended', endedDate: todayBkk() });
     }
     return true;
+  },
+
+  // ไม่มีเอกสาร + ไม่มีประวัติ รพ. (ลบได้โดยไม่เสียข้อมูล)
+  async isEmpty(regId) {
+    const [d, h] = await Promise.all([
+      supabase.from('employee_sso_documents').select('id', { count: 'exact', head: true }).eq('employee_sso_id', regId),
+      supabase.from('employee_sso_hospital_changes').select('id', { count: 'exact', head: true }).eq('employee_sso_id', regId),
+    ]);
+    return !d.error && !h.error && (d.count || 0) === 0 && (h.count || 0) === 0;
   },
 
   // ลาออก → ปิดทะเบียนที่ยังเปิดทุกธุรกิจ (วันสิ้นสุด = วันลาออก)

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Shield, Download, AlertCircle, CheckCircle2, Settings, Plus, Hospital, ListChecks, FileText } from 'lucide-react';
 import { useSso, sso, todayBkk } from '../lib/sso.js';
-import { registrationFor, ssoForPayroll, ssoTodos, isHospitalChangeSeason, remitDeadline, toCsv, maskNationalId } from '../lib/socialSecurity.js';
+import { registrationFor, ssoManaged, ssoForPayroll, ssoTodos, isHospitalChangeSeason, remitDeadline, toCsv, maskNationalId } from '../lib/socialSecurity.js';
 import { MONTH_NAMES, fmtMoney } from '../lib/payroll.js';
 import { dispName } from '../lib/format.js';
 import { PageHeader, EmptyState, PageLoading } from '../ui/index.jsx';
@@ -63,7 +63,7 @@ function SsoPage({ businesses, employees, activeBusinessId, profile, ops }) {
       const flags = [];
       if (!reg) flags.push('มียอดหักแต่ไม่มีทะเบียน');
       if (!p) flags.push('ยังไม่มีงวดเงินเดือน');
-      if (p && expect && (emp !== expect.employee || er !== expect.employer)) flags.push(`ไม่ตรงสูตร (ควรเป็น ${fmtMoney(expect.employee)}/${fmtMoney(expect.employer)})`);
+      if (ssoManaged(year, month) && p && expect && (emp !== expect.employee || er !== expect.employer)) flags.push(`ไม่ตรงสูตร (ควรเป็น ${fmtMoney(expect.employee)}/${fmtMoney(expect.employer)})`);
       return { e, p, reg, wageBase: p?.socialSecurityWageBase ?? expect?.wageBase ?? null, emp, er, flags };
     }).sort((a, b) => String(a.e.employeeNumber || '').localeCompare(String(b.e.employeeNumber || '')));
   }, [payrolls, ssoData.regs, ssoData.rates, empBy, activeBusinessId, business, year, month]);
@@ -161,7 +161,7 @@ function SsoPage({ businesses, employees, activeBusinessId, profile, ops }) {
                 </table>
               </div>
             )}
-            <p className="text-xs text-stone-500">ยอดมาจากงวดเงินเดือนที่บันทึกจริง · ถ้าขึ้น "ไม่ตรงสูตร" ให้ไปกด "คำนวณประกันสังคมใหม่" ที่หน้าทำเงินเดือน (งวดที่ปิดแล้วแก้ไม่ได้)</p>
+            <p className="text-xs text-stone-500">ยอดมาจากงวดเงินเดือนที่บันทึกจริง · {ssoManaged(year, month) ? 'ถ้าขึ้น "ไม่ตรงสูตร" ให้ไปกด "คำนวณประกันสังคมใหม่" ที่หน้าทำเงินเดือน (งวดที่ปิดแล้วแก้ไม่ได้)' : 'งวดก่อน ต.ค. 2569 ไม่แก้ย้อนหลัง — ส่วนนายจ้างอาจเป็น 0 เพราะระบบเดิมไม่ได้บันทึก'}</p>
           </div>
         ))}
 
