@@ -6,7 +6,7 @@ import { monthlyHolidayQuota, holidayQuotaHint, isCalendarScheme } from '../lib/
 import { useIsMobile, useDragReorder, dragClass, rowDragClass, cellDropClass } from '../lib/hooks.js';
 import { NO_DEPT, employeeDepartment } from '../lib/order.js';
 import { MONTH_NAMES, payMonthLabel, fmtMoney, fmt, calcSocialSecurity, computePayroll, buildPayrollDraft } from '../lib/payroll.js';
-import { roomRentMapFromPool, recurringTaskMapFromPool, missingRecurringTasks, advanceMapFromPool } from '../lib/pools.js';
+import { roomRentMapFromPool, roomFeeDiffers, recurringTaskMapFromPool, missingRecurringTasks, advanceMapFromPool } from '../lib/pools.js';
 import { commissionEntryTotal } from '../lib/commission.js';
 import { printPayslip, printPayslips, printPayrollRegister } from '../lib/print.js';
 import { isProbationPeriod, probationCycle, effectiveBaseSalary, daysInMonth, prorationFactor, payrollBaseSalary } from '../lib/probation.js';
@@ -148,6 +148,11 @@ function PayrollPage({ businesses, positions, employees, activeBusinessId, canRe
     const p = payrollByEmp[e.id];
     return p && missingRecurringTasks(recurringTaskMap?.[e.id], itemsByPayroll[p.id]).length > 0;
   }).length, [bizEmployees, payrollByEmp, itemsByPayroll, recurringTaskMap]);
+  // โหมด "รายคน": นับคนที่ค่าห้องในเงินเดือนไม่ตรงกับหน้าค่าห้องงวดนี้ (เฉพาะแถวที่ยังไม่ปิดงวด)
+  const listRoomMismatch = useMemo(() => bizEmployees.filter((e) => {
+    const p = payrollByEmp[e.id];
+    return p && p.status !== 'finalized' && roomFeeDiffers(roomRentMap[e.id], p.roomFee);
+  }).length, [bizEmployees, payrollByEmp, roomRentMap]);
 
   if (!activeBusinessId) return (
     <div className="h-full overflow-auto"><PageHeader title="เงินเดือน" /><div className="p-4 md:p-8"><EmptyState icon={Wallet} title="เลือกธุรกิจที่ sidebar" description="เงินเดือนคำนวณแยกตามธุรกิจ — เลือกธุรกิจก่อน" /></div></div>
@@ -297,6 +302,12 @@ function PayrollPage({ businesses, positions, employees, activeBusinessId, canRe
           />
         ) : (
           <div className="space-y-2">
+            {listRoomMismatch > 0 && (
+              <div className="flex items-center justify-between gap-3 flex-wrap bg-amber-50 border border-amber-300 rounded-xl px-4 py-3 text-sm text-amber-900">
+                <span className="flex items-center gap-1.5"><Sparkles className="w-4 h-4" />ค่าห้องของ {listRoomMismatch} คนไม่ตรงกับหน้าค่าห้องงวดนี้ — อัปเดตทีเดียวทั้งหมดได้ที่โหมดกรอกเร็ว</span>
+                <button onClick={() => setMode('quick')} className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-white rounded-lg text-xs font-medium">ไปโหมดกรอกเร็ว</button>
+              </div>
+            )}
             {listMissingRecurring > 0 && (
               <div className="flex items-center justify-between gap-3 flex-wrap bg-amber-50 border border-amber-300 rounded-xl px-4 py-3 text-sm text-amber-900">
                 <span className="flex items-center gap-1.5"><Sparkles className="w-4 h-4" />งานเสริมประจำของ {listMissingRecurring} คนยังไม่อยู่ในเงินเดือนงวดนี้ — กด "แก้ไข" รายคนแล้วกด "ใส่ให้" หรือใส่ทีเดียวทั้งหมดที่โหมดกรอกเร็ว</span>
@@ -695,6 +706,12 @@ function PayrollEditor({ employee, existing, existingItems, year, month, busines
             <EditorRow label="หักมาสาย">{numInput('lateDeduction')}</EditorRow>
             <EditorRow label="ประกันสังคม" hint={employee.hasSocialSecurity ? '5% ของฐาน สูงสุด 750' : 'พนักงานนี้ไม่มี ปกส.'}>{numInput('socialSecurity')}</EditorRow>
             <EditorRow label="ค่าห้องพัก" hint={!existing && roomFeePrefill != null ? 'จากหน้าค่าห้อง (มิเตอร์) งวดนี้' : undefined}>{numInput('roomFee')}</EditorRow>
+            {roomFeeDiffers(roomFeePrefill, f.roomFee) && (
+              <div className="mb-2 flex items-start justify-between gap-2 p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800">
+                <div className="min-w-0"><b>หน้าค่าห้องงวดนี้:</b> {fmtMoney(roomFeePrefill)} (ในเงินเดือน {fmtMoney(f.roomFee)})</div>
+                {!locked && <button type="button" onClick={() => set('roomFee', roomFeePrefill)} className="flex-shrink-0 px-2.5 py-1 bg-amber-500 hover:bg-amber-400 text-white rounded-lg font-medium">ใช้ยอดนี้</button>}
+              </div>
+            )}
             <EditorRow label="รับผ่านบัญชี บ.วีเอสจง แล้ว" hint="เงินที่จ่ายไปแล้ว">{numInput('paidViaCompany')}</EditorRow>
             <div className="mt-2 pt-2 border-t border-red-100 space-y-3">
               <EditorItemList title="เบิกล่วงหน้า" list={advances} setList={setAdvances} color="text-red-600" addLabel="เพิ่มการเบิก" disabled={locked} priceMap={priceMaps.advance} />
@@ -860,6 +877,30 @@ function PayrollQuickEntry({ bizEmployees, positions, deptOrder, canReorder, onD
     setTouched((prev) => { const n = new Set(prev); missingRecurring.open.forEach(({ emp }) => n.add(emp.id)); return n; });
   };
 
+  // ---- ค่าห้องไม่ตรงกับหน้าค่าห้อง ----
+  // ค่าห้องเติมให้เฉพาะตอนสร้างแถวเงินเดือนใหม่ (ข้างบน) · ถ้าทำเงินเดือนก่อนตั้งหน้าค่าห้อง/ก่อนจดมิเตอร์เสร็จ
+  // (เกิดจริง ต.ค. 69: แถวเงินเดือนสร้าง 14:38 หน้าค่าห้องสร้าง 14:50 และแก้มิเตอร์ต่อถึงสิ้นเดือน) แถวเดิมจะค้างยอดเก่า/0
+  // ช่องค่าห้องในกรอกเร็วแก้ไม่ได้ (ให้แก้ที่หน้าค่าห้อง) → ตรวจแล้วให้กดอัปเดตทีเดียว · ไม่อัปเดตเอง ให้ผู้ใช้เห็นก่อนแล้วกดบันทึกเอง
+  const roomMismatch = useMemo(() => {
+    const open = [], locked = [];
+    eligible.forEach((emp) => {
+      const d = drafts[emp.id]; if (!d) return;
+      const poolAmt = roomRentMap?.[emp.id];
+      if (!roomFeeDiffers(poolAmt, d.roomFee)) return;
+      (d.status === 'finalized' ? locked : open).push({ emp, from: Number(d.roomFee) || 0, to: poolAmt });
+    });
+    return { open, locked };
+  }, [eligible, drafts, roomRentMap]);
+  const applyRoomMismatch = () => {
+    if (!roomMismatch.open.length) return;
+    setDrafts((prev) => {
+      const next = { ...prev };
+      roomMismatch.open.forEach(({ emp, to }) => { if (next[emp.id]) next[emp.id] = { ...next[emp.id], roomFee: to }; });
+      return next;
+    });
+    setTouched((prev) => { const n = new Set(prev); roomMismatch.open.forEach(({ emp }) => n.add(emp.id)); return n; });
+  };
+
   // ---- จัดกลุ่มตามแผนก (แผนกมาจากตำแหน่ง · ลำดับแผนก + ลำดับคน มาจาก display_order ที่ผู้ใช้ลากจัดเอง) ----
   const groups = useMemo(() => {
     const map = new Map();
@@ -1017,6 +1058,29 @@ function PayrollQuickEntry({ bizEmployees, positions, deptOrder, canReorder, onD
           <Save className="w-4 h-4" />{saving ? 'กำลังบันทึก...' : `บันทึกทั้งหมด${touched.size > 0 ? ` (${touched.size})` : ''}`}
         </button>
       </div>
+
+      {(roomMismatch.open.length > 0 || roomMismatch.locked.length > 0) && (
+        <div className="mb-4 bg-amber-50 border border-amber-300 rounded-xl p-4">
+          <div className="flex items-start justify-between gap-3 flex-wrap">
+            <div className="min-w-0">
+              <div className="text-sm font-medium text-amber-900 flex items-center gap-1.5"><Sparkles className="w-4 h-4" />ค่าห้องไม่ตรงกับหน้าค่าห้องงวดนี้ — {roomMismatch.open.length + roomMismatch.locked.length} คน</div>
+              <p className="text-xs text-amber-700 mt-0.5">แถวเงินเดือนถูกสร้างก่อนจดมิเตอร์/แก้หน้าค่าห้อง ยอดเลยยังเป็นของเก่า — กดปุ่มเพื่ออัปเดตตามหน้าค่าห้อง แล้วกด "บันทึกทั้งหมด"</p>
+            </div>
+            {roomMismatch.open.length > 0 && (
+              <button onClick={applyRoomMismatch} className="flex-shrink-0 flex items-center gap-1.5 px-3 py-2 bg-amber-500 hover:bg-amber-400 text-white rounded-lg text-sm font-medium"><Plus className="w-4 h-4" />อัปเดตค่าห้องทั้งหมด ({roomMismatch.open.length})</button>
+            )}
+          </div>
+          <div className="mt-2 space-y-1">
+            {[...roomMismatch.open, ...roomMismatch.locked.map((x) => ({ ...x, locked: true }))].map(({ emp, from, to, locked: isLocked }) => (
+              <div key={emp.id} className="flex items-start gap-2 text-xs bg-white rounded-lg px-3 py-1.5 border border-amber-100">
+                <span className="text-stone-800 font-medium whitespace-nowrap"><span className="font-mono text-stone-400 mr-1">#{emp.employeeNumber}</span>{dispName(emp)}</span>
+                <span className="text-stone-500 min-w-0">{fmtMoney(from)} → <b className="text-stone-800">{fmtMoney(to)}</b></span>
+                {isLocked && <span className="ml-auto whitespace-nowrap text-emerald-700">ปิดงวดแล้ว — เปิด "รายคน" กด "แก้ไขงวดนี้" เพื่อแก้</span>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {(missingRecurring.open.length > 0 || missingRecurring.locked.length > 0) && (
         <div className="mb-4 bg-amber-50 border border-amber-300 rounded-xl p-4">

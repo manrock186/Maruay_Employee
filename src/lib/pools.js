@@ -33,6 +33,12 @@ function roomRentMapFromPool(pool) {
   Object.keys(m).forEach((k) => { m[k] = Math.round(m[k] * 100) / 100; });
   return m;
 }
+// ค่าห้องในแถวเงินเดือนไม่ตรงกับหน้าค่าห้องงวดนั้น (เทียบระดับสตางค์) · poolAmt null/undefined = คนนี้ไม่อยู่ในหน้าค่าห้อง → ไม่เทียบ
+// เกิดเมื่อแถวเงินเดือนถูกสร้างก่อนตั้ง/แก้มิเตอร์ในหน้าค่าห้อง (ค่าห้องเติมให้เฉพาะตอนสร้างแถวใหม่)
+function roomFeeDiffers(poolAmt, current) {
+  if (poolAmt == null) return false;
+  return Math.round((Number(current) || 0) * 100) !== Math.round((Number(poolAmt) || 0) * 100);
+}
 
 // ---- ค่าจ้างงานเสริมประจำเก็บแยกตาราง recurring_task_pay (RLS: เฉพาะคนมีสิทธิ์เงินเดือน) ----
 // tasks ใน DB ไม่มีเงิน (id/name/headcount/assignments[].empId) · แถว pay: { taskId, empId ('' = ค่าตั้งต้นของงาน), amount }
@@ -106,6 +112,7 @@ export {
   roomTotal,
   roomUnits,
   roomRentMapFromPool,
+  roomFeeDiffers,
   splitRecurringPay,
   mergeRecurringPay,
   recurringTaskMapFromPool,
