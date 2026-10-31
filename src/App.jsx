@@ -27,6 +27,7 @@ const AdvancePage = lazy(() => import('./pages/AdvancePage.jsx').then((m) => ({ 
 const CommissionPage = lazy(() => import('./pages/CommissionPage.jsx').then((m) => ({ default: m.CommissionPage })));
 const Pool2Page = lazy(() => import('./pages/Pool2Page.jsx').then((m) => ({ default: m.Pool2Page })));
 const PayrollPage = lazy(() => import('./pages/PayrollPage.jsx').then((m) => ({ default: m.PayrollPage })));
+const SsoPage = lazy(() => import('./pages/SsoPage.jsx').then((m) => ({ default: m.SsoPage })));
 const UsersPage = lazy(() => import('./pages/UsersPage.jsx').then((m) => ({ default: m.UsersPage })));
 const SettingsPage = lazy(() => import('./pages/SettingsPage.jsx').then((m) => ({ default: m.SettingsPage })));
 const MyFormsPage = lazy(() => import('./pages/DataFormsPage.jsx').then((m) => ({ default: m.MyFormsPage })));
@@ -129,6 +130,7 @@ export default function App() {
     const gated = ['businesses', 'positions', 'employees', 'orgchart', 'payroll', 'commission', 'roomrent', 'recurringtasks', 'advances'];
     if (gated.includes(view) && !allowed.has(view)) setView('dashboard');
     if (view === 'pool2' && !allowed.has('commission')) setView('dashboard'); // คอมก้อนที่ 2 ใช้สิทธิ์เดียวกับเมนูคอมมิชชั่น
+    if (view === 'sso' && !allowed.has('payroll')) setView('dashboard'); // ประกันสังคมใช้สิทธิ์เดียวกับเมนูทำเงินเดือน
   }, [view, profile]);
 
   // สิทธิ์ดูเงินเดือนอาจเปลี่ยนระหว่างใช้งาน (owner กดให้/ยึดคืน) โดย role ไม่เปลี่ยน
@@ -1089,6 +1091,15 @@ export default function App() {
             canReorder={profile.canWrite}
             deptOrder={orderMap.department}
             publicHolidays={publicHolidays}
+            ops={ops}
+          />
+        )}
+        {view === 'sso' && profile.canManagePayroll && (
+          <SsoPage
+            businesses={businesses}
+            employees={employees}
+            activeBusinessId={activeBusinessId}
+            profile={profile}
             ops={ops}
           />
         )}

@@ -1,11 +1,13 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Users, Plus, Edit2, X, Layers, Calendar, Save, CheckCircle2, Clock, FileText, Wallet, Calculator, TrendingUp, TrendingDown, Sparkles, GripVertical } from 'lucide-react';
 import { businessPositionId, businessBaseSalary, payrollBaseSalaryForBiz, salaryRateForBiz } from '../lib/business.js';
 import { dispName, isActive } from '../lib/format.js';
 import { monthlyHolidayQuota, holidayQuotaHint, isCalendarScheme } from '../lib/holidays.js';
 import { useIsMobile, useDragReorder, dragClass, rowDragClass, cellDropClass } from '../lib/hooks.js';
 import { NO_DEPT, employeeDepartment } from '../lib/order.js';
-import { MONTH_NAMES, payMonthLabel, fmtMoney, fmt, calcSocialSecurity, computePayroll, buildPayrollDraft } from '../lib/payroll.js';
+import { MONTH_NAMES, payMonthLabel, fmtMoney, fmt, computePayroll, buildPayrollDraft } from '../lib/payroll.js';
+import { ssoForPayroll, ssoHint } from '../lib/socialSecurity.js';
+import { useSso, sso } from '../lib/sso.js';
 import { roomRentMapFromPool, recurringTaskMapFromPool, missingRecurringTasks, advanceMapFromPool } from '../lib/pools.js';
 import { commissionEntryTotal } from '../lib/commission.js';
 import { printPayslip, printPayslips, printPayrollRegister } from '../lib/print.js';
@@ -46,6 +48,14 @@ function PayrollPage({ businesses, positions, employees, activeBusinessId, canRe
   const [roomRentPool, setRoomRentPool] = useState(null);
   const [recurringTaskPool, setRecurringTaskPool] = useState(null);
   const [advancePool, setAdvancePool] = useState(null);
+  // ประกันสังคม: เรท + ทะเบียน (ต่อพนักงาน×ธุรกิจ) — คำนวณจากตรงนี้ที่เดียว
+  const ssoData = useSso();
+  const [ssoBusy, setSsoBusy] = useState(false);
+  const ssoCalc = useCallback((employeeId, payrollLike) => ssoForPayroll({
+    rates: ssoData.rates, regs: ssoData.regs,
+    business: businesses.find((b) => b.id === activeBusinessId),
+    employeeId, businessId: activeBusinessId, year, month, payroll: payrollLike,
+  }), [ssoData.rates, ssoData.regs, businesses, activeBusinessId, year, month]);
 
   // พนักงานในธุรกิจนี้ — คนทำงานอยู่ + คนลาออกที่ยังมีงวดค้างจ่ายในเดือนนี้
   const payrollEmpIds = useMemo(() => new Set(payrolls.map((p) => p.employeeId)), [payrolls]);
@@ -143,6 +153,34 @@ function PayrollPage({ businesses, positions, employees, activeBusinessId, canRe
     gs.forEach((g) => { out.push({ type: 'group', g }); g.rows.forEach((emp) => out.push({ type: 'emp', emp })); });
     return out;
   }, [bizEmployees, positions, activeBusinessId, deptOrder]);
+  // แถว draft ที่ยอดประกันสังคม/ส่วนบริษัท ไม่ตรงสูตร (เช่น สร้างก่อนแก้เรท หรือเพิ่มทะเบียนทีหลัง)
+  const ssoMismatches = useMemo(() => {
+    if (ssoData.loading || !ssoData.ok) return [];
+    return payrolls.filter((p) => p.status === 'draft').map((p) => {
+      const c = ssoCalc(p.employeeId, p) || { employee: 0, employer: 0, wageBase: null };
+      const same = Number(p.socialSecurity || 0) === c.employee && Number(p.socialSecurityEmployer || 0) === c.employer;
+      return same ? null : { p, c };
+    }).filter(Boolean);
+  }, [payrolls, ssoCalc, ssoData.loading, ssoData.ok]);
+  const finalizedSsoMismatch = useMemo(() => {
+    if (ssoData.loading || !ssoData.ok) return 0;
+    return payrolls.filter((p) => p.status === 'finalized' && Number(p.socialSecurity || 0) !== (ssoCalc(p.employeeId, p)?.employee ?? 0)).length;
+  }, [payrolls, ssoCalc, ssoData.loading, ssoData.ok]);
+  const recalcSso = async () => {
+    if (!ssoMismatches.length) return;
+    const lines = ssoMismatches.map(({ p, c }) => {
+      const e = employees.find((x) => x.id === p.employeeId);
+      return `• ${e ? dispName(e) : p.employeeId}: ${fmtMoney(p.socialSecurity || 0)} → ${fmtMoney(c.employee)}`;
+    }).join('\n');
+    if (!confirm(`คำนวณประกันสังคมใหม่ตามสูตร (เฉพาะงวดที่ยังไม่ปิด)\n\n${lines}\n\nยืนยัน?`)) return;
+    setSsoBusy(true);
+    let ok = 0;
+    for (const { p, c } of ssoMismatches) { if (await sso.updatePayrollSso(p.id, c)) ok += 1; }
+    setSsoBusy(false);
+    if (ok < ssoMismatches.length) alert(`อัปเดตได้ ${ok}/${ssoMismatches.length} คน — ที่เหลืออาจถูกปิดงวดหรือแก้จากที่อื่น ลองรีเฟรช`);
+    setReload((r) => r + 1);
+  };
+
   // โหมด "รายคน": นับคนที่มีงานเสริมประจำยังไม่อยู่ในเงินเดือน (ใส่ทีเดียวทั้งหมดได้ที่โหมดกรอกเร็ว)
   const listMissingRecurring = useMemo(() => bizEmployees.filter((e) => {
     const p = payrollByEmp[e.id];
@@ -281,7 +319,23 @@ function PayrollPage({ businesses, positions, employees, activeBusinessId, canRe
           </div>
         )}
 
-        {loading ? (
+        {!ssoData.loading && !ssoData.ok && (
+          <div className="mb-4 bg-red-50 border border-red-300 rounded-xl px-4 py-3 text-sm text-red-800">
+            โหลดข้อมูลประกันสังคมไม่สำเร็จ — ยอดประกันสังคมของคนที่ยังไม่ทำเงินเดือนจะเป็น 0 · รีเฟรชหน้าก่อนบันทึก
+          </div>
+        )}
+        {ssoMismatches.length > 0 && (
+          <div className="mb-4 flex items-center justify-between gap-3 flex-wrap bg-amber-50 border border-amber-300 rounded-xl px-4 py-3 text-sm text-amber-900">
+            <span>ประกันสังคมของ {ssoMismatches.length} คนไม่ตรงสูตรปัจจุบัน (งวดที่ยังไม่ปิด) — เช่น สร้างก่อนปรับเพดาน 17,500 หรือเพิ่มทะเบียนทีหลัง</span>
+            <button onClick={recalcSso} disabled={ssoBusy} className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-white rounded-lg text-xs font-medium">{ssoBusy ? 'กำลังคำนวณ...' : 'คำนวณประกันสังคมใหม่'}</button>
+          </div>
+        )}
+        {finalizedSsoMismatch > 0 && (
+          <div className="mb-4 bg-stone-50 border border-stone-200 rounded-xl px-4 py-2.5 text-xs text-stone-600">
+            งวดที่ปิดแล้ว {finalizedSsoMismatch} คน มียอดประกันสังคมไม่ตรงสูตรปัจจุบัน — ไม่แก้ให้อัตโนมัติ (ปลดล็อกในหน้าแก้รายคนถ้าต้องการแก้)
+          </div>
+        )}
+        {loading || ssoData.loading ? (
           <div className="text-center py-16 text-stone-400">กำลังโหลด...</div>
         ) : bizEmployees.length === 0 ? (
           <EmptyState icon={Users} title="ยังไม่มีพนักงาน" description="เพิ่มพนักงานก่อนที่หน้า 'พนักงาน'" />
@@ -289,7 +343,7 @@ function PayrollPage({ businesses, positions, employees, activeBusinessId, canRe
           <PayrollQuickEntry
             bizEmployees={bizEmployees} positions={positions} deptOrder={deptOrder} canReorder={canReorder}
             payrollByEmp={payrollByEmp} itemsByPayroll={itemsByPayroll} commissionMap={commissionMap} roomRentMap={roomRentMap} recurringTaskMap={recurringTaskMap} advanceMap={advanceMap}
-            year={year} month={month} businessId={activeBusinessId} publicHolidays={publicHolidays} ops={ops}
+            year={year} month={month} businessId={activeBusinessId} publicHolidays={publicHolidays} ops={ops} ssoCalc={ssoCalc}
             onDirtyChange={(d) => { dirtyRef.current = d; }}
             findConflicts={findConflicts}
             onSaved={() => { dirtyRef.current = false; setReload((r) => r + 1); }}
@@ -367,6 +421,7 @@ function PayrollPage({ businesses, positions, employees, activeBusinessId, canRe
           advancePrefill={advanceMap[editingEmp.id] || 0}
           publicHolidays={publicHolidays}
           ops={ops}
+          ssoCalc={ssoCalc}
           onClose={() => setEditingEmp(null)}
           findConflicts={findConflicts}
           onSaved={() => { setEditingEmp(null); setReload((r) => r + 1); }}
@@ -507,7 +562,7 @@ function EditorItemList({ title, list, setList, color, addLabel, disabled, price
 }
 
 // ============ PAYROLL EDITOR MODAL ============
-function PayrollEditor({ employee, existing, existingItems, year, month, businessId, businessName, commissionPrefill, roomFeePrefill, bonusPrefill, advancePrefill, publicHolidays = [], findConflicts, ops, onClose, onSaved }) {
+function PayrollEditor({ employee, existing, existingItems, year, month, businessId, businessName, commissionPrefill, roomFeePrefill, bonusPrefill, advancePrefill, publicHolidays = [], findConflicts, ops, ssoCalc, onClose, onSaved }) {
   const isFinalized = existing?.status === 'finalized';
   const [unlocked, setUnlocked] = useState(false);
   const locked = isFinalized && !unlocked;
@@ -524,7 +579,10 @@ function PayrollEditor({ employee, existing, existingItems, year, month, busines
     holidayDaysTaken: existing?.holidayDaysTaken ?? defaultQuota,
     holidayNote: existing?.holidayNote ?? '',
     lateDeduction: existing?.lateDeduction ?? 0,
-    socialSecurity: existing?.socialSecurity ?? (employee.hasSocialSecurity ? calcSocialSecurity(payrollBaseSalaryForBiz(employee, businessId, year, month)) : 0),
+    socialSecurity: existing?.socialSecurity ?? (ssoCalc?.(employee.id, {
+      baseSalary: payrollBaseSalaryForBiz(employee, businessId, year, month),
+      commission: commissionPrefill ?? 0,
+    })?.employee ?? 0),
     roomFee: existing?.roomFee ?? (roomFeePrefill != null ? roomFeePrefill : (employee.roomFee ?? 0)),
     paidViaCompany: existing?.paidViaCompany ?? 0,
     note: existing?.note ?? '',
@@ -558,6 +616,9 @@ function PayrollEditor({ employee, existing, existingItems, year, month, busines
   ];
   // ช่อง "หยุดจริง" ว่าง = ใช้โควต้า — ให้ตัวเลขบนจอตรงกับที่จะบันทึก
   const calc = computePayroll({ ...f, holidayDaysTaken: takenOrQuota(f.holidayDaysTaken, f.holidayQuota) }, allItems);
+  // ประกันสังคมตามสูตร (จากเงินเดือน/คอมที่กรอกอยู่ตอนนี้) · null = ไม่มีทะเบียนที่ธุรกิจนี้
+  const ssoNow = ssoCalc?.(employee.id, { baseSalary: Number(f.baseSalary) || 0, commission: Number(f.commission) || 0 }) || null;
+  const ssoOff = (Number(f.socialSecurity) || 0) !== (ssoNow?.employee ?? 0);
 
   const save = async (finalize) => {
     setSaving(true);
@@ -582,6 +643,9 @@ function PayrollEditor({ employee, existing, existingItems, year, month, busines
         holidayNote: f.holidayNote?.trim() || null,
         lateDeduction: Number(f.lateDeduction) || 0,
         socialSecurity: Number(f.socialSecurity) || 0,
+        // ส่วนบริษัท + ฐาน: ตามสูตรเสมอ (ไม่ตามยอดที่แก้มือ)
+        socialSecurityEmployer: ssoNow?.employer ?? 0,
+        socialSecurityWageBase: ssoNow?.wageBase ?? null,
         roomFee: Number(f.roomFee) || 0,
         paidViaCompany: Number(f.paidViaCompany) || 0,
         note: f.note || null,
@@ -693,7 +757,13 @@ function PayrollEditor({ employee, existing, existingItems, year, month, busines
             <div className="flex items-center gap-1.5 text-sm font-semibold text-red-700 mb-2"><TrendingDown className="w-4 h-4" />รายการหัก</div>
             {calc.excessHolidayDeduction > 0 && <EditorRow label={`หักหยุดเกินสิทธิ (${fmtDaysUI(calc.excessDays)} วัน)`} hint="อัตโนมัติ"><div className="text-right text-sm text-red-600 py-1.5">−{fmtMoney(calc.excessHolidayDeduction)}</div></EditorRow>}
             <EditorRow label="หักมาสาย">{numInput('lateDeduction')}</EditorRow>
-            <EditorRow label="ประกันสังคม" hint={employee.hasSocialSecurity ? '5% ของฐาน สูงสุด 750' : 'พนักงานนี้ไม่มี ปกส.'}>{numInput('socialSecurity')}</EditorRow>
+            <EditorRow label="ประกันสังคม" hint={ssoNow ? ssoHint(ssoNow) : 'ไม่มีทะเบียนประกันสังคมที่ธุรกิจนี้'}>{numInput('socialSecurity')}</EditorRow>
+            {ssoOff && (
+              <div className="flex items-center justify-between gap-2 -mt-1 mb-2 px-2 py-1.5 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800">
+                <span>ไม่ตรงสูตร — ตามสูตรควรเป็น {fmtMoney(ssoNow?.employee ?? 0)}</span>
+                {!locked && <button type="button" onClick={() => set('socialSecurity', ssoNow?.employee ?? 0)} className="px-2 py-0.5 bg-amber-500 hover:bg-amber-400 text-white rounded font-medium">ใช้ตามสูตร</button>}
+              </div>
+            )}
             <EditorRow label="ค่าห้องพัก" hint={!existing && roomFeePrefill != null ? 'จากหน้าค่าห้อง (มิเตอร์) งวดนี้' : undefined}>{numInput('roomFee')}</EditorRow>
             <EditorRow label="รับผ่านบัญชี บ.วีเอสจง แล้ว" hint="เงินที่จ่ายไปแล้ว">{numInput('paidViaCompany')}</EditorRow>
             <div className="mt-2 pt-2 border-t border-red-100 space-y-3">
@@ -736,7 +806,7 @@ function PayrollEditor({ employee, existing, existingItems, year, month, busines
 }
 
 // ============ PAYROLL QUICK ENTRY (Spreadsheet / Cards) ============
-function PayrollQuickEntry({ bizEmployees, positions, deptOrder, canReorder, onDirtyChange, findConflicts, payrollByEmp, itemsByPayroll, commissionMap, roomRentMap, recurringTaskMap, advanceMap, year, month, businessId, publicHolidays = [], ops, onSaved, onOpenDetail }) {
+function PayrollQuickEntry({ bizEmployees, positions, deptOrder, canReorder, onDirtyChange, findConflicts, payrollByEmp, itemsByPayroll, commissionMap, roomRentMap, recurringTaskMap, advanceMap, year, month, businessId, publicHolidays = [], ops, ssoCalc, onSaved, onOpenDetail }) {
   const isMobile = useIsMobile();
   const [drafts, setDrafts] = useState({});
   const [touched, setTouched] = useState(() => new Set());
@@ -783,6 +853,8 @@ function PayrollQuickEntry({ bizEmployees, positions, deptOrder, canReorder, onD
       const its = p ? (itemsByPayroll[p.id] || []) : [];
       d[emp.id] = buildPayrollDraft(emp, p, its, year, month, businessId, publicHolidays);
       if (!p && commissionMap && commissionMap[emp.id]) d[emp.id].commission = commissionMap[emp.id];
+      // ประกันสังคมของแถวใหม่ — คิดหลังใส่คอมแล้ว (ธุรกิจที่เปิด "นับค่าคอม" จะได้ยอดถูก)
+      if (!p) d[emp.id].socialSecurity = ssoCalc?.(emp.id, d[emp.id])?.employee ?? 0;
       if (!p && roomRentMap && roomRentMap[emp.id] != null) d[emp.id].roomFee = roomRentMap[emp.id];
       // งานเสริมประจำ → เติมเป็นรายการ bonus_task ให้คนที่ยังไม่ได้ทำเงินเดือนงวดนี้
       if (!p && recurringTaskMap && (recurringTaskMap[emp.id] || []).length) {
@@ -931,6 +1003,7 @@ function PayrollQuickEntry({ bizEmployees, positions, deptOrder, canReorder, onD
         const draft = drafts[empId];
         if (!emp || !draft || !Number(draft.baseSalary)) continue;
         const salaryRate = Number(draft.salaryRate) || Number(draft.baseSalary) || 0;
+        const ssoC = ssoCalc?.(empId, draft) || null; // ส่วนบริษัท + ฐาน ตามสูตร
         const payload = {
           employeeId: empId, businessId, periodYear: year, periodMonth: month,
           baseSalary: Number(draft.baseSalary) || 0, salaryRate, dailyRate: salaryRate / 30,
@@ -940,6 +1013,8 @@ function PayrollQuickEntry({ bizEmployees, positions, deptOrder, canReorder, onD
           holidayNote: draft.holidayNote?.trim() || null,
           lateDeduction: Number(draft.lateDeduction) || 0,
           socialSecurity: Number(draft.socialSecurity) || 0,
+          socialSecurityEmployer: ssoC?.employer ?? 0,
+          socialSecurityWageBase: ssoC?.wageBase ?? null,
           roomFee: Number(draft.roomFee) || 0,
           paidViaCompany: Number(draft.paidViaCompany) || 0,
           note: draft.note || null,

@@ -19,8 +19,8 @@ const fmt = (d) => {
   return dt.toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' });
 };
 
-// คำนวณประกันสังคม: 5% ของฐาน สูงสุด 750
-const calcSocialSecurity = (baseSalary) => Math.min(Math.round(Number(baseSalary) * 0.05 * 100) / 100, 750);
+// ประกันสังคม: ย้ายไป lib/socialSecurity.js (เรทจากตาราง sso_rates · ทะเบียนจาก employee_sso)
+// ของเดิม min(5%, 750) ผิดตั้งแต่ ม.ค. 2569 (เพดานใหม่ 17,500 → 875) และไม่ปัดเป็นบาท
 
 // ค่าแรง/วัน = เงินเดือน "เต็มเดือน" ของงวด (salaryRate) ÷ 30 — ไม่ใช่ฐานในงวด เพราะฐานอาจถูกเฉลี่ยตามวันเริ่มงาน
 // แถวเก่าที่ยังไม่มี salaryRate ใช้ฐานแทน
@@ -78,7 +78,8 @@ function holidayStats(rows, recentPeriods = 12) {
 
 // สร้าง draft ตั้งต้นสำหรับ payroll (จาก payroll เดิม หรือ default จากโปรไฟล์พนักงาน)
 // publicHolidays ใช้คิดโควต้าของคนที่หยุดตามปฏิทิน (ส-อา + นักขัตฤกษ์)
-function buildPayrollDraft(emp, payroll, items, year, month, businessId, publicHolidays = []) {
+// ssoFn(draftLike) → { employee, employer, wageBase } | null — คิดประกันสังคมของ draft ใหม่ (ไม่ส่ง = 0)
+function buildPayrollDraft(emp, payroll, items, year, month, businessId, publicHolidays = [], ssoFn = null) {
   if (payroll) {
     return {
       baseSalary: payroll.baseSalary ?? 0,
@@ -113,7 +114,7 @@ function buildPayrollDraft(emp, payroll, items, year, month, businessId, publicH
     holidayDaysTaken: quota,
     holidayNote: '',
     commission: 0, lateDeduction: 0,
-    socialSecurity: emp.hasSocialSecurity ? calcSocialSecurity(base) : 0,
+    socialSecurity: ssoFn ? (ssoFn({ baseSalary: base, commission: 0 })?.employee ?? 0) : 0,
     roomFee: emp.roomFee ?? 0,
     paidViaCompany: 0, note: '', status: 'draft', items: [],
   };
@@ -124,7 +125,6 @@ export {
   payMonthLabel,
   fmtMoney,
   fmt,
-  calcSocialSecurity,
   salaryRateOf,
   dailyRateOf,
   holidayBalance,

@@ -23,6 +23,7 @@ function Sidebar({ view, setView, profile, businesses, zones, activeBusinessId, 
   // คนที่ไม่มีสิทธิ์เงินเดือนไม่เห็นหัวข้อ "เงินเดือน" (เขาไม่ควรรู้ด้วยซ้ำว่าหน้าพวกนี้ไปคิดเงินเดือน) → เมนูย่อยที่เขาเข้าได้โชว์แบบแบนเหมือนเดิม
   const PAY_ITEMS = [
     { id: 'payroll', label: 'ทำเงินเดือน', icon: Calculator, show: profile.canManagePayroll && navAllowed('payroll') },
+    { id: 'sso', label: 'ประกันสังคม', icon: Shield, show: profile.canManagePayroll && navAllowed('payroll') },
     { id: 'commission', label: 'คอมมิชชั่น', icon: Percent, show: profile.canManagePayroll && navAllowed('commission') },
     { id: 'pool2', label: 'คอมก้อนที่ 2 (ค่าเช่า)', icon: Layers, show: profile.canManagePayroll && navAllowed('commission') },
     { id: 'advances', label: 'เบิกเงิน', icon: Banknote, show: profile.canManagePayroll && (isOwner || (isBM && navAllowed('advances'))) },

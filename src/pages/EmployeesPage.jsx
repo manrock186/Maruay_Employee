@@ -5,6 +5,8 @@ import { dispName, NATIONALITIES, natLabel, natFlag, isForeign, RESIGN_REASONS, 
 import { WEEKDAY_LABELS, monthlyHolidayQuota, holidayQuotaHint, holidaySchemeLabel } from '../lib/holidays.js';
 import { MONTH_NAMES, fmtMoney, fmt, holidayStats } from '../lib/payroll.js';
 import { uploadDocument, deleteDocument, getDocumentUrl, resizeImage } from '../lib/storage.js';
+import { sso } from '../lib/sso.js';
+import { SsoPanel } from '../components/SsoPanel.jsx';
 import { Modal, FormField, FormActions, EmptyState, PageHeader, Avatar, PillRadio, InfoItem, DetailBlock } from '../ui/index.jsx';
 
 // ============ EMPLOYEES PAGE ============
@@ -97,8 +99,15 @@ function EmployeesPage({ businesses, zones, positions, employees, profile, activ
       const dup = employees.find((e) => e.id !== editing?.id && String(e.employeeNumber || '').trim() === num);
       if (dup) { alert(`เลขพนักงาน #${num} ซ้ำกับ ${dispName(dup)} แล้ว กรุณาใช้เลขอื่น (เว้นว่างไว้เพื่อให้ระบบรันเลขให้อัตโนมัติ)`); return; }
     }
-    if (editing?.id) await ops.employee.update(editing.id, payload);
-    else await ops.employee.add(payload);
+    // "มีประกันสังคม" ไม่เขียนลง employees ตรง — สร้าง/ปิดทะเบียนใน employee_sso แทน (trigger อัปเดต has_social_security ให้)
+    const wantSso = Object.prototype.hasOwnProperty.call(payload, 'hasSocialSecurity') ? !!payload.hasSocialSecurity : null;
+    delete payload.hasSocialSecurity;
+    let empId = editing?.id;
+    if (empId) { if (!(await ops.employee.update(empId, payload))) return; }
+    else { const row = await ops.employee.add(payload); if (!row) return; empId = row.id; }
+    if (profile.canManagePayroll && wantSso !== null && wantSso !== !!editing?.hasSocialSecurity && (payload.businessId || editing?.businessId)) {
+      await sso.setEnrollment(empId, payload.businessId || editing?.businessId, wantSso);
+    }
     setShowModal(false); setEditing(null);
   };
   const del = async (id) => {
@@ -109,7 +118,9 @@ function EmployeesPage({ businesses, zones, positions, employees, profile, activ
     await ops.employee.delete(id);
   };
   const doResign = async (d) => {
-    await ops.employee.resign(resigningEmp.id, d);
+    if (!(await ops.employee.resign(resigningEmp.id, d))) return;
+    // ปิดทะเบียนประกันสังคมทุกธุรกิจ (วันสิ้นสุด = วันลาออก) → ระบบเตือนให้แจ้ง สปส.6-09
+    if (profile.canManagePayroll) await sso.endAllForEmployee(resigningEmp.id, d.resignedDate);
     setResigningEmp(null); setViewing(null);
   };
   const doRehire = async (emp) => {
@@ -650,6 +661,12 @@ function EmployeeDetailModal({ employee, salaryReload, zones, positions, employe
           )}
           {canRaise && (
             <div className="px-6 pb-6">
+              <div className="flex items-center gap-2 mb-3"><Shield className="w-4 h-4 text-stone-500" /><h3 className="font-medium text-stone-700">ประกันสังคม</h3></div>
+              <SsoPanel employee={employee} businesses={businesses} isOwner={isOwner} />
+            </div>
+          )}
+          {canRaise && (
+            <div className="px-6 pb-6">
               <div className="flex items-center gap-2 mb-3 flex-wrap">
                 <Calendar className="w-4 h-4 text-stone-500" />
                 <h3 className="font-medium text-stone-700">สถิติวันหยุด</h3>
@@ -1165,7 +1182,7 @@ function EmployeeForm({ initial, zones, positions, allPositions, employees, busi
             <FormField label="ประกันสังคม">
               <label className="flex items-center gap-2 p-2.5 rounded-lg border-2 border-stone-200 cursor-pointer hover:border-stone-300 mt-0.5">
                 <input type="checkbox" checked={hasSocialSecurity} onChange={(e) => setHasSocialSecurity(e.target.checked)} className="w-4 h-4 rounded text-emerald-700" />
-                <span className="text-sm text-stone-700">มีประกันสังคม (หัก 5% สูงสุด 750)</span>
+                <span className="text-sm text-stone-700">มีประกันสังคม <span className="text-xs text-stone-500">(5% ตามเพดานปีนั้น · รายละเอียด/รพ./เอกสาร ที่หน้ารายละเอียดพนักงาน)</span></span>
               </label>
             </FormField>
           </div>

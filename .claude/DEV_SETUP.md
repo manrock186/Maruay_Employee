@@ -61,6 +61,15 @@ Multi-tenant: scope ด้วย `business_id` + `zone_id`. RLS ใช้ SECURI
 - สถิติวันหยุดในหน้าพนักงาน **ไม่เก็บซ้ำ** — คำนวณจากแถว payrolls ของคนนั้น (`ops.payroll.listByEmployee` + `holidayStats`)
 - คนที่รับเงินเดือน 2 ธุรกิจ: โควต้า/หยุดจริงอยู่ในแถวของ **ทุก** ธุรกิจ → กรอกวันหยุดที่ธุรกิจหลักที่เดียว อีกธุรกิจปล่อยตั้งต้น (= โควต้า ไม่มีผล)
 
+## ประกันสังคม มาตรา 33 (ตั้งแต่ 2026-10-31) · `lib/socialSecurity.js` (สูตร pure) · `lib/sso.js` (DB) · `pages/SsoPage.jsx` · `components/SsoPanel.jsx`
+- เรทอยู่ในตาราง `sso_rates` (ห้าม hard-code) · เลือกตามวันที่ 1 ของ**เดือนงวดงาน** · ฐาน = clamp(ค่าจ้าง, wage_min, wage_max) · 5%+5% · ปัดเป็นบาท (.5 ขึ้น)
+- เพดาน: 15,000 (ถึง 2568) → 17,500 (2569-71) → 20,000 (2572-74) → 23,000 (2575+) · JS ต้องเท่ากับ SQL `sso_contribution(wage, date)` เสมอ (มี test)
+- ค่าจ้าง = เงินเดือน (+ ค่าคอม ถ้า `businesses.sso_include_commission` · ตอนนี้ปิดทุกธุรกิจ)
+- ทะเบียน `employee_sso` ต่อพนักงาน×ธุรกิจ (บัญชีนายจ้างแยกตามธุรกิจ `businesses.sso_employer_no`) · pending/active หักเงิน · ended หักถึงเดือนที่สิ้นสุด
+- `employees.has_social_security` = trigger `sync_employee_has_sso` เขียนให้ — **ห้ามเขียนตรง** (ฟอร์มพนักงานเรียก `sso.setEnrollment`)
+- payrolls เก็บ `social_security` (ลูกจ้าง) + `social_security_employer` + `social_security_wage_base` · งวด finalized ไม่แก้ย้อน
+- เอกสารอยู่ bucket `employee-docs` path `<businessId>/sso-<kind>-...` · เปิดดู/ลบไฟล์ = เจ้าของเท่านั้น (storage policy เดิม)
+
 ## คอมมิชชั่น ก้อนที่ 1 (POS) — สูตร (ตั้งแต่ ต.ค. 2569) · `lib/commission.js`
 - กองกลาง = กำไร Loyverse (หักต้นทุนแล้ว) − รายการหัก (น้ำไฟรวม, น้ำไฟที่ขาดทุน, ช้อนส้อม …) · กองกลางติดลบ → คอมจาก % = 0 และบันทึกไม่ได้
 - คอม 1 = กองกลาง × % (`employees.commission_pct` เป็นค่าตั้งต้น) · entry.amount = ยอดที่ **กำหนดเอง** เท่านั้น (null = คิดจาก % ทุกครั้ง) · base1 = ยอดที่ใช้จริง
