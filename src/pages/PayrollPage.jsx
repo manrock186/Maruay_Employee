@@ -891,14 +891,19 @@ function PayrollQuickEntry({ bizEmployees, positions, deptOrder, canReorder, onD
     });
     return { open, locked };
   }, [eligible, drafts, roomRentMap]);
-  const applyRoomMismatch = () => {
-    if (!roomMismatch.open.length) return;
-    setDrafts((prev) => {
-      const next = { ...prev };
-      roomMismatch.open.forEach(({ emp, to }) => { if (next[emp.id]) next[emp.id] = { ...next[emp.id], roomFee: to }; });
-      return next;
-    });
-    setTouched((prev) => { const n = new Set(prev); roomMismatch.open.forEach(({ emp }) => n.add(emp.id)); return n; });
+  // กดแล้วบันทึกลง DB ทันที (เดิมแค่เติม draft แล้วต้องกด "บันทึกทั้งหมด" อีกที → ผู้ใช้กดอัปเดตแล้วออกจากหน้า กล่องเลยกลับมาทุกครั้ง)
+  // ถ้ามีแถวอื่นแก้ค้างอยู่ ถามก่อน เพราะ saveAll จะบันทึกของที่ค้างไปพร้อมกัน
+  const applyRoomMismatch = async () => {
+    if (!roomMismatch.open.length || saving) return;
+    const roomIds = new Set(roomMismatch.open.map(({ emp }) => emp.id));
+    const pendingOther = [...touched].filter((id) => !roomIds.has(id)).length;
+    if (pendingOther > 0 && !confirm(`มีข้อมูลที่แก้ค้างไว้ยังไม่บันทึกอีก ${pendingOther} คน\n\nจะบันทึกค่าห้อง ${roomIds.size} คน พร้อมกับที่แก้ค้างไว้เลยไหม?`)) return;
+    const nextDrafts = { ...drafts };
+    roomMismatch.open.forEach(({ emp, to }) => { if (nextDrafts[emp.id]) nextDrafts[emp.id] = { ...nextDrafts[emp.id], roomFee: to }; });
+    const nextTouched = new Set(touched); roomIds.forEach((id) => nextTouched.add(id));
+    setDrafts(nextDrafts);
+    setTouched(nextTouched);
+    await saveAll({ drafts: nextDrafts, touched: nextTouched });
   };
 
   // ---- จัดกลุ่มตามแผนก (แผนกมาจากตำแหน่ง · ลำดับแผนก + ลำดับคน มาจาก display_order ที่ผู้ใช้ลากจัดเอง) ----
@@ -954,7 +959,11 @@ function PayrollQuickEntry({ bizEmployees, positions, deptOrder, canReorder, onD
     </div>
   );
 
-  const saveAll = async () => {
+  const draftsState = drafts, touchedState = touched;
+  // override: { drafts, touched } — ใช้ตอนต้องบันทึกทันทีหลังแก้ draft (setState ยังไม่ทัน) เช่น ปุ่มอัปเดตค่าห้อง
+  const saveAll = async (override = {}) => {
+    const drafts = override.drafts || draftsState;
+    const touched = override.touched || touchedState;
     setSaving(true);
     try {
       const chk = findConflicts ? await findConflicts([...touched]) : { ok: true, names: [] };
@@ -1054,7 +1063,7 @@ function PayrollQuickEntry({ bizEmployees, positions, deptOrder, canReorder, onD
             : `พิมพ์ตัวเลขในช่อง → กด Enter ลงคนถัดไป${canReorder ? (isMobile ? ' · แตะค้างที่ชื่อเพื่อสลับลำดับ' : ' · ลากไอคอนจุดหน้าชื่อเพื่อสลับลำดับ') : ''}`}
           {noSalaryCount > 0 && <span className="ml-2 text-amber-600">({noSalaryCount} คนยังไม่ตั้งเงินเดือน)</span>}
         </div>
-        <button onClick={saveAll} disabled={saving || touched.size === 0} className="flex items-center gap-2 px-4 py-2 bg-emerald-900 hover:bg-emerald-800 disabled:bg-stone-300 disabled:cursor-not-allowed text-white rounded-lg text-sm font-medium">
+        <button onClick={() => saveAll()} disabled={saving || touched.size === 0} className="flex items-center gap-2 px-4 py-2 bg-emerald-900 hover:bg-emerald-800 disabled:bg-stone-300 disabled:cursor-not-allowed text-white rounded-lg text-sm font-medium">
           <Save className="w-4 h-4" />{saving ? 'กำลังบันทึก...' : `บันทึกทั้งหมด${touched.size > 0 ? ` (${touched.size})` : ''}`}
         </button>
       </div>
@@ -1064,10 +1073,10 @@ function PayrollQuickEntry({ bizEmployees, positions, deptOrder, canReorder, onD
           <div className="flex items-start justify-between gap-3 flex-wrap">
             <div className="min-w-0">
               <div className="text-sm font-medium text-amber-900 flex items-center gap-1.5"><Sparkles className="w-4 h-4" />ค่าห้องไม่ตรงกับหน้าค่าห้องงวดนี้ — {roomMismatch.open.length + roomMismatch.locked.length} คน</div>
-              <p className="text-xs text-amber-700 mt-0.5">แถวเงินเดือนถูกสร้างก่อนจดมิเตอร์/แก้หน้าค่าห้อง ยอดเลยยังเป็นของเก่า — กดปุ่มเพื่ออัปเดตตามหน้าค่าห้อง แล้วกด "บันทึกทั้งหมด"</p>
+              <p className="text-xs text-amber-700 mt-0.5">แถวเงินเดือนถูกสร้างก่อนจดมิเตอร์/แก้หน้าค่าห้อง ยอดเลยยังเป็นของเก่า — กดปุ่มเพื่ออัปเดตตามหน้าค่าห้องและบันทึกทันที</p>
             </div>
             {roomMismatch.open.length > 0 && (
-              <button onClick={applyRoomMismatch} className="flex-shrink-0 flex items-center gap-1.5 px-3 py-2 bg-amber-500 hover:bg-amber-400 text-white rounded-lg text-sm font-medium"><Plus className="w-4 h-4" />อัปเดตค่าห้องทั้งหมด ({roomMismatch.open.length})</button>
+              <button onClick={applyRoomMismatch} disabled={saving} className="disabled:opacity-60 flex-shrink-0 flex items-center gap-1.5 px-3 py-2 bg-amber-500 hover:bg-amber-400 text-white rounded-lg text-sm font-medium"><Plus className="w-4 h-4" />{saving ? 'กำลังบันทึก...' : `อัปเดตค่าห้องทั้งหมด (${roomMismatch.open.length})`}</button>
             )}
           </div>
           <div className="mt-2 space-y-1">
