@@ -1095,6 +1095,24 @@ function PayrollQuickEntry({ bizEmployees, positions, deptOrder, canReorder, onD
     });
   };
 
+  // ช่องประกันสังคม (อ่านอย่างเดียว): ยอดหักพนักงาน + ส่วนบริษัท · งวดที่ระบบดูแล (≥ ต.ค. 69) ถ้าไม่ตรงสูตร → เหลือง + บอกยอดตามสูตร
+  const ssoCellView = (empId, d) => {
+    const amt = Number(d.socialSecurity) || 0;
+    const c = ssoCalc?.(empId, d) || null;
+    const off = ssoLive && ssoReady && amt !== (c?.employee ?? 0);
+    const tip = [c ? ssoHint(c) : 'ไม่มีทะเบียนประกันสังคมที่ธุรกิจนี้', off ? `ยอดในงวดนี้ไม่ตรงสูตร (สูตร ${fmtMoney(c?.employee ?? 0)}) — แก้ที่หน้าแก้รายคน หรือปุ่ม "คำนวณประกันสังคมใหม่"` : ''].filter(Boolean).join(' · ');
+    // ส่วนบริษัท: ตรงกับที่จะบันทึก — ปิดงวดแล้ว / งวดก่อน ต.ค. 69 = ค่าที่บันทึกไว้ · นอกนั้น = ตามสูตร
+    const saved = payrollByEmp[empId];
+    const er = saved && (d.status === 'finalized' || !ssoLive) ? saved.socialSecurityEmployer : c?.employer;
+    return (
+      <div className="leading-tight text-right" title={tip}>
+        <div className={off ? 'text-amber-700 font-medium' : amt ? 'text-stone-600' : 'text-stone-300'}>{amt ? `−${fmtMoney(amt)}` : '—'}</div>
+        {Number(er) > 0 && <div className="text-[10px] text-stone-400">บริษัท {fmtMoney(er)}</div>}
+        {off && <div className="text-[10px] text-amber-600">สูตร {fmtMoney(c?.employee ?? 0)}</div>}
+      </div>
+    );
+  };
+
   return (
     <div>
       <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
@@ -1178,6 +1196,10 @@ function PayrollQuickEntry({ bizEmployees, positions, deptOrder, canReorder, onD
                   <input type="number" step="0.01" inputMode="decimal" disabled={locked} value={quickAdvance(emp.id)} onChange={(e) => setQuickAdvance(emp.id, e.target.value)} onFocus={(e) => e.target.select()} className="w-28 px-2 py-1.5 text-sm text-right border border-stone-200 rounded focus:outline-none focus:ring-2 focus:ring-emerald-500/40 disabled:bg-stone-100" />
                 </div>
                 {D({ label: 'ค่าห้องพัก', value: d.roomFee, hint: 'แก้ที่หน้าค่าห้อง' })}
+                <div className="flex items-center justify-between gap-2 py-1">
+                  <span className="text-sm text-stone-600">ประกันสังคม<span className="block text-[11px] text-stone-400">แก้ที่หน้าแก้รายคน</span></span>
+                  <span className="w-28 px-2 py-1.5 text-sm">{ssoCellView(emp.id, d)}</span>
+                </div>
                 {F({ label: 'รับจากวีเอสจง', field: 'paidViaCompany' })}
                 {D({ label: 'คอมมิชชั่น', value: d.commission, hint: 'แก้ที่หน้าคอมมิชชั่น' })}
                 <button onClick={() => setItemsEmp(emp)} disabled={locked} className="w-full mt-2 px-3 py-2 border border-stone-200 rounded-lg text-sm text-stone-600 hover:bg-stone-50 disabled:opacity-50">
@@ -1209,6 +1231,7 @@ function PayrollQuickEntry({ bizEmployees, positions, deptOrder, canReorder, onD
                 <th className="text-center px-2 py-2.5" title="วันหยุดที่ใช้จริงในงวด — ตั้งต้นเท่าโควต้า · มากกว่าโควต้า = หยุดเกิน ถูกหักรายวัน · น้อยกว่าโควต้า = ทำงานในวันหยุด ได้เพิ่มรายวัน">หยุด</th>
                 <th className="text-center px-2 py-2.5">เบิก</th>
                 <th className="text-right px-2 py-2.5">ค่าห้อง</th>
+                <th className="text-right px-2 py-2.5" title="ส่วนที่หักจากพนักงาน · บรรทัดล่าง = ส่วนที่บริษัทสมทบ · แก้ได้ที่หน้าแก้รายคน">ประกันสังคม</th>
                 <th className="text-center px-2 py-2.5">รับจากวีเอสจง</th>
                 <th className="text-right px-2 py-2.5">คอม</th>
                 <th className="text-left px-2 py-2.5 min-w-[120px]">รายการ</th>
@@ -1219,7 +1242,7 @@ function PayrollQuickEntry({ bizEmployees, positions, deptOrder, canReorder, onD
               {flatRows.map((fr) => {
                 if (fr.type === 'group') return (
                   <tr key={`g-${fr.g.id}`} data-drag-id={fr.g.id !== NO_DEPT ? fr.g.id : undefined} className={`bg-stone-100/70 ${rowDragClass(fr.g.id, deptDrag.dragId)}`}>
-                    <td colSpan={9} className={`px-3 py-1.5 ${cellDropClass(fr.g.id, deptDrag.dragId, deptDrag.overId)}`}>{groupGrip(fr.g, false)}</td>
+                    <td colSpan={10} className={`px-3 py-1.5 ${cellDropClass(fr.g.id, deptDrag.dragId, deptDrag.overId)}`}>{groupGrip(fr.g, false)}</td>
                   </tr>
                 );
                 const { emp, rowIdx } = fr;
@@ -1254,6 +1277,7 @@ function PayrollQuickEntry({ bizEmployees, positions, deptOrder, canReorder, onD
                     </td>
                     <td className="px-2 py-2 text-center"><input type="number" step="0.01" inputMode="decimal" data-cell={`advance-${rowIdx}`} disabled={locked} value={quickAdvance(emp.id)} onChange={(e) => setQuickAdvance(emp.id, e.target.value)} onKeyDown={(e) => onKeyNav(e, 'advance', rowIdx)} onFocus={(e) => e.target.select()} className="w-20 px-2 py-1.5 text-sm text-right border border-stone-200 rounded focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500 disabled:bg-stone-100 disabled:text-stone-400" /></td>
                     <td className="px-2 py-2 text-right text-stone-500 whitespace-nowrap" title="แก้ที่หน้าค่าห้อง">{Number(d.roomFee) ? fmtMoney(d.roomFee) : <span className="text-stone-300">—</span>}</td>
+                    <td className="px-2 py-2 text-right whitespace-nowrap">{ssoCellView(emp.id, d)}</td>
                     <td className="px-2 py-2 text-center">{Cell({ empId: emp.id, field: 'paidViaCompany', col: 'paidViaCompany', rowIdx, locked })}</td>
                     <td className="px-2 py-2 text-right text-stone-500 whitespace-nowrap" title="แก้ที่หน้าคอมมิชชั่น">{Number(d.commission) ? fmtMoney(d.commission) : <span className="text-stone-300">—</span>}</td>
                     <td className="px-2 py-2">
